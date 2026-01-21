@@ -1,0 +1,48 @@
+// Deadline and cycle phase utilities
+import { differenceInDays, format } from 'date-fns';
+import type { PerformanceCycle } from '@/types';
+
+export interface DeadlineStatus {
+  isPastDeadline: boolean;
+  daysOverdue: number;
+  canSubmit: boolean;
+  formattedDeadline: string;
+}
+
+export function getGoalDeadlineStatus(
+  cycle: PerformanceCycle | null,
+  hasLatePermission: boolean
+): DeadlineStatus | null {
+  if (!cycle) return null;
+
+  const now = new Date();
+  const deadline = new Date(cycle.goal_submission_end);
+  const isPastDeadline = now > deadline;
+  const daysOverdue = differenceInDays(now, deadline);
+  const canSubmit = !isPastDeadline || cycle.allow_late_goal_submission || hasLatePermission;
+
+  return {
+    isPastDeadline,
+    daysOverdue,
+    canSubmit,
+    formattedDeadline: format(deadline, 'MMMM d, yyyy'),
+  };
+}
+
+export function getCyclePhase(cycle: PerformanceCycle | null): string {
+  if (!cycle) return 'No active cycle';
+  
+  const now = new Date();
+  
+  if (now < new Date(cycle.goal_submission_end)) return 'Goal Setting Phase';
+  if (now < new Date(cycle.goal_approval_end)) return 'Goal Approval Phase';
+  if (cycle.self_evaluation_end && now < new Date(cycle.self_evaluation_end)) return 'Self Evaluation Phase';
+  if (now < new Date(cycle.manager_evaluation_end)) return 'Manager Evaluation Phase';
+  if (now < new Date(cycle.calibration_end)) return 'Calibration Phase';
+  
+  return 'Release Phase';
+}
+
+export function formatDateRange(start: string, end: string): string {
+  return `${format(new Date(start), 'MMM d')} - ${format(new Date(end), 'MMM d, yyyy')}`;
+}
