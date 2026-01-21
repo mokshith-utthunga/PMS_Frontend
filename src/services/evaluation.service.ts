@@ -71,6 +71,38 @@ export interface GoalSelfRatingData {
   updated_at?: string;
 }
 
+// Year-End Evaluation Types
+export interface YearEndEvaluationData {
+  id?: string;
+  employee_id: string;
+  cycle_id: string;
+  evaluator_id: string;
+  q1_rating?: number | null;
+  q2_rating?: number | null;
+  q3_rating?: number | null;
+  q4_rating?: number | null;
+  calculated_overall_rating?: number | null;
+  overall_rating?: number | null;
+  overall_comments?: string | null;
+  development_recommendations?: string | null;
+  potential_rating?: number | null;
+  status?: string;
+  submitted_at?: string | null;
+  released_at?: string | null;
+  acknowledged_at?: string | null;
+  acknowledgment_comments?: string | null;
+  completed_quarters?: number;
+  // Joined fields
+  employee_name?: string;
+  employee_code?: string;
+  date_of_joining?: string;
+  department?: string;
+  evaluator_name?: string;
+  evaluator_code?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export const evaluationService = {
   // ========== Quarterly Self Reviews ==========
   selfReviews: {
@@ -201,5 +233,54 @@ export const evaluationService = {
       if (params.toString()) url += `?${params.toString()}`;
       return api.get<{ data: any[] }>(url);
     },
+  },
+
+  // ========== Year-End Evaluation ==========
+  yearEndEvaluation: {
+    get: (employeeId: string, cycleId: string) =>
+      api.get<{ data: YearEndEvaluationData | null }>(
+        `/api/evaluations/year-end-evaluation?employee_id=${employeeId}&cycle_id=${cycleId}`
+      ),
+
+    upsert: (data: Omit<YearEndEvaluationData, 'id' | 'created_at' | 'updated_at'>) =>
+      api.post<{ data: YearEndEvaluationData }>(
+        '/api/evaluations/year-end-evaluation',
+        data
+      ),
+  },
+
+  // ========== Year-End HR Review ==========
+  yearEndHRReview: {
+    getPendingReviews: (cycleId?: string) => {
+      let url = '/api/evaluations/hr-pending-year-end-reviews';
+      if (cycleId) url += `?cycle_id=${cycleId}`;
+      return api.get<{ data: any[] }>(url);
+    },
+
+    approveReview: (managerEvaluationId: string) =>
+      api.post<{ data: any }>('/api/evaluations/hr-approve-year-end-review', { 
+        manager_evaluation_id: managerEvaluationId 
+      }),
+
+    rejectReview: (managerEvaluationId: string, rejectionReason: string) =>
+      api.post<{ data: any }>('/api/evaluations/hr-reject-year-end-review', { 
+        manager_evaluation_id: managerEvaluationId, 
+        rejection_reason: rejectionReason 
+      }),
+  },
+
+  // ========== Year-End Employee Rating Actions ==========
+  yearEndEmployeeRating: {
+    acceptRating: (managerEvaluationId: string) =>
+      api.post<{ data: any }>('/api/evaluations/employee-accept-year-end-rating', { 
+        manager_evaluation_id: managerEvaluationId 
+      }),
+
+    rejectRating: (managerEvaluationId: string, rejectionReason: string, cycleId: string) =>
+      api.post<{ data: any }>('/api/evaluations/employee-reject-year-end-rating', {
+        manager_evaluation_id: managerEvaluationId,
+        rejection_reason: rejectionReason,
+        cycle_id: cycleId,
+      }),
   },
 };

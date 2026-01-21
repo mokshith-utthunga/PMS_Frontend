@@ -25,6 +25,7 @@ import {
   ChevronRight,
   Calculator,
   ClipboardCheck,
+  CheckCircle2,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DualAchievementSlider, parseNumericTarget, calculateRatingFromAchievement } from '@/components/evaluation/AchievementSlider';
@@ -143,10 +144,12 @@ export default function ManagerEvaluation() {
   const [goalSelfRatings, setGoalSelfRatings] = useState<Record<string, GoalSelfRating>>({});
   
   const [managerEvaluation, setManagerEvaluation] = useState<any>(null);
+  const [yearEndManagerEvaluation, setYearEndManagerEvaluation] = useState<any>(null);
   const [goalManagerRatings, setGoalManagerRatings] = useState<Record<string, GoalManagerRating>>({});
   const [overallRating, setOverallRating] = useState<number | null>(null);
   const [potentialRating, setPotentialRating] = useState<number | null>(null);
   const [overallComments, setOverallComments] = useState('');
+  const [yearEndOverallComments, setYearEndOverallComments] = useState('');
   const [developmentRecommendations, setDevelopmentRecommendations] = useState('');
   const [expandedKRAs, setExpandedKRAs] = useState<Set<string>>(new Set());
   const [quarterlyRatings, setQuarterlyRatings] = useState<{
@@ -403,6 +406,39 @@ export default function ManagerEvaluation() {
         });
         setGoalManagerRatings(emptyRatingsMap);
       }
+
+      // Always fetch year-end evaluation data (outside of quarterly review block)
+      try {
+        const yearEndResult = await evaluationService.yearEndEvaluation.get(employeeId, cycleResult.data.id);
+        if (yearEndResult.data) {
+          setYearEndManagerEvaluation(yearEndResult.data);
+          // Populate year-end specific form fields
+          if (yearEndResult.data.overall_rating !== null && yearEndResult.data.overall_rating !== undefined) {
+            setOverallRating(yearEndResult.data.overall_rating);
+          }
+          if (yearEndResult.data.overall_comments) {
+            // Store year-end comments in separate state variable
+            setYearEndOverallComments(yearEndResult.data.overall_comments);
+          }
+          if (yearEndResult.data.potential_rating !== null && yearEndResult.data.potential_rating !== undefined) {
+            setPotentialRating(yearEndResult.data.potential_rating);
+          }
+          // Also populate quarterly ratings from the year-end record if available
+          if (yearEndResult.data.q1_rating !== undefined || 
+              yearEndResult.data.q2_rating !== undefined ||
+              yearEndResult.data.q3_rating !== undefined ||
+              yearEndResult.data.q4_rating !== undefined) {
+            setQuarterlyRatings({
+              q1: yearEndResult.data.q1_rating ?? null,
+              q2: yearEndResult.data.q2_rating ?? null,
+              q3: yearEndResult.data.q3_rating ?? null,
+              q4: yearEndResult.data.q4_rating ?? null,
+            });
+          }
+        }
+      } catch (error) {
+        console.log('No year-end evaluation found yet - this is normal for new evaluations');
+      }
     } catch (error: any) {
       console.error('Error fetching data:', error);
       toast({
@@ -519,6 +555,26 @@ export default function ManagerEvaluation() {
 
     setSaving(true);
     try {
+      // For year-end evaluation, save to year-end evaluation API
+      if (evaluationMode === 'year-end') {
+        const result = await evaluationService.yearEndEvaluation.upsert({
+          employee_id: employeeId,
+          cycle_id: activeCycle.id,
+          evaluator_id: managerId,
+          overall_rating: overallRating,
+          overall_comments: yearEndOverallComments,
+          potential_rating: potentialRating,
+          status: 'pending',
+        });
+
+        if (result.data) {
+          setYearEndManagerEvaluation(result.data);
+        }
+
+        toast({ title: 'Year-end evaluation draft saved' });
+        return;
+      }
+
       // Create or update quarterly manager review
       const mgrReviewResult = await evaluationService.managerReviews.upsert({
         employee_id: employeeId,
@@ -555,7 +611,7 @@ export default function ManagerEvaluation() {
     } finally {
       setSaving(false);
     }
-  }, [activeCycle, managerId, employeeId, selectedQuarter, overallComments, developmentRecommendations, goalManagerRatings, toast]);
+  }, [activeCycle, managerId, employeeId, selectedQuarter, evaluationMode, overallRating, overallComments, yearEndOverallComments, potentialRating, developmentRecommendations, goalManagerRatings, toast]);
 
   const handleNext = useCallback(async () => {
     // Save current progress before navigating to ensure data persistence
@@ -569,6 +625,74 @@ export default function ManagerEvaluation() {
   }, []);
 
   const handleSubmit = useCallback(async () => {
+    // For year-end evaluation, handle differently
+    if (evaluationMode === 'year-end') {
+      // Check for overall rating (required)
+      if (!overallRating) {
+        toast({
+          title: 'Rating required',
+          description: 'Please select an overall rating before submitting year-end evaluation',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Check for overall feedback (required)
+      if (!yearEndOverallComments.trim()) {
+        toast({
+          title: 'Feedback required',
+          description: 'Please provide overall feedback before submitting year-end evaluation',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      // Check quarterly ratings
+      const hasQuarterlyRatings = Object.values(quarterlyRatings).some(r => r !== null);
+      if (!hasQuarterlyRatings) {
+        toast({
+          title: 'No quarterly ratings',
+          description: 'At least one quarterly review must be completed before year-end evaluation',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      if (!activeCycle || !managerId || !employeeId) return;
+
+      setSaving(true);
+      try {
+        // Submit year-end evaluation
+        const result = await evaluationService.yearEndEvaluation.upsert({
+          employee_id: employeeId,
+          cycle_id: activeCycle.id,
+          evaluator_id: managerId,
+          overall_rating: overallRating,
+          overall_comments: yearEndOverallComments,
+          potential_rating: potentialRating,
+          status: 'submitted',
+        });
+
+        // Update the local state
+        if (result.data) {
+          setYearEndManagerEvaluation(result.data);
+        }
+
+        toast({ title: 'Year-end evaluation submitted successfully' });
+        navigate('/team');
+      } catch (error: any) {
+        toast({
+          title: 'Error',
+          description: error.message,
+          variant: 'destructive',
+        });
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
+    // Quarterly evaluation logic
     // Check for missing ratings
     const missingRatings = kpis.filter((g) => !goalManagerRatings[g.id]?.rating);
     if (missingRatings.length > 0) {
@@ -589,19 +713,6 @@ export default function ManagerEvaluation() {
         variant: 'destructive',
       });
       return;
-    }
-
-    // For year-end evaluation, check quarterly ratings
-    if (evaluationMode === 'year-end') {
-      const hasQuarterlyRatings = Object.values(quarterlyRatings).some(r => r !== null);
-      if (!hasQuarterlyRatings) {
-        toast({
-          title: 'No quarterly ratings',
-          description: 'At least one quarterly review must be completed before year-end evaluation',
-          variant: 'destructive',
-        });
-        return;
-      }
     }
 
     if (!activeCycle || !managerId || !employeeId) return;
@@ -655,10 +766,7 @@ export default function ManagerEvaluation() {
         }
       }
 
-      const successMessage = evaluationMode === 'year-end' 
-        ? 'Year-end Manager review submitted' 
-        : `Q${selectedQuarter} Manager review submitted`;
-      toast({ title: successMessage });
+      toast({ title: `Q${selectedQuarter} Manager review submitted` });
       navigate('/team');
     } catch (error: any) {
       toast({
@@ -669,7 +777,7 @@ export default function ManagerEvaluation() {
     } finally {
       setSaving(false);
     }
-  }, [activeCycle, managerId, employeeId, goalManagerRatings, kpis, overallComments, developmentRecommendations, overallRating, potentialRating, evaluationMode, selectedQuarter, quarterlyRatings, calculatedQuarterRating, calculatedYearEndRating, managerEvaluation, toast, navigate]);
+  }, [activeCycle, managerId, employeeId, goalManagerRatings, kpis, overallComments, yearEndOverallComments, developmentRecommendations, overallRating, potentialRating, evaluationMode, selectedQuarter, quarterlyRatings, calculatedQuarterRating, calculatedYearEndRating, managerEvaluation, toast, navigate]);
 
   const getRatingLabel = (value: number | null) => {
     if (!value) return 'Not rated';
@@ -763,16 +871,24 @@ export default function ManagerEvaluation() {
     setSearchParams({ quarter: quarter.toString() });
   };
 
-  // Check if evaluation can proceed (period is open and self-eval is submitted)
+  // Check if evaluation can proceed
+  // For quarterly: period is open and self-eval is submitted
+  // For year-end: always allow (no self-eval required, no period restriction)
   const canEvaluate = evaluationMode === 'quarterly'
     ? quarterPeriodStatus.timing === 'current' && relevantSelfEval?.status === 'submitted'
-    : yearEndPeriodStatus.timing === 'current' && relevantSelfEval?.status === 'submitted';
+    : true;
 
-  const isSubmitted = managerEvaluation?.status === 'submitted';
-  const hasHRRejection = managerEvaluation?.hr_rejection_reason && managerEvaluation?.status === 'pending';
+  // Check submission status based on evaluation mode
+  // For year-end: only consider submitted if yearEndManagerEvaluation exists AND has status 'submitted'
+  const isSubmitted = evaluationMode === 'quarterly' 
+    ? managerEvaluation?.status === 'submitted'
+    : Boolean(yearEndManagerEvaluation && yearEndManagerEvaluation.status === 'submitted');
+  const hasHRRejection = evaluationMode === 'quarterly'
+    ? managerEvaluation?.hr_rejection_reason && managerEvaluation?.status === 'pending'
+    : yearEndManagerEvaluation?.hr_rejection_reason && yearEndManagerEvaluation?.status === 'pending';
 
-  // Render KRA/KPI rating content (used in both quarterly and year-end)
-  const renderRatingContent = () => (
+  // Render KRA/KPI rating content (quarterly only)
+  const renderQuarterlyRatingContent = () => (
     <div className="space-y-6">
       <Tabs 
         value={evaluationTab} 
@@ -1115,238 +1231,76 @@ export default function ManagerEvaluation() {
               </Card>
             )}
 
-            {/* Manager Assessment Summary - shown for both quarterly and year-end */}
-            {evaluationMode === 'quarterly' && (
-              <>
-                {/* Calculated Quarterly Rating */}
-                <Card className="border-2 border-primary/20 bg-primary/5">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Calculator className="h-5 w-5" />
-                      Q{selectedQuarter} Manager Rating (Auto-Calculated)
-                    </CardTitle>
-                    <CardDescription>
-                      Calculated as weighted average of your KPI ratings
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex items-center justify-between p-4 rounded-lg bg-background border-2 border-primary">
-                      <span className="font-medium text-lg">Your Overall Rating for Q{selectedQuarter}</span>
-                      <span className="text-3xl font-bold text-primary">
-                        {(() => {
-                          const ratings = Object.values(goalManagerRatings);
-                          const validRatings = ratings.filter(r => r.rating !== null && r.rating !== undefined);
-                          if (validRatings.length === 0) return '-';
-                          const avg = validRatings.reduce((sum, r) => sum + (r.rating || 0), 0) / validRatings.length;
-                          return avg.toFixed(2);
-                        })()}
-                      </span>
-                    </div>
-                    {Object.values(goalManagerRatings).filter(r => r.rating).length === 0 && (
-                      <Alert className="mt-4">
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>
-                          Rate all KPIs to see the calculated overall rating.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </CardContent>
-                </Card>
+            {/* Calculated Quarterly Rating */}
+            <Card className="border-2 border-primary/20 bg-primary/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Calculator className="h-5 w-5" />
+                  Q{selectedQuarter} Manager Rating (Auto-Calculated)
+                </CardTitle>
+                <CardDescription>
+                  Calculated as weighted average of your KPI ratings
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between p-4 rounded-lg bg-background border-2 border-primary">
+                  <span className="font-medium text-lg">Your Overall Rating for Q{selectedQuarter}</span>
+                  <span className="text-3xl font-bold text-primary">
+                    {(() => {
+                      const ratings = Object.values(goalManagerRatings);
+                      const validRatings = ratings.filter(r => r.rating !== null && r.rating !== undefined);
+                      if (validRatings.length === 0) return '-';
+                      const avg = validRatings.reduce((sum, r) => sum + (r.rating || 0), 0) / validRatings.length;
+                      return avg.toFixed(2);
+                    })()}
+                  </span>
+                </div>
+                {Object.values(goalManagerRatings).filter(r => r.rating).length === 0 && (
+                  <Alert className="mt-4">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      Rate all KPIs to see the calculated overall rating.
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
 
-                {/* Manager Overall Assessment */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <ClipboardCheck className="h-5 w-5" />
-                      Manager Assessment Summary
-                    </CardTitle>
-                    <CardDescription>
-                      Provide your overall assessment of {getEmployeeFirstName(employee)}'s performance for Q{selectedQuarter}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="space-y-2">
-                      <Label>Overall Comments</Label>
-                      <Textarea
-                        placeholder={`Summarize ${getEmployeeFirstName(employee)}'s key achievements, strengths, and areas for improvement this quarter...`}
-                        value={overallComments}
-                        onChange={(e) => setOverallComments(e.target.value)}
-                        disabled={isSubmitted}
-                        rows={4}
-                      />
-                    </div>
+            {/* Manager Overall Assessment */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ClipboardCheck className="h-5 w-5" />
+                  Manager Assessment Summary
+                </CardTitle>
+                <CardDescription>
+                  Provide your overall assessment of {getEmployeeFirstName(employee)}'s performance for Q{selectedQuarter}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-2">
+                  <Label>Overall Comments</Label>
+                  <Textarea
+                    placeholder={`Summarize ${getEmployeeFirstName(employee)}'s key achievements, strengths, and areas for improvement this quarter...`}
+                    value={overallComments}
+                    onChange={(e) => setOverallComments(e.target.value)}
+                    disabled={isSubmitted}
+                    rows={4}
+                  />
+                </div>
 
-                    <div className="space-y-2">
-                      <Label>Guidance & Development Recommendations</Label>
-                      <Textarea
-                        placeholder="Provide guidance for improvement, suggest training, projects, or focus areas for the next quarter..."
-                        value={developmentRecommendations}
-                        onChange={(e) => setDevelopmentRecommendations(e.target.value)}
-                        disabled={isSubmitted}
-                        rows={4}
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-              </>
-            )}
-
-            {evaluationMode === 'year-end' && (
-              <>
-                <Card className="border-2 border-primary/20 bg-primary/5">
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Calculator className="h-5 w-5" />
-                      Year-End Rating (Auto-Calculated)
-                    </CardTitle>
-                    <CardDescription>
-                      Calculated as the average of quarterly ratings
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-4 gap-3">
-                      {(['q1', 'q2', 'q3', 'q4'] as const).map((q, idx) => (
-                        <div key={q} className="p-3 rounded-lg bg-background border text-center">
-                          <div className="text-xs text-muted-foreground mb-1">Q{idx + 1}</div>
-                          <div className="font-semibold">
-                            {quarterlyRatings[q] !== null ? formatRating(quarterlyRatings[q]) : '-'}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <Separator />
-                    <div className="flex items-center justify-between p-4 rounded-lg bg-background border-2 border-primary">
-                      <span className="font-medium text-lg">Final Year-End Rating</span>
-                      <span className="text-3xl font-bold text-primary">
-                        {formatRating(calculatedYearEndRating)}
-                      </span>
-                    </div>
-                    {calculatedYearEndRating === null && (
-                      <Alert>
-                        <AlertCircle className="h-4 w-4" />
-                        <AlertDescription>
-                          Complete at least one quarterly review to calculate the year-end rating.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Reference Rating (Optional)</CardTitle>
-                    <CardDescription>
-                      The year-end rating is auto-calculated from quarterly reviews. This optional rating can be used for calibration discussions.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <RadioGroup
-                      value={overallRating?.toString() || ''}
-                      onValueChange={(value) => setOverallRating(parseInt(value))}
-                      disabled={isSubmitted}
-                      className="space-y-3"
-                    >
-                      {ratingScales.map((scale) => (
-                        <div key={scale.value} className="flex items-start space-x-3 p-3 rounded-lg border">
-                          <RadioGroupItem
-                            value={scale.value.toString()}
-                            id={`mgr-overall-${scale.value}`}
-                            className="mt-1"
-                          />
-                          <Label htmlFor={`mgr-overall-${scale.value}`} className="cursor-pointer flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">
-                                {scale.value} - {scale.name}
-                              </span>
-                            </div>
-                            {scale.description && (
-                              <p className="text-sm text-muted-foreground mt-1">{scale.description}</p>
-                            )}
-                          </Label>
-                        </div>
-                      ))}
-                    </RadioGroup>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Overall Comments</CardTitle>
-                    <CardDescription>
-                      Provide overall feedback on performance, achievements, and areas for improvement
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <Textarea
-                      placeholder="Summarize key achievements, challenges, and overall assessment..."
-                      value={overallComments}
-                      onChange={(e) => setOverallComments(e.target.value)}
-                      disabled={isSubmitted}
-                      rows={4}
-                    />
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Potential Rating</CardTitle>
-                    <CardDescription>Assess {getEmployeeFirstName(employee)}'s growth potential for succession planning</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <RadioGroup
-                      value={potentialRating?.toString() || ''}
-                      onValueChange={(value) => setPotentialRating(parseInt(value))}
-                      disabled={isSubmitted}
-                      className="space-y-3"
-                    >
-                      <div className="flex items-start space-x-3 p-3 rounded-lg border">
-                        <RadioGroupItem value="3" id="potential-3" className="mt-1" />
-                        <Label htmlFor="potential-3" className="cursor-pointer flex-1">
-                          <div className="font-medium">High Potential</div>
-                          <p className="text-sm text-muted-foreground">
-                            Ready for promotion within 1-2 years, demonstrates leadership capabilities
-                          </p>
-                        </Label>
-                      </div>
-                      <div className="flex items-start space-x-3 p-3 rounded-lg border">
-                        <RadioGroupItem value="2" id="potential-2" className="mt-1" />
-                        <Label htmlFor="potential-2" className="cursor-pointer flex-1">
-                          <div className="font-medium">Medium Potential</div>
-                          <p className="text-sm text-muted-foreground">
-                            Growing in role, may be ready for advancement with development
-                          </p>
-                        </Label>
-                      </div>
-                      <div className="flex items-start space-x-3 p-3 rounded-lg border">
-                        <RadioGroupItem value="1" id="potential-1" className="mt-1" />
-                        <Label htmlFor="potential-1" className="cursor-pointer flex-1">
-                          <div className="font-medium">Low Potential</div>
-                          <p className="text-sm text-muted-foreground">
-                            Performing well in current role, limited growth trajectory
-                          </p>
-                        </Label>
-                      </div>
-                    </RadioGroup>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Development Recommendations</CardTitle>
-                    <CardDescription>Suggest areas for development and growth opportunities</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <Textarea
-                      placeholder="Recommend training, projects, or focus areas for development..."
-                      value={developmentRecommendations}
-                      onChange={(e) => setDevelopmentRecommendations(e.target.value)}
-                      disabled={isSubmitted}
-                      rows={4}
-                    />
-                  </CardContent>
-                </Card>
-              </>
-            )}
+                <div className="space-y-2">
+                  <Label>Guidance & Development Recommendations</Label>
+                  <Textarea
+                    placeholder="Provide guidance for improvement, suggest training, projects, or focus areas for the next quarter..."
+                    value={developmentRecommendations}
+                    onChange={(e) => setDevelopmentRecommendations(e.target.value)}
+                    disabled={isSubmitted}
+                    rows={4}
+                  />
+                </div>
+              </CardContent>
+            </Card>
             
             {/* Action Buttons for Overall Assessment Tab */}
             {!isSubmitted && canEvaluate && (
@@ -1372,6 +1326,213 @@ export default function ManagerEvaluation() {
         </Tabs>
       </div>
     );
+
+  // Render Year-End Evaluation Content (Only Overall Assessment - no KRA/KPI tabs)
+  const renderYearEndEvaluationContent = () => {
+    // For year-end, check if already submitted or released (HR approved)
+    const yearEndSubmitted = Boolean(yearEndManagerEvaluation && 
+      (yearEndManagerEvaluation.status === 'submitted' || yearEndManagerEvaluation.status === 'released'));
+    const yearEndReleased = Boolean(yearEndManagerEvaluation && yearEndManagerEvaluation.status === 'released');
+    
+    return (
+      <div className="space-y-6">
+        {yearEndSubmitted && (
+          <Alert className={yearEndReleased ? 'border-green-200 bg-green-50' : ''}>
+            {yearEndReleased ? (
+              <CheckCircle2 className="h-4 w-4 text-green-600" />
+            ) : (
+              <AlertCircle className="h-4 w-4" />
+            )}
+            <AlertDescription>
+              {yearEndReleased 
+                ? 'This year-end evaluation has been approved by HR and released to the employee.'
+                : 'This year-end evaluation has been submitted and is pending HR review.'}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {/* Quarterly Ratings Summary */}
+        <Card className="border-2 border-primary/20 bg-primary/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calculator className="h-5 w-5" />
+              Year-End Rating
+            </CardTitle>
+            <CardDescription>
+              Calculated as the average of quarterly ratings. You can adjust the final rating below.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-4 gap-3">
+              {(['q1', 'q2', 'q3', 'q4'] as const).map((q, idx) => (
+                <div key={q} className="p-3 rounded-lg bg-background border text-center">
+                  <div className="text-xs text-muted-foreground mb-1">Q{idx + 1}</div>
+                  <div className="font-semibold">
+                    {quarterlyRatings[q] !== null ? formatRating(quarterlyRatings[q]) : '-'}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between p-4 rounded-lg bg-background border-2 border-primary">
+              <span className="font-medium text-lg">Auto-Calculated Average</span>
+              <span className="text-3xl font-bold text-primary">
+                {formatRating(calculatedYearEndRating)}
+              </span>
+            </div>
+            {calculatedYearEndRating === null && (
+              <Alert>
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  Complete at least one quarterly review to calculate the year-end rating.
+                </AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Manager's Editable Overall Rating */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Star className="h-5 w-5" />
+              Manager's Overall Rating <span className="text-destructive">*</span>
+            </CardTitle>
+            <CardDescription>
+              Select the final year-end rating for {getEmployeeFirstName(employee)}. The auto-calculated rating is shown above for reference.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <RadioGroup
+              value={overallRating?.toString() || ''}
+              onValueChange={(value) => setOverallRating(parseInt(value))}
+              disabled={yearEndSubmitted}
+              className="space-y-3"
+            >
+              {ratingScales.map((scale) => (
+                <div key={scale.value} className="flex items-start space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                  <RadioGroupItem
+                    value={scale.value.toString()}
+                    id={`year-end-rating-${scale.value}`}
+                    className="mt-1"
+                    disabled={yearEndSubmitted}
+                  />
+                  <Label htmlFor={`year-end-rating-${scale.value}`} className="cursor-pointer flex-1">
+                    <div className="flex items-center gap-2">
+                      <Star className="h-4 w-4" style={{ color: scale.color || undefined }} />
+                      <span className="font-medium">
+                        {scale.value} - {scale.name}
+                      </span>
+                    </div>
+                    {scale.description && (
+                      <p className="text-sm text-muted-foreground mt-1">{scale.description}</p>
+                    )}
+                  </Label>
+                </div>
+              ))}
+            </RadioGroup>
+            {!overallRating && !yearEndSubmitted && (
+              <p className="text-sm text-orange-600">Please select an overall rating</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Overall Feedback - Required */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ClipboardCheck className="h-5 w-5" />
+              Overall Feedback <span className="text-destructive">*</span>
+            </CardTitle>
+            <CardDescription>
+              Provide comprehensive feedback on {getEmployeeFirstName(employee)}'s performance, achievements, and areas for improvement (Required)
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Textarea
+              placeholder="Summarize key achievements, challenges, strengths, areas for improvement, and overall assessment for the year..."
+              value={yearEndOverallComments}
+              onChange={(e) => setYearEndOverallComments(e.target.value)}
+              disabled={yearEndSubmitted}
+              rows={5}
+              className={!yearEndOverallComments.trim() && !yearEndSubmitted ? 'border-orange-300' : ''}
+            />
+            {!yearEndOverallComments.trim() && !yearEndSubmitted && (
+              <p className="text-sm text-orange-600 mt-2">Overall feedback is required for submission</p>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Potential Rating */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Potential Rating</CardTitle>
+            <CardDescription>Assess {getEmployeeFirstName(employee)}'s growth potential for succession planning</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <RadioGroup
+              value={potentialRating?.toString() || ''}
+              onValueChange={(value) => setPotentialRating(parseInt(value))}
+              disabled={yearEndSubmitted}
+              className="space-y-3"
+            >
+              <div className="flex items-start space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                <RadioGroupItem value="3" id="ye-potential-3" className="mt-1" disabled={yearEndSubmitted} />
+                <Label htmlFor="ye-potential-3" className="cursor-pointer flex-1">
+                  <div className="font-medium">High Potential</div>
+                  <p className="text-sm text-muted-foreground">
+                    Ready for promotion within 1-2 years, demonstrates leadership capabilities
+                  </p>
+                </Label>
+              </div>
+              <div className="flex items-start space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                <RadioGroupItem value="2" id="ye-potential-2" className="mt-1" disabled={yearEndSubmitted} />
+                <Label htmlFor="ye-potential-2" className="cursor-pointer flex-1">
+                  <div className="font-medium">Medium Potential</div>
+                  <p className="text-sm text-muted-foreground">
+                    Growing in role, may be ready for advancement with development
+                  </p>
+                </Label>
+              </div>
+              <div className="flex items-start space-x-3 p-3 rounded-lg border hover:bg-muted/50 transition-colors">
+                <RadioGroupItem value="1" id="ye-potential-1" className="mt-1" disabled={yearEndSubmitted} />
+                <Label htmlFor="ye-potential-1" className="cursor-pointer flex-1">
+                  <div className="font-medium">Low Potential</div>
+                  <p className="text-sm text-muted-foreground">
+                    Performing well in current role, limited growth trajectory
+                  </p>
+                </Label>
+              </div>
+            </RadioGroup>
+          </CardContent>
+        </Card>
+
+        {/* Action Buttons */}
+        {!yearEndSubmitted && (
+          <div className="flex justify-end gap-3 pt-4 border-t">
+            <Button 
+              variant="outline" 
+              onClick={handleSave} 
+              disabled={saving}
+            >
+              <Save className="mr-2 h-4 w-4" />
+              Save Draft
+            </Button>
+            <Button 
+              onClick={handleSubmit}
+              disabled={saving || !overallRating || !yearEndOverallComments.trim()}
+            >
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              <Send className="mr-2 h-4 w-4" />
+              Submit for HR Review
+            </Button>
+          </div>
+        )}
+
+      
+      </div>
+    );
+  };
 
   return (
     <MainLayout>
@@ -1439,7 +1600,7 @@ export default function ManagerEvaluation() {
           onQuarterChange={handleQuarterChange}
           quarterlyContent={
             canEvaluate || isSubmitted ? (
-              renderRatingContent()
+              renderQuarterlyRatingContent()
             ) : (
               <Card>
                 <CardContent className="flex flex-col items-center justify-center py-12">
@@ -1454,23 +1615,7 @@ export default function ManagerEvaluation() {
               </Card>
             )
           }
-          yearEndContent={
-            yearEndPeriodStatus.timing === 'current' && relevantSelfEval?.status === 'submitted' || isSubmitted ? (
-              renderRatingContent()
-            ) : (
-              <Card>
-                <CardContent className="flex flex-col items-center justify-center py-12">
-                  <User className="h-12 w-12 text-muted-foreground mb-4" />
-                  <h3 className="font-semibold text-lg">Cannot evaluate yet</h3>
-                  <p className="text-muted-foreground text-center">
-                    {yearEndPeriodStatus.timing !== 'current' 
-                      ? yearEndPeriodStatus.message
-                      : `${getEmployeeFirstName(employee)} must complete their year-end self-evaluation first`}
-                  </p>
-                </CardContent>
-              </Card>
-            )
-          }
+          yearEndContent={renderYearEndEvaluationContent()}
         />
       </div>
     </MainLayout>

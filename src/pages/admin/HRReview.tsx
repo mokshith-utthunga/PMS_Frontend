@@ -38,8 +38,11 @@ import {
   Target,
   Calculator,
   TrendingUp,
+  Calendar,
+  Clock,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Separator } from '@/components/ui/separator';
 import { formatRating } from '@/lib/ratingCalculations';
 
 interface PendingReview {
@@ -56,6 +59,30 @@ interface PendingReview {
   overall_comments: string | null;
   guidance: string | null;
   created_at: string;
+}
+
+interface PendingYearEndReview {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  employee_code: string;
+  manager_name: string;
+  manager_code: string;
+  cycle_id: string;
+  cycle_name: string;
+  date_of_joining: string;
+  department: string;
+  q1_rating: number | null;
+  q2_rating: number | null;
+  q3_rating: number | null;
+  q4_rating: number | null;
+  calculated_overall_rating: number | null;
+  overall_rating: number | null;
+  overall_comments: string | null;
+  development_recommendations: string | null;
+  potential_rating: number | null;
+  completed_quarters: number;
+  submitted_at: string;
 }
 
 interface RatingRejection {
@@ -82,14 +109,19 @@ export default function HRReview() {
   const [activeCycle, setActiveCycle] = useState<any>(null);
   
   const [pendingReviews, setPendingReviews] = useState<PendingReview[]>([]);
+  const [pendingYearEndReviews, setPendingYearEndReviews] = useState<PendingYearEndReview[]>([]);
   const [ratingRejections, setRatingRejections] = useState<RatingRejection[]>([]);
   
   const [selectedReview, setSelectedReview] = useState<PendingReview | null>(null);
+  const [selectedYearEndReview, setSelectedYearEndReview] = useState<PendingYearEndReview | null>(null);
   const [selectedRejection, setSelectedRejection] = useState<RatingRejection | null>(null);
   const [showReviewDialog, setShowReviewDialog] = useState(false);
+  const [showYearEndReviewDialog, setShowYearEndReviewDialog] = useState(false);
   const [showRejectionDialog, setShowRejectionDialog] = useState(false);
   const [showApproveDialog, setShowApproveDialog] = useState(false);
+  const [showYearEndApproveDialog, setShowYearEndApproveDialog] = useState(false);
   const [showRejectDialog, setShowRejectDialog] = useState(false);
+  const [showYearEndRejectDialog, setShowYearEndRejectDialog] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
   
   // Review detail data
@@ -120,9 +152,13 @@ export default function HRReview() {
       if (cycleResult.data) {
         setActiveCycle(cycleResult.data);
         
-        // Fetch pending reviews
+        // Fetch pending quarterly reviews
         const reviewsResult = await evaluationService.hrReview.getPendingReviews(cycleResult.data.id);
         setPendingReviews(reviewsResult.data || []);
+        
+        // Fetch pending year-end reviews
+        const yearEndReviewsResult = await evaluationService.yearEndHRReview.getPendingReviews(cycleResult.data.id);
+        setPendingYearEndReviews(yearEndReviewsResult.data || []);
         
         // Fetch rating rejections
         const rejectionsResult = await evaluationService.ratingRejections.get(cycleResult.data.id);
@@ -324,6 +360,71 @@ export default function HRReview() {
     await fetchRejectionDetails(rejection);
   }, [fetchRejectionDetails]);
 
+  // Year-end review handlers
+  const handleApproveYearEndReview = useCallback(async (reviewId: string) => {
+    setSaving(reviewId);
+    try {
+      await evaluationService.yearEndHRReview.approveReview(reviewId);
+      toast({ title: 'Year-end review approved and released to employee' });
+      setShowYearEndApproveDialog(false);
+      setShowYearEndReviewDialog(false);
+      await fetchData();
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to approve year-end review',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(null);
+    }
+  }, [toast, fetchData]);
+
+  const handleRejectYearEndReview = useCallback(async () => {
+    if (!selectedYearEndReview || !rejectionReason.trim()) {
+      toast({
+        title: 'Error',
+        description: 'Please provide a rejection reason',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSaving(selectedYearEndReview.id);
+    try {
+      await evaluationService.yearEndHRReview.rejectReview(selectedYearEndReview.id, rejectionReason.trim());
+      toast({ title: 'Year-end review rejected and sent back to manager' });
+      setShowYearEndReviewDialog(false);
+      setShowYearEndRejectDialog(false);
+      setRejectionReason('');
+      setSelectedYearEndReview(null);
+      await fetchData();
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to reject year-end review',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(null);
+    }
+  }, [selectedYearEndReview, rejectionReason, toast, fetchData]);
+
+  const openYearEndReviewDialog = useCallback((review: PendingYearEndReview) => {
+    setSelectedYearEndReview(review);
+    setShowYearEndReviewDialog(true);
+  }, []);
+
+  // Helper to format join date
+  const formatJoinDate = (date: string | null | undefined) => {
+    if (!date) return '-';
+    return new Date(date).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
   if (!isHR && !isBUHead) {
     return (
       <MainLayout>
@@ -360,10 +461,14 @@ export default function HRReview() {
         <Tabs defaultValue="reviews" className="space-y-4">
           <TabsList>
             <TabsTrigger value="reviews">
-              Review ({pendingReviews.length})
+              Quarterly ({pendingReviews.length})
+            </TabsTrigger>
+            <TabsTrigger value="year-end">
+              <Calendar className="h-4 w-4 mr-1" />
+              Year-End ({pendingYearEndReviews.length})
             </TabsTrigger>
             <TabsTrigger value="rejections">
-              Rating Rejection ({ratingRejections.filter(r => r.status === 'pending').length})
+              Rejections ({ratingRejections.filter(r => r.status === 'pending').length})
             </TabsTrigger>
           </TabsList>
 
@@ -420,6 +525,100 @@ export default function HRReview() {
                           onClick={() => {
                             setSelectedReview(review);
                             setShowApproveDialog(true);
+                          }}
+                          disabled={saving === review.id}
+                        >
+                          {saving === review.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                          <CheckCircle className="mr-2 h-4 w-4" />
+                          Approve
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Year-End Reviews Tab */}
+          <TabsContent value="year-end" className="space-y-4">
+            {pendingYearEndReviews.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <CheckCircle className="h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="font-semibold text-lg">No pending year-end reviews</h3>
+                  <p className="text-muted-foreground">
+                    All year-end evaluations have been reviewed.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid gap-4">
+                {pendingYearEndReviews.map((review) => (
+                  <Card key={review.id} className="hover:shadow-md transition-shadow border-l-4 border-l-primary">
+                    <CardHeader>
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <CardTitle className="flex items-center gap-2">
+                            <User className="h-5 w-5" />
+                            {review.employee_name}
+                            <Badge variant="outline">{review.employee_code}</Badge>
+                            <Badge variant="secondary" className="bg-primary/10">
+                              <Calendar className="h-3 w-3 mr-1" />
+                              Year-End
+                            </Badge>
+                          </CardTitle>
+                          <CardDescription className="mt-2">
+                            <div className="flex flex-wrap items-center gap-4">
+                              <span>{review.cycle_name}</span>
+                              <span>Manager: {review.manager_name}</span>
+                              <span>Joined: {formatJoinDate(review.date_of_joining)}</span>
+                              <span>{review.completed_quarters}/4 Quarters</span>
+                            </div>
+                          </CardDescription>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-bold text-primary">
+                            {review.overall_rating 
+                              ? formatRating(review.overall_rating)
+                              : review.calculated_overall_rating
+                                ? formatRating(review.calculated_overall_rating)
+                                : '-'}
+                          </div>
+                          <div className="text-xs text-muted-foreground">Year-End Rating</div>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      {/* Quarterly Ratings Summary */}
+                      <div className="grid grid-cols-4 gap-2 mb-4">
+                        {[
+                          { label: 'Q1', rating: review.q1_rating },
+                          { label: 'Q2', rating: review.q2_rating },
+                          { label: 'Q3', rating: review.q3_rating },
+                          { label: 'Q4', rating: review.q4_rating },
+                        ].map((q) => (
+                          <div key={q.label} className="p-2 rounded bg-muted/50 text-center">
+                            <div className="text-xs text-muted-foreground">{q.label}</div>
+                            <div className="font-semibold text-sm">
+                              {q.rating !== null && q.rating !== undefined ? formatRating(q.rating) : '-'}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => openYearEndReviewDialog(review)}
+                          variant="outline"
+                          className="flex-1"
+                        >
+                          View Details
+                        </Button>
+                        <Button
+                          onClick={() => {
+                            setSelectedYearEndReview(review);
+                            setShowYearEndApproveDialog(true);
                           }}
                           disabled={saving === review.id}
                         >
@@ -742,6 +941,241 @@ export default function HRReview() {
               await handleRejectReview();
               setShowRejectDialog(false);
             }} disabled={!rejectionReason.trim() || saving !== null}>
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Submit Rejection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Year-End Review Details Dialog */}
+      <Dialog open={showYearEndReviewDialog} onOpenChange={setShowYearEndReviewDialog}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5" />
+              Year-End Review Details
+            </DialogTitle>
+            <DialogDescription>
+              {selectedYearEndReview && (
+                <>
+                  {selectedYearEndReview.employee_name} • {selectedYearEndReview.cycle_name}
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedYearEndReview && (
+            <div className="space-y-6">
+              {/* Employee Info */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <User className="h-5 w-5" />
+                    Employee Information
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div>
+                      <Label className="text-muted-foreground">Employee</Label>
+                      <p className="font-medium mt-1">{selectedYearEndReview.employee_name} ({selectedYearEndReview.employee_code})</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Joining Date</Label>
+                      <p className="font-medium mt-1">{formatJoinDate(selectedYearEndReview.date_of_joining)}</p>
+                    </div>
+                    <div>
+                      <Label className="text-muted-foreground">Quarters Evaluated</Label>
+                      <p className="font-medium mt-1">{selectedYearEndReview.completed_quarters} of 4</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Quarterly Ratings */}
+              
+                  <Separator className="my-4" />
+                  <span className="flex items-center gap-2"><Clock className="h-5 w-5" />
+                    <div className="font-semibold text-lg ">Year-End Overall Rating</div>
+                    </span>
+                  <div className="text-center p-6 rounded-lg bg-primary/5 border-2 ">
+                    <div className="text-4xl font-bold text-primary mb-2">
+                      {selectedYearEndReview.overall_rating 
+                        ? parseFloat(formatRating(selectedYearEndReview.overall_rating)).toFixed(1)
+                        : selectedYearEndReview.calculated_overall_rating
+                          ? formatRating(selectedYearEndReview.calculated_overall_rating)
+                          : '-'}
+                    </div>
+                    {selectedYearEndReview.calculated_overall_rating && !selectedYearEndReview.overall_rating && (
+                      <div className="text-xs text-muted-foreground">
+                        (Auto-calculated average of quarterly ratings)
+                      </div>
+                    )}
+                  </div>
+
+              {/* Potential Rating */}
+              {selectedYearEndReview.potential_rating !== null && selectedYearEndReview.potential_rating !== undefined && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-start justify-start gap-2">
+                      <TrendingUp className="h-5 w-5" />
+                      Potential Rating
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="p-4 rounded-lg bg-muted/50">
+                      <div className="text-start">
+                        <div className="text-2xl font-normal mb-2">
+                          {selectedYearEndReview.potential_rating === 3 && 'High Potential'}
+                          {selectedYearEndReview.potential_rating === 2 && 'Medium Potential'}
+                          {selectedYearEndReview.potential_rating === 1 && 'Low Potential'}
+                        </div>
+                        <p className="text-sm text-gray-500">
+                          {selectedYearEndReview.potential_rating === 3 && 'Ready for promotion within 1-2 years, demonstrates leadership capabilities'}
+                          {selectedYearEndReview.potential_rating === 2 && 'Growing in role, may be ready for advancement with development'}
+                          {selectedYearEndReview.potential_rating === 1 && 'Performing in current role, focus on current responsibilities'}
+                        </p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+
+
+              {/* Manager's Overall Feedback */}
+              {selectedYearEndReview.overall_comments && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <MessageSquare className="h-5 w-5" />
+                      Manager's Overall Feedback
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="whitespace-pre-wrap">{selectedYearEndReview.overall_comments}</p>
+                  </CardContent>
+                </Card>
+              )}
+
+<Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 font-normal text-lg">
+                    <Calculator className="h-5 w-5" />
+                    Quarterly Manager Ratings
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-4 gap-3 mb-4">
+                    {[
+                      { label: 'Q1', rating: selectedYearEndReview.q1_rating },
+                      { label: 'Q2', rating: selectedYearEndReview.q2_rating },
+                      { label: 'Q3', rating: selectedYearEndReview.q3_rating },
+                      { label: 'Q4', rating: selectedYearEndReview.q4_rating },
+                    ].map((q) => (
+                      <div key={q.label} className="p-4 rounded-lg bg-muted/50 text-center">
+                        <div className="text-sm text-muted-foreground mb-1">{q.label}</div>
+                        <div className="text-xl font-bold">
+                          {q.rating !== null && q.rating !== undefined ? formatRating(q.rating) : '-'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  
+                  {/* Overall Year-End Rating */}
+                </CardContent>
+              </Card>
+
+              {/* Development Recommendations */}
+              {selectedYearEndReview.development_recommendations && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <TrendingUp className="h-5 w-5" />
+                      Development Recommendations
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="whitespace-pre-wrap">{selectedYearEndReview.development_recommendations}</p>
+                  </CardContent>
+                </Card>
+              )}
+
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowYearEndReviewDialog(false);
+                    setShowYearEndRejectDialog(true);
+                  }}
+                >
+                  Reject
+                </Button>
+                <Button
+                  onClick={() => {
+                    setShowYearEndReviewDialog(false);
+                    setShowYearEndApproveDialog(true);
+                  }}
+                >
+                  <CheckCircle className="mr-2 h-4 w-4" />
+                  Approve
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Year-End Approve Confirmation Dialog */}
+      <AlertDialog open={showYearEndApproveDialog} onOpenChange={setShowYearEndApproveDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Approve Year-End Review</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to approve this year-end review? Once approved, the ratings will be released to the employee.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => selectedYearEndReview && handleApproveYearEndReview(selectedYearEndReview.id)}
+            >
+              Approve
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Year-End Rejection Reason Dialog */}
+      <Dialog open={showYearEndRejectDialog} onOpenChange={setShowYearEndRejectDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject Year-End Review</DialogTitle>
+            <DialogDescription>
+              Provide a reason for rejecting this year-end review. It will be sent back to the manager.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Rejection Reason</Label>
+              <Textarea
+                placeholder="Enter reason for rejection..."
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                rows={5}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setShowYearEndRejectDialog(false);
+              setRejectionReason('');
+            }}>
+              Cancel
+            </Button>
+            <Button onClick={handleRejectYearEndReview} disabled={!rejectionReason.trim() || saving !== null}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Submit Rejection
             </Button>
