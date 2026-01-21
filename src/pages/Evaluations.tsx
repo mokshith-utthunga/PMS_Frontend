@@ -6,11 +6,20 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Save, Send, Target, AlertCircle, ChevronRight } from 'lucide-react';
+import { Save, Send, Target, AlertCircle, ChevronRight, Calendar, AlertTriangle } from 'lucide-react';
 import { PageLoader } from '@/loaders';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEvaluationsData, useEvaluationOperations, type KpiRating } from '@/hooks';
-import { isQuarterOpen } from '@/utils/quarterUtils';
+import { useQuarterFromUrl } from '@/hooks/useQuarterFromUrl';
+import { isQuarterOpen, getQuarterTiming, formatQuarterDates } from '@/utils/quarterUtils';
+import { 
+  hasQuarterStarted, 
+  hasQuarterEnded, 
+  canWorkOnQuarter,
+  formatDateShort,
+  getQuarterEndDateFromCycle,
+  type CycleWithQuarterDates
+} from '@/utils/quarterHelpers';
 import { calculateAllKRARatings, calculateQuarterRating, type KPIForCalculation } from '@/lib/ratingCalculations';
 import type { Goal } from '@/types';
 import { QuarterTabs } from '@/components/evaluation/QuarterTabs';
@@ -22,17 +31,32 @@ export default function Evaluations() {
   const { user, hasAnyRole } = useAuth();
   const isHR = hasAnyRole(['hr_admin', 'hrbp', 'system_admin']);
 
-  // Fetch evaluations data
-  const evalData = useEvaluationsData(user?.id);
+  // URL-based quarter handling
+  const { quarter, setQuarter, isValidQuarter } = useQuarterFromUrl();
+
+  // Local state for form data - sync with URL quarter
+  const [selectedQuarter, setSelectedQuarter] = useState<string>(quarter ? String(quarter) : '1');
+
+  // Fetch evaluations data with selected quarter
+  const evalData = useEvaluationsData(user?.id, parseInt(selectedQuarter));
   const {
-    employeeId, activeCycle, kras, kpis, ratingScales,
+    employeeId, activeCycle, ratingScales,
     quarterlyReviews: initialQuarterlyReviews,
     kpiRatings: initialKpiRatings,
     currentQuarter, loading, refetch,
+    quarterKras, quarterKpis,
+    latePermissions,
   } = evalData;
-
-  // Local state for form data
-  const [selectedQuarter, setSelectedQuarter] = useState<string>('1');
+  
+  // Sync selectedQuarter with URL quarter
+  useEffect(() => {
+    if (quarter) {
+      setSelectedQuarter(String(quarter));
+    } else if (currentQuarter) {
+      setSelectedQuarter(String(currentQuarter));
+      setQuarter(currentQuarter as 1 | 2 | 3 | 4);
+    }
+  }, [quarter, currentQuarter, setQuarter]);
   const [quarterlyReviews, setQuarterlyReviews] = useState(initialQuarterlyReviews);
   const [kpiRatings, setKpiRatings] = useState(initialKpiRatings);
   const [overallComments, setOverallComments] = useState('');
@@ -45,22 +69,45 @@ export default function Evaluations() {
     setKpiRatings(initialKpiRatings);
   }, [initialQuarterlyReviews, initialKpiRatings]);
 
-  // Set initial quarter
+  // Set initial quarter from URL or find first open quarter
   useEffect(() => {
-    if (activeCycle) {
+    if (activeCycle && !isValidQuarter) {
       for (let q = 1; q <= 4; q++) {
-        if (isQuarterOpen(activeCycle, q)) {
+        // Only select quarters that are current or past (not future)
+        const timing = getQuarterTiming(activeCycle, q);
+        if (timing !== 'future' && isQuarterOpen(activeCycle, q)) {
           setSelectedQuarter(String(q));
+          setQuarter(q as 1 | 2 | 3 | 4);
           return;
         }
       }
-      setSelectedQuarter(String(currentQuarter));
+      // Fall back to current quarter if no open quarter found
+      if (currentQuarter) {
+        const timing = getQuarterTiming(activeCycle, currentQuarter);
+        if (timing !== 'future') {
+          setSelectedQuarter(String(currentQuarter));
+          setQuarter(currentQuarter as 1 | 2 | 3 | 4);
+        } else {
+          // Find the latest non-future quarter
+          for (let q = 4; q >= 1; q--) {
+            const t = getQuarterTiming(activeCycle, q);
+            if (t !== 'future') {
+              setSelectedQuarter(String(q));
+              setQuarter(q as 1 | 2 | 3 | 4);
+              return;
+            }
+          }
+        }
+      }
     }
-  }, [activeCycle, currentQuarter]);
+  }, [activeCycle, currentQuarter, isValidQuarter, setQuarter]);
 
-  // Update form when quarter changes
+  // Update form when quarter changes and sync URL
   useEffect(() => {
     const q = parseInt(selectedQuarter);
+    if (q >= 1 && q <= 4) {
+      setQuarter(q as 1 | 2 | 3 | 4);
+    }
     const review = quarterlyReviews[q];
     if (review) {
       setOverallComments(review.overall_comments || '');
@@ -76,7 +123,12 @@ export default function Evaluations() {
       }
       return prev;
     });
-  }, [selectedQuarter, quarterlyReviews]);
+  }, [selectedQuarter, quarterlyReviews, setQuarter]);
+
+  // Get all KPIs for the selected quarter (for evaluation operations)
+  const currentQuarterKpis = useMemo(() => {
+    return quarterKpis[parseInt(selectedQuarter)] || [];
+  }, [quarterKpis, selectedQuarter]);
 
   // Evaluation operations
   const evalOps = useEvaluationOperations({
@@ -84,36 +136,11 @@ export default function Evaluations() {
     cycleId: activeCycle?.id || null,
     quarterlyReviews,
     kpiRatings,
-    kpis,
+    kpis: currentQuarterKpis,
     onSuccess: refetch,
   });
 
-  // Calculate ratings
-  const calculatedRatings = useMemo(() => {
-    const q = parseInt(selectedQuarter);
-    const currentRatings = kpiRatings[q] || {};
-    const kpiRatingsForCalc: Record<string, number | null> = {};
-    // Filter KPIs that have kra_id (required for calculation) and map to KPIForCalculation
-    const kpisWithKra: KPIForCalculation[] = kpis
-      .filter((kpi): kpi is Goal & { kra_id: string } => !!kpi.kra_id)
-      .map(kpi => ({
-        id: kpi.id,
-        kra_id: kpi.kra_id,
-        weight: kpi.weight,
-      }));
-    kpisWithKra.forEach(kpi => {
-      kpiRatingsForCalc[kpi.id] = currentRatings[kpi.id]?.self_rating || null;
-    });
-    const kraRatings = calculateAllKRARatings(kras, kpisWithKra, kpiRatingsForCalc);
-    const overallCalc = calculateQuarterRating(kras, kraRatings);
-    return { kraRatings, overallCalc };
-  }, [selectedQuarter, kpiRatings, kras, kpis]);
-
   // Handlers
-  const getKPIsForKRA = useCallback(
-    (kraId: string) => kpis.filter(kpi => kpi.kra_id === kraId),
-    [kpis]
-  );
 
   const handleKpiRatingChange = useCallback(
     (goalId: string, field: keyof KpiRating, value: unknown) => {
@@ -156,11 +183,6 @@ export default function Evaluations() {
 
   // Computed values
   const q = parseInt(selectedQuarter);
-  const currentReview = quarterlyReviews[q];
-  const isSubmitted = currentReview?.status === 'submitted';
-  const isOpen = isQuarterOpen(activeCycle, q);
-  const canEdit = isOpen && !isSubmitted;
-  const currentKpiRatings = kpiRatings[q] || {};
 
   // Loading state
   if (loading) {
@@ -211,28 +233,206 @@ export default function Evaluations() {
     );
   }
 
-  // No approved KRAs/KPIs
-  if (kras.length === 0 || kpis.length === 0) {
+
+  // Determine what content to render for the selected quarter
+  const renderQuarterContent = (quarterNum: number) => {
+    const qTiming = getQuarterTiming(activeCycle, quarterNum);
+    const qHasGoals = (quarterKras[quarterNum] || []).length > 0 && (quarterKpis[quarterNum] || []).length > 0;
+    const qKras = quarterKras[quarterNum] || [];
+    const qKpis = quarterKpis[quarterNum] || [];
+    const qHasLatePermission = latePermissions[quarterNum] || false;
+    const qEnded = hasQuarterEnded(activeCycle as CycleWithQuarterDates, quarterNum);
+    const qEndDate = getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, quarterNum);
+
+    // If quarter is in the future, show not accessible message
+    if (qTiming === 'future') {
+      const qDates = formatQuarterDates(activeCycle, quarterNum);
+      return (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12">
+            <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
+            <h3 className="font-semibold text-lg">Q{quarterNum} Self-Review Period is Not Open Yet</h3>
+            <p className="text-muted-foreground text-center mt-2">
+              {qDates 
+                ? `The Q${quarterNum} self-review period will open from ${qDates.start} to ${qDates.end}.`
+                : `The Q${quarterNum} self-review period has not been scheduled yet.`
+              }
+            </p>
+            <p className="text-sm text-muted-foreground mt-2">
+              Please check back when the review period begins.
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    // If quarter has ended and no late permission, show message
+    if (qEnded && !qHasLatePermission) {
+      return (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12">
+            <AlertTriangle className="h-12 w-12 text-amber-500 mb-4" />
+            <h3 className="font-semibold text-lg">Q{quarterNum} Self-Review Period Has Ended</h3>
+            <p className="text-muted-foreground text-center mt-2">
+              The deadline for Q{quarterNum} self-review was{' '}
+              <span className="font-medium">{qEndDate ? formatDateShort(qEndDate) : 'passed'}</span>.
+            </p>
+            <p className="text-sm text-muted-foreground mt-2">
+              Please contact your HR/Admin to request late submission access.
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    // If no goals for this quarter, show message to set goals
+    if (!qHasGoals) {
+      return (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12">
+            <Target className="h-12 w-12 text-muted-foreground mb-4" />
+            <h3 className="font-semibold text-lg">Please Complete Your Goals for Q{quarterNum}</h3>
+            <p className="text-muted-foreground text-center mt-2">
+              You need to create and get approval for your Q{quarterNum} goals before starting self evaluation.
+            </p>
+            <Button 
+              className="mt-4" 
+              onClick={() => window.location.href = `/goals?quarter=q${quarterNum}`}
+            >
+              Go to Goals
+            </Button>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    // Quarter has goals and is accessible (or has late permission) - show evaluation content
+    const qIsOpen = isQuarterOpen(activeCycle, quarterNum);
+    const qReview = quarterlyReviews[quarterNum];
+    const qIsSubmitted = qReview?.status === 'submitted';
+    // Can edit if: (quarter is open OR has late permission) AND not already submitted
+    const qCanEdit = (qIsOpen || qHasLatePermission) && !qIsSubmitted;
+    const qKpiRatings = kpiRatings[quarterNum] || {};
+
+    // Calculate ratings for this quarter
+    const qKpisWithKra: KPIForCalculation[] = qKpis
+      .filter((kpi): kpi is Goal & { kra_id: string } => !!kpi.kra_id)
+      .map(kpi => ({
+        id: kpi.id,
+        kra_id: kpi.kra_id,
+        weight: kpi.weight,
+      }));
+
+    const qKpiRatingsForCalc: Record<string, number | null> = {};
+    qKpisWithKra.forEach(kpi => {
+      qKpiRatingsForCalc[kpi.id] = qKpiRatings[kpi.id]?.self_rating || null;
+    });
+
+    const qKraRatings = calculateAllKRARatings(qKras, qKpisWithKra, qKpiRatingsForCalc);
+    const qOverallCalc = calculateQuarterRating(qKras, qKraRatings);
+
     return (
-      <MainLayout>
-        <div className="space-y-6">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Self Evaluation</h1>
-            <p className="text-muted-foreground">{activeCycle.name}</p>
-          </div>
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12">
-              <Target className="h-12 w-12 text-muted-foreground mb-4" />
-              <h3 className="font-semibold text-lg">No approved KRAs/KPIs</h3>
-              <p className="text-muted-foreground">
-                Your KRAs and KPIs must be approved before you can start self evaluation
+      <>
+        <QuarterAlerts
+          quarter={quarterNum}
+          cycle={activeCycle}
+          isSubmitted={qIsSubmitted}
+        />
+
+        {/* Late permission notice */}
+        {qEnded && qHasLatePermission && !qIsSubmitted && (
+          <Card className="border-amber-200 bg-amber-50">
+            <CardContent className="py-3">
+              <p className="text-sm text-amber-800">
+                <AlertTriangle className="inline h-4 w-4 mr-2" />
+                You have been granted late submission access for Q{quarterNum} by HR/Admin.
               </p>
             </CardContent>
           </Card>
-        </div>
-      </MainLayout>
+        )}
+
+        <Tabs 
+          value={evaluationTab[quarterNum] || 'goals'} 
+          onValueChange={(value) => handleTabChange(quarterNum, value)}
+          className="space-y-4"
+        >
+          <TabsList>
+            <TabsTrigger value="goals">KRA/KPI Ratings ({qKpis.length})</TabsTrigger>
+            <TabsTrigger value="overall">Overall Assessment</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="goals" className="space-y-6">
+            {qKras.map(kra => (
+              <KRAEvaluationCard
+                key={kra.id}
+                kra={kra}
+                kpis={qKpis.filter(kpi => kpi.kra_id === kra.id)}
+                goalRatings={qKpiRatings}
+                kraRating={qKraRatings[kra.id]}
+                ratingScales={ratingScales}
+                canEdit={qCanEdit}
+                onRatingChange={handleKpiRatingChange}
+              />
+            ))}
+            
+            {/* Action Buttons for KRA/KPI Ratings Tab */}
+            {qCanEdit && (
+              <div className="flex justify-end gap-3 pt-4 border-t">
+                <Button 
+                  variant="outline" 
+                  onClick={handleSave} 
+                  disabled={evalOps.saving}
+                >
+                  <Save className="mr-2 h-4 w-4" />
+                  Save
+                </Button>
+                <Button 
+                  onClick={handleNext}
+                  disabled={evalOps.saving}
+                >
+                  Next
+                  <ChevronRight className="ml-2 h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="overall" className="space-y-4">
+            <OverallAssessmentTab
+              quarter={quarterNum}
+              calculatedRating={qOverallCalc}
+              overallRating={quarterNum === q ? overallRating : undefined}
+              overallComments={quarterNum === q ? overallComments : ''}
+              canEdit={qCanEdit}
+              onRatingChange={setOverallRating}
+              onCommentsChange={setOverallComments}
+            />
+            
+            {/* Action Buttons for Overall Assessment Tab */}
+            {qCanEdit && (
+              <div className="flex justify-end gap-3 pt-4 border-t">
+                <Button 
+                  variant="outline" 
+                  onClick={handleSave} 
+                  disabled={evalOps.saving}
+                >
+                  <Save className="mr-2 h-4 w-4" />
+                  Save
+                </Button>
+                <Button 
+                  onClick={handleSubmit}
+                  disabled={evalOps.saving}
+                >
+                  <Send className="mr-2 h-4 w-4" />
+                  Submit
+                </Button>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      </>
     );
-  }
+  };
 
   return (
     <MainLayout>
@@ -246,102 +446,25 @@ export default function Evaluations() {
         {/* Quarter Tabs */}
         <QuarterTabs
           selectedQuarter={selectedQuarter}
-          onQuarterChange={setSelectedQuarter}
+          onQuarterChange={(qStr) => {
+            setSelectedQuarter(qStr);
+            const quarterNum = parseInt(qStr);
+            if (quarterNum >= 1 && quarterNum <= 4) {
+              setQuarter(quarterNum as 1 | 2 | 3 | 4);
+            }
+          }}
           cycle={activeCycle}
           quarterlyEvaluations={Object.fromEntries(
-            Object.entries(quarterlyReviews).map(([q, review]) => [
-              q,
+            Object.entries(quarterlyReviews).map(([qKey, review]) => [
+              qKey,
               review ? { status: review.status || 'in_progress' } : undefined
             ])
           )}
+          restrictToOpenQuarters={true}
         >
-          {[1, 2, 3, 4].map(quarter => (
-            <TabsContent key={quarter} value={String(quarter)} className="space-y-4">
-              <QuarterAlerts
-                quarter={quarter}
-                cycle={activeCycle}
-                isSubmitted={quarter === q && isSubmitted}
-              />
-
-              <Tabs 
-                value={evaluationTab[quarter] || 'goals'} 
-                onValueChange={(value) => handleTabChange(quarter, value)}
-                className="space-y-4"
-              >
-                <TabsList>
-                  <TabsTrigger value="goals">KRA/KPI Ratings ({kpis.length})</TabsTrigger>
-                  <TabsTrigger value="overall">Overall Assessment</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="goals" className="space-y-6">
-                  {kras.map(kra => (
-                    <KRAEvaluationCard
-                      key={kra.id}
-                      kra={kra}
-                      kpis={getKPIsForKRA(kra.id)}
-                      goalRatings={currentKpiRatings}
-                      kraRating={calculatedRatings.kraRatings[kra.id]}
-                      ratingScales={ratingScales}
-                      canEdit={quarter === q && canEdit}
-                      onRatingChange={handleKpiRatingChange}
-                    />
-                  ))}
-                  
-                  {/* Action Buttons for KRA/KPI Ratings Tab */}
-                  {quarter === q && canEdit && (
-                    <div className="flex justify-end gap-3 pt-4 border-t">
-                      <Button 
-                        variant="outline" 
-                        onClick={handleSave} 
-                        disabled={evalOps.saving}
-                      >
-                        <Save className="mr-2 h-4 w-4" />
-                        Save
-                      </Button>
-                      <Button 
-                        onClick={handleNext}
-                        disabled={evalOps.saving}
-                      >
-                        Next
-                        <ChevronRight className="ml-2 h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
-                </TabsContent>
-
-                <TabsContent value="overall" className="space-y-4">
-                  <OverallAssessmentTab
-                    quarter={quarter}
-                    calculatedRating={quarter === q ? calculatedRatings.overallCalc : null}
-                    overallRating={overallRating}
-                    overallComments={overallComments}
-                    canEdit={quarter === q && canEdit}
-                    onRatingChange={setOverallRating}
-                    onCommentsChange={setOverallComments}
-                  />
-                  
-                  {/* Action Buttons for Overall Assessment Tab */}
-                  {quarter === q && canEdit && (
-                    <div className="flex justify-end gap-3 pt-4 border-t">
-                      <Button 
-                        variant="outline" 
-                        onClick={handleSave} 
-                        disabled={evalOps.saving}
-                      >
-                        <Save className="mr-2 h-4 w-4" />
-                        Save
-                      </Button>
-                      <Button 
-                        onClick={handleSubmit}
-                        disabled={evalOps.saving}
-                      >
-                        <Send className="mr-2 h-4 w-4" />
-                        Submit
-                      </Button>
-                    </div>
-                  )}
-                </TabsContent>
-              </Tabs>
+          {[1, 2, 3, 4].map(quarterNum => (
+            <TabsContent key={quarterNum} value={String(quarterNum)} className="space-y-4">
+              {renderQuarterContent(quarterNum)}
             </TabsContent>
           ))}
         </QuarterTabs>

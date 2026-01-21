@@ -10,6 +10,7 @@ export interface CreateKRAData {
   description?: string | null;
   weight: number;
   status?: GoalStatus;
+  quarter?: number | null;
 }
 
 export interface UpdateKRAData {
@@ -18,6 +19,7 @@ export interface UpdateKRAData {
   weight?: number;
   status?: GoalStatus;
   manager_comments?: string | null;
+  quarter?: number | null;
 }
 
 // KPI Types
@@ -33,6 +35,7 @@ export interface CreateKPIData {
   weight: number;
   due_date?: string | null;
   status?: GoalStatus;
+  quarter?: number | null;
 }
 
 export interface UpdateKPIData {
@@ -44,6 +47,7 @@ export interface UpdateKPIData {
   due_date?: string | null;
   status?: GoalStatus;
   manager_comments?: string | null;
+  quarter?: number | null;
 }
 
 // Bonus KRA Types
@@ -69,15 +73,23 @@ export interface CreateBonusKPIData {
 export const goalsService = {
   // ========== KRA Operations ==========
   kras: {
-    getAll: (cycleId: string, status?: string) => {
+    getAll: (cycleId: string, status?: string, quarter?: number | null) => {
       let url = `/api/kras?cycle_id=${cycleId}`;
       if (status) url += `&status=${status}`;
+      // Only add quarter param when it's a valid number (1-4)
+      if (quarter && quarter >= 1 && quarter <= 4) {
+        url += `&quarter=${quarter}`;
+      }
       return api.get<{ data: KRA[] }>(url);
     },
 
-    getByEmployee: (employeeId: string, cycleId: string, status?: string) => {
+    getByEmployee: (employeeId: string, cycleId: string, status?: string, quarter?: number | null) => {
       let url = `/api/kras?employee_id=${employeeId}&cycle_id=${cycleId}`;
       if (status) url += `&status=${status}`;
+      // Only add quarter param when it's a valid number (1-4)
+      if (quarter && quarter >= 1 && quarter <= 4) {
+        url += `&quarter=${quarter}`;
+      }
       return api.get<{ data: KRA[] }>(url);
     },
 
@@ -93,9 +105,13 @@ export const goalsService = {
 
   // ========== KPI/Goals Operations ==========
   kpis: {
-    getByEmployee: (employeeId: string, cycleId: string, status?: string) => {
+    getByEmployee: (employeeId: string, cycleId: string, status?: string, quarter?: number | null) => {
       let url = `/api/goals?employee_id=${employeeId}&cycle_id=${cycleId}`;
       if (status) url += `&status=${status}`;
+      // Only add quarter param when it's a valid number (1-4)
+      if (quarter && quarter >= 1 && quarter <= 4) {
+        url += `&quarter=${quarter}`;
+      }
       return api.get<{ data: Goal[] }>(url);
     },
 
@@ -162,5 +178,19 @@ export const goalsService = {
       }
       return api.get<{ data: unknown[]; hasPermission: boolean }>(url);
     },
+  },
+
+  // ========== Clone Goals ==========
+  clone: {
+    cloneGoals: (employeeId: string, cycleId: string, sourceQuarter: number, targetQuarter: number) =>
+      api.post<{ data: { kras: KRA[]; kpis: Goal[] }; message: string }>(
+        '/api/goals/clone',
+        {
+          employee_id: employeeId,
+          cycle_id: cycleId,
+          source_quarter: sourceQuarter,
+          target_quarter: targetQuarter,
+        }
+      ),
   },
 };

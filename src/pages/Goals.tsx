@@ -1,13 +1,35 @@
 // Goals Page - Refactored with hooks and services
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import MainLayout from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
-import { Plus, Send } from 'lucide-react';
+import { Plus, Send, Copy, ChevronDown, Calendar, Lock, AlertTriangle } from 'lucide-react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { PageLoader } from '@/loaders';
 import { useGoalsData, useKraOperations, useKpiOperations, useBonusOperations, useTemplateSelection } from '@/hooks';
+import { useQuarterFromUrl } from '@/hooks/useQuarterFromUrl';
 import { getGoalDeadlineStatus } from '@/utils/deadlineUtils';
 import { getValidationIssues, hasDraftItems, isValidForSubmission } from '@/utils/goalsValidation';
+import { 
+  getAvailableQuartersForEmployee, 
+  getPreviousQuarters, 
+  formatQuarterLabel,
+  hasQuarterStarted,
+  hasQuarterEnded,
+  canWorkOnQuarter,
+  getQuarterStartDateFromCycle,
+  getQuarterEndDateFromCycle,
+  formatDateShort,
+  type CycleWithQuarterDates
+} from '@/utils/quarterHelpers';
 import { GoalStatusAlerts } from '@/components/goals/GoalsStatusAlerts';
 import { GoalsProgressCard } from '@/components/goals/GoalsProgressCard';
 import { GoalsEmptyState } from '@/components/goals/GoalsEmptyState';
@@ -18,15 +40,62 @@ import { KPIForm } from '@/components/goals/KPIForm';
 import { TemplateSelector } from '@/components/goals/TemplateSelector';
 import { BonusKRAForm } from '@/components/goals/BonusKRAForm';
 import { BonusKPIForm } from '@/components/goals/BonusKPIForm';
-import type { KRA, Goal, BonusKRA, BonusKPI } from '@/types';
+import { employeeService, goalsService } from '@/services';
+import { toasts } from '@/toasts';
+import type { KRA, Goal, BonusKRA, BonusKPI, Employee } from '@/types';
 
 export default function Goals() {
   const { user, hasAnyRole } = useAuth();
   const isHR = hasAnyRole(['hr_admin', 'hrbp', 'system_admin','dept_head','manager']);
 
-  // Fetch all goals data
-  const goalsData = useGoalsData(user?.id);
+  // URL-based quarter handling
+  const { quarter, setQuarter, isValidQuarter } = useQuarterFromUrl();
+  
+  // Fetch employee data for join date
+  const [employee, setEmployee] = useState<Employee | null>(null);
+  const [loadingEmployee, setLoadingEmployee] = useState(true);
+
+  useEffect(() => {
+    const fetchEmployee = async () => {
+      try {
+        const result = await employeeService.getMe();
+        if (result.data) {
+          setEmployee(result.data);
+        }
+      } catch (error) {
+        console.error('Error fetching employee:', error);
+      } finally {
+        setLoadingEmployee(false);
+      }
+    };
+    if (user?.id) {
+      fetchEmployee();
+    }
+  }, [user?.id]);
+
+  // Fetch all goals data with quarter filter
+  const goalsData = useGoalsData(user?.id, quarter || null);
   const { employeeId, employeeProfile, activeCycle, kras, kpis, bonusKras, bonusKpis, hasLatePermission, loading, refetch } = goalsData;
+
+  // Get available quarters based on join date
+  const availableQuarters = useMemo(() => {
+    if (!employee || !activeCycle) return [];
+    return getAvailableQuartersForEmployee(employee, activeCycle);
+  }, [employee, activeCycle]);
+
+  // Set default quarter if not in URL
+  useEffect(() => {
+    if (!loadingEmployee && !isValidQuarter && availableQuarters.length > 0 && activeCycle) {
+      // Set to first available quarter
+      setQuarter(availableQuarters[0]);
+    }
+  }, [loadingEmployee, isValidQuarter, availableQuarters, activeCycle, setQuarter]);
+
+  // Get previous quarters for clone dropdown
+  const previousQuarters = useMemo(() => {
+    if (!quarter) return [];
+    return getPreviousQuarters(quarter, availableQuarters);
+  }, [quarter, availableQuarters]);
 
   // Form dialog states
   const [templateSelectorOpen, setTemplateSelectorOpen] = useState(false);
@@ -41,6 +110,33 @@ export default function Goals() {
   const [editingBonusKPI, setEditingBonusKPI] = useState<BonusKPI | null>(null);
   const [selectedBonusKRAId, setSelectedBonusKRAId] = useState<string | null>(null);
 
+  // Clone goals handler
+  const handleCloneGoals = async (sourceQuarter: number) => {
+    if (!employeeId || !activeCycle?.id || !quarter) {
+      toasts.error('Cannot clone goals', 'Missing required information');
+      return;
+    }
+
+    try {
+      const result = await goalsService.clone.cloneGoals(
+        employeeId,
+        activeCycle.id,
+        sourceQuarter,
+        quarter
+      );
+      
+      if (result.data) {
+        toasts.success(
+          'Goals Cloned',
+          `Successfully cloned ${result.data.kras.length} KRAs and ${result.data.kpis.length} KPIs from ${formatQuarterLabel(sourceQuarter)} to ${formatQuarterLabel(quarter)}`
+        );
+        refetch();
+      }
+    } catch (error: any) {
+      toasts.error('Clone Failed', error.message || 'Failed to clone goals');
+    }
+  };
+
   // KRA Operations
   const kraOps = useKraOperations({
     employeeId,
@@ -48,6 +144,7 @@ export default function Goals() {
     kras,
     kpis,
     onSuccess: refetch,
+    quarter: quarter || null,
   });
 
   // KPI Operations
@@ -56,6 +153,7 @@ export default function Goals() {
     cycleId: activeCycle?.id || null,
     kpis,
     onSuccess: refetch,
+    quarter: quarter || null,
   });
 
   // Bonus Operations
@@ -88,13 +186,31 @@ export default function Goals() {
   );
 
   const canSubmit = deadlineStatus?.canSubmit ?? false;
-  const showAddButton = activeCycle && employeeId && kras.length < 5 && canSubmit;
+  
+  const quarterWorkStatus = useMemo(() => {
+    if (!quarter || !activeCycle) return { canWork: false, reason: 'not_started' as const };
+    return canWorkOnQuarter(activeCycle as CycleWithQuarterDates, quarter, hasLatePermission);
+  }, [quarter, activeCycle, hasLatePermission]);
+
+  const quarterHasStarted = useMemo(() => {
+    if (!quarter || !activeCycle) return false;
+    return hasQuarterStarted(activeCycle as CycleWithQuarterDates, quarter);
+  }, [quarter, activeCycle]);
+
+  const quarterHasEnded = useMemo(() => {
+    if (!quarter || !activeCycle) return false;
+    return hasQuarterEnded(activeCycle as CycleWithQuarterDates, quarter);
+  }, [quarter, activeCycle]);
+
+  const showAddButton = activeCycle && employeeId && kras.length < 5 && canSubmit && quarterWorkStatus.canWork;
+  const showCloneButton = previousQuarters.length > 0 && quarter && quarterWorkStatus.canWork;
   const hasDraft = hasDraftItems(kras, kpis);
   const isValid = isValidForSubmission(kras, kpis, kraOps.getKPIsForKRA);
   const selectedKRA = selectedKRAId ? kras.find(k => k.id === selectedKRAId) : null;
 
+
   // Loading state
-  if (loading) {
+  if (loading || loadingEmployee) {
     return (
       <MainLayout>
         <PageLoader />
@@ -111,76 +227,214 @@ export default function Goals() {
             <h1 className="text-3xl font-bold tracking-tight">My Goals</h1>
             <p className="text-muted-foreground">{activeCycle?.name || 'No active cycle'}</p>
           </div>
-          {showAddButton && (
-            <Button onClick={() => setTemplateSelectorOpen(true)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add KRA
-            </Button>
-          )}
+          <div className="flex gap-2">
+            {showCloneButton && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
+                    <Copy className="mr-2 h-4 w-4" />
+                    Clone from
+                    <ChevronDown className="ml-2 h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  {previousQuarters.map(q => (
+                    <DropdownMenuItem
+                      key={q}
+                      onClick={() => handleCloneGoals(q)}
+                    >
+                      Clone from {formatQuarterLabel(q)}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {showAddButton && (
+              <Button onClick={() => setTemplateSelectorOpen(true)}>
+                <Plus className="mr-2 h-4 w-4" />
+                Add KRA
+              </Button>
+            )}
+          </div>
         </div>
 
-        {/* Status Alerts */}
-        <GoalStatusAlerts
-          cycle={activeCycle}
-          employeeId={employeeId}
-          isHR={isHR}
-          kras={kras}
-          deadlineStatus={deadlineStatus}
-          hasLatePermission={hasLatePermission}
-        />
+        {/* Quarter Tabs */}
+        {activeCycle && availableQuarters.length > 0 && (
+          <TooltipProvider>
+            <Tabs value={quarter ? `q${quarter}` : undefined} onValueChange={(value) => {
+              const q = parseInt(value.replace('q', ''));
+              if (q >= 1 && q <= 4) {
+                // Only allow changing to quarters that have started
+                const quarterHasStarted = hasQuarterStarted(activeCycle as CycleWithQuarterDates, q);
+                if (quarterHasStarted) {
+                  setQuarter(q as 1 | 2 | 3 | 4);
+                }
+              }
+            }}>
+              <TabsList>
+                {availableQuarters.map(q => {
+                  const quarterHasStarted = hasQuarterStarted(activeCycle as CycleWithQuarterDates, q);
+                  const startDate = getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
+                  const endDate = getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
+                  
+                  if (!quarterHasStarted) {
+                    return (
+                      <Tooltip key={q}>
+                        <TooltipTrigger asChild>
+                          <span>
+                            <TabsTrigger 
+                              value={`q${q}`} 
+                              disabled 
+                              className="opacity-50 cursor-not-allowed"
+                            >
+                              {formatQuarterLabel(q)}
+                              <Lock className="ml-1 h-3 w-3" />
+                            </TabsTrigger>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-xs">
+                          <p>
+                            {formatQuarterLabel(q)} has not started yet.
+                            {startDate && endDate && (
+                              <> It will be open from {formatDateShort(startDate)} to {formatDateShort(endDate)}.</>
+                            )}
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  }
+                  
+                  return (
+                    <TabsTrigger key={q} value={`q${q}`}>
+                      {formatQuarterLabel(q)}
+                    </TabsTrigger>
+                  );
+                })}
+              </TabsList>
+              {availableQuarters.map(q => {
+                const qStarted = hasQuarterStarted(activeCycle as CycleWithQuarterDates, q);
+                const qEnded = hasQuarterEnded(activeCycle as CycleWithQuarterDates, q);
+                const qWorkStatus = canWorkOnQuarter(activeCycle as CycleWithQuarterDates, q, hasLatePermission);
+                const startDate = getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
+                const endDate = getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
 
-        {/* Main Content */}
-        {activeCycle && employeeId && (
-          <>
-            <GoalsProgressCard totalWeight={kraOps.totalKRAWeight} krasCount={kras.length} />
+                return (
+                  <TabsContent key={q} value={`q${q}`} className="space-y-6">
+                    {/* Show message if quarter hasn't started */}
+                    {!qStarted ? (
+                      <Card>
+                        <CardContent className="flex flex-col items-center justify-center py-12">
+                          <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
+                          <h3 className="font-semibold text-lg">{formatQuarterLabel(q)} Has Not Started Yet</h3>
+                          <p className="text-muted-foreground text-center mt-2">
+                            {startDate && endDate ? (
+                              <>
+                                The {formatQuarterLabel(q)} goal setting period will be open from{' '}
+                                <span className="font-medium">{formatDateShort(startDate)}</span> to{' '}
+                                <span className="font-medium">{formatDateShort(endDate)}</span>.
+                              </>
+                            ) : (
+                              `The ${formatQuarterLabel(q)} goal setting period has not been scheduled yet.`
+                            )}
+                          </p>
+                          <p className="text-sm text-muted-foreground mt-2">
+                            Please check back when the quarter begins.
+                          </p>
+                        </CardContent>
+                      </Card>
+                    ) : qEnded && !hasLatePermission ? (<>
+                          <div className='flex flex-row items-start justify-start gap-2 bg-red-300 p-2'>
+                          <AlertTriangle className="h-12 w-12 text-amber-700 mr-2" />
+                          <h3 className="font-normal text-lg my-auto text-black">{formatQuarterLabel(q)} Goal Setting Period Has Ended</h3>
+                          </div>
+                  
+                        <div>
+                          {kras.length > 0 && (
+                            <div className="mt-6 w-full space-y-4">
+                              {/* <p className="text-sm font-medium text-center">Your {formatQuarterLabel(q)} Goals (Read-only):</p> */}
+                              {kras.map(kra => (
+                                <KRACard
+                                  key={kra.id}
+                                  kra={kra}
+                                  kpis={kraOps.getKPIsForKRA(kra.id)}
+                                  canEdit={false}
+                                  onEditKRA={() => {}}
+                                  onDeleteKRA={() => {}}
+                                  onAddKPI={() => {}}
+                                  onEditKPI={() => {}}
+                                  onDeleteKPI={() => {}}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+             
+                      </>
+                    ) : (
+                      <>
+                        <GoalStatusAlerts
+                          cycle={activeCycle}
+                          employeeId={employeeId}
+                          isHR={isHR}
+                          kras={kras}
+                          deadlineStatus={deadlineStatus}
+                          hasLatePermission={hasLatePermission}
+                        />
 
-            {kras.length === 0 ? (
-              <GoalsEmptyState />
-            ) : (
-              <div className="space-y-4">
-                {kras.map(kra => (
-                  <KRACard
-                    key={kra.id}
-                    kra={kra}
-                    kpis={kraOps.getKPIsForKRA(kra.id)}
-                    canEdit={kraOps.canEdit(kra.status)}
-                    onEditKRA={k => { setEditingKRA(k); setKraFormOpen(true); }}
-                    onDeleteKRA={kraOps.deleteKRA}
-                    onAddKPI={kraId => { setSelectedKRAId(kraId); setKpiFormOpen(true); }}
-                    onEditKPI={kpi => { setEditingKPI(kpi); setSelectedKRAId(kpi.kra_id || null); setKpiFormOpen(true); }}
-                    onDeleteKPI={kpiOps.deleteKPI}
-                  />
-                ))}
+                        {qEnded && hasLatePermission && (
+                          <Card className="border-amber-200 bg-amber-50">
+                            <CardContent className="py-3">
+                              <p className="text-sm text-amber-800">
+                                <AlertTriangle className="inline h-4 w-4 mr-2" />
+                                You have been granted late submission access for {formatQuarterLabel(q)} by HR/Admin.
+                              </p>
+                            </CardContent>
+                          </Card>
+                        )}
 
-                {hasDraft && validationIssues.length > 0 && (
-                  <ValidationAlert issues={validationIssues} />
-                )}
+                        {activeCycle && employeeId && (
+                          <>
+                            <GoalsProgressCard totalWeight={kraOps.totalKRAWeight} krasCount={kras.length} />
 
-                {hasDraft && (
-                  <Button onClick={kraOps.submitForApproval} className="w-full" disabled={!isValid}>
-                    <Send className="mr-2 h-4 w-4" />
-                    Submit KRAs & KPIs for Approval
-                  </Button>
-                )}
-              </div>
-            )}
+                            {kras.length === 0 ? (
+                              <GoalsEmptyState />
+                            ) : (
+                              <div className="space-y-4">
+                                {kras.map(kra => (
+                                  <KRACard
+                                    key={kra.id}
+                                    kra={kra}
+                                    kpis={kraOps.getKPIsForKRA(kra.id)}
+                                    canEdit={kraOps.canEdit(kra.status)}
+                                    onEditKRA={k => { setEditingKRA(k); setKraFormOpen(true); }}
+                                    onDeleteKRA={kraOps.deleteKRA}
+                                    onAddKPI={kraId => { setSelectedKRAId(kraId); setKpiFormOpen(true); }}
+                                    onEditKPI={kpi => { setEditingKPI(kpi); setSelectedKRAId(kpi.kra_id || null); setKpiFormOpen(true); }}
+                                    onDeleteKPI={kpiOps.deleteKPI}
+                                  />
+                                ))}
 
-            {/* Bonus KRAs Section */}
-            {/* <BonusKRASection
-              bonusKras={bonusKras}
-              bonusKpis={bonusKpis}
-              canAddBonus={canSubmit}
-              canEdit={kraOps.canEdit}
-              getBonusKPIsForKRA={bonusOps.getBonusKPIsForKRA}
-              onAddBonusKRA={() => setBonusKraFormOpen(true)}
-              onEditBonusKRA={b => { setEditingBonusKRA(b); setBonusKraFormOpen(true); }}
-              onDeleteBonusKRA={bonusOps.deleteBonusKRA}
-              onAddBonusKPI={bonusKraId => { setSelectedBonusKRAId(bonusKraId); setBonusKpiFormOpen(true); }}
-              onEditBonusKPI={kpi => { setEditingBonusKPI(kpi); setSelectedBonusKRAId(kpi.bonus_kra_id); setBonusKpiFormOpen(true); }}
-              onDeleteBonusKPI={bonusOps.deleteBonusKPI}
-              onSubmitBonusKRAs={bonusOps.submitBonusForApproval}
-            /> */}
-          </>
+                                {hasDraft && validationIssues.length > 0 && (
+                                  <ValidationAlert issues={validationIssues} />
+                                )}
+
+                                {hasDraft && (
+                                  <Button onClick={kraOps.submitForApproval} className="w-full" disabled={!isValid}>
+                                    <Send className="mr-2 h-4 w-4" />
+                                    Submit KRAs & KPIs for Approval
+                                  </Button>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </TabsContent>
+                );
+              })}
+            </Tabs>
+          </TooltipProvider>
         )}
       </div>
 

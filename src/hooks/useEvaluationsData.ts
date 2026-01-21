@@ -27,9 +27,14 @@ export interface EvaluationsData {
   quarterlyReviews: Record<number, QuarterlySelfReviewData | null>;
   kpiRatings: Record<number, Record<string, KpiRating>>;
   loading: boolean;
+  // Quarter-specific data
+  quarterKras: Record<number, KRA[]>;
+  quarterKpis: Record<number, Goal[]>;
+  // Late permission status per quarter
+  latePermissions: Record<number, boolean>;
 }
 
-export function useEvaluationsData(userId: string | undefined) {
+export function useEvaluationsData(userId: string | undefined, selectedQuarter?: number | null) {
   const [data, setData] = useState<EvaluationsData>({
     employeeId: null,
     activeCycle: null,
@@ -39,6 +44,9 @@ export function useEvaluationsData(userId: string | undefined) {
     quarterlyReviews: {},
     kpiRatings: {},
     loading: true,
+    quarterKras: {},
+    quarterKpis: {},
+    latePermissions: {},
   });
 
   const fetchData = useCallback(async () => {
@@ -63,17 +71,41 @@ export function useEvaluationsData(userId: string | undefined) {
 
       const cycleId = cycleResult.data.id;
 
-      // Fetch base data in parallel
-      const [scalesResult, krasResult, kpisResult, selfReviewsResult] = await Promise.all([
+      // Fetch base data in parallel - get scales, self reviews, and quarter-specific goals
+      const [scalesResult, selfReviewsResult] = await Promise.all([
         settingsService.ratingScales.getDefault(),
-        goalsService.kras.getByEmployee(employeeId, cycleId, 'approved'),
-        goalsService.kpis.getByEmployee(employeeId, cycleId, 'approved'),
         evaluationService.selfReviews.get(employeeId, cycleId),
       ]);
 
       const ratingScales = (scalesResult.data || []).sort((a, b) => b.value - a.value);
-      const kras = krasResult.data || [];
-      const kpis = (kpisResult.data || []).filter(g => g.kra_id) as Goal[];
+
+      // Fetch goals for all 4 quarters in parallel
+      const quarterPromises = [1, 2, 3, 4].map(async (q) => {
+        const [krasResult, kpisResult] = await Promise.all([
+          goalsService.kras.getByEmployee(employeeId, cycleId, 'approved', q),
+          goalsService.kpis.getByEmployee(employeeId, cycleId, 'approved', q),
+        ]);
+        return {
+          quarter: q,
+          kras: krasResult.data || [],
+          kpis: (kpisResult.data || []).filter((g: Goal) => g.kra_id) as Goal[],
+        };
+      });
+
+      const quarterResults = await Promise.all(quarterPromises);
+
+      // Build quarter-specific maps
+      const quarterKras: Record<number, KRA[]> = {};
+      const quarterKpis: Record<number, Goal[]> = {};
+      let allKras: KRA[] = [];
+      let allKpis: Goal[] = [];
+
+      quarterResults.forEach(({ quarter, kras, kpis }) => {
+        quarterKras[quarter] = kras;
+        quarterKpis[quarter] = kpis;
+        allKras = [...allKras, ...kras];
+        allKpis = [...allKpis, ...kpis];
+      });
 
       // Process quarterly self reviews
       const reviewsMap: Record<number, QuarterlySelfReviewData | null> = {
@@ -91,6 +123,7 @@ export function useEvaluationsData(userId: string | undefined) {
       for (const [quarter, review] of Object.entries(reviewsMap)) {
         const q = parseInt(quarter);
         const quarterRatings: Record<string, KpiRating> = {};
+        const qKpis = quarterKpis[q] || [];
 
         if (review?.id) {
           const ratingsResult = await evaluationService.goalSelfRatings.get(review.id);
@@ -107,8 +140,8 @@ export function useEvaluationsData(userId: string | undefined) {
           });
         }
 
-        // Initialize missing goals
-        kpis.forEach((g: Goal) => {
+        // Initialize missing goals for this quarter
+        qKpis.forEach((g: Goal) => {
           if (!quarterRatings[g.id]) {
             const numericTarget = parseNumericTarget(g.target_value);
             quarterRatings[g.id] = {
@@ -125,15 +158,34 @@ export function useEvaluationsData(userId: string | undefined) {
         ratingsMap[q] = quarterRatings;
       }
 
+      // Fetch late permissions for all quarters
+      const latePermissions: Record<number, boolean> = { 1: false, 2: false, 3: false, 4: false };
+      const latePermPromises = [1, 2, 3, 4].map(async (q) => {
+        try {
+          const result = await goalsService.lateSubmission.check(cycleId, q);
+          return { quarter: q, hasPermission: result.hasPermission ?? false };
+        } catch {
+          return { quarter: q, hasPermission: false };
+        }
+      });
+
+      const latePermResults = await Promise.all(latePermPromises);
+      latePermResults.forEach(({ quarter, hasPermission }) => {
+        latePermissions[quarter] = hasPermission;
+      });
+
       setData({
         employeeId,
         activeCycle: cycleResult.data,
-        kras,
-        kpis,
+        kras: allKras,
+        kpis: allKpis,
         ratingScales,
         quarterlyReviews: reviewsMap,
         kpiRatings: ratingsMap,
         loading: false,
+        quarterKras,
+        quarterKpis,
+        latePermissions,
       });
     } catch (error) {
       logError(error, 'useEvaluationsData');
@@ -155,5 +207,22 @@ export function useEvaluationsData(userId: string | undefined) {
     return 4;
   }, []);
 
-  return { ...data, currentQuarter, refetch: fetchData };
+  // Get goals for the selected quarter
+  const selectedQuarterKras = useMemo(() => {
+    if (!selectedQuarter) return data.kras;
+    return data.quarterKras[selectedQuarter] || [];
+  }, [selectedQuarter, data.quarterKras, data.kras]);
+
+  const selectedQuarterKpis = useMemo(() => {
+    if (!selectedQuarter) return data.kpis;
+    return data.quarterKpis[selectedQuarter] || [];
+  }, [selectedQuarter, data.quarterKpis, data.kpis]);
+
+  return { 
+    ...data, 
+    currentQuarter, 
+    refetch: fetchData,
+    selectedQuarterKras,
+    selectedQuarterKpis,
+  };
 }

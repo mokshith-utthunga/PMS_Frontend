@@ -19,6 +19,7 @@ interface UseKpiOperationsProps {
   cycleId: string | null;
   kpis: Goal[];
   onSuccess: () => void;
+  quarter?: number | null;
 }
 
 export function useKpiOperations({
@@ -26,6 +27,7 @@ export function useKpiOperations({
   cycleId,
   kpis,
   onSuccess,
+  quarter,
 }: UseKpiOperationsProps) {
   const getAvailableKPIWeight = useCallback(
     (kraId: string) => {
@@ -57,6 +59,7 @@ export function useKpiOperations({
         weight: data.weight,
         due_date: data.due_date || null,
         status: 'draft',
+        quarter: quarter || null,
       });
 
       toasts.success('KPI created successfully');

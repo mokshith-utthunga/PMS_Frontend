@@ -101,6 +101,7 @@ export interface KRA {
   id: string;
   employee_id: string;
   cycle_id: string;
+  quarter?: number | null;
   title: string;
   description?: string;
   weight: number;
@@ -116,6 +117,7 @@ export interface Goal {
   employee_id: string;
   cycle_id: string;
   kra_id?: string;
+  quarter?: number | null;
   title: string;
   description?: string;
   goal_type: GoalType;

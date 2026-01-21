@@ -13,7 +13,7 @@ export interface TeamMemberGoalsData {
   loading: boolean;
 }
 
-export function useTeamMemberGoals(employeeId: string | undefined) {
+export function useTeamMemberGoals(employeeId: string | undefined, quarter?: number | null) {
   const [data, setData] = useState<TeamMemberGoalsData>({
     employee: null,
     kras: [],
@@ -43,10 +43,10 @@ export function useTeamMemberGoals(employeeId: string | undefined) {
 
       const cycleId = cycleResult.data.id;
 
-      // Fetch all data in parallel
+      // Fetch all data in parallel with quarter filter
       const [krasResult, kpisResult] = await Promise.all([
-        goalsService.kras.getByEmployee(employeeId, cycleId),
-        goalsService.kpis.getByEmployee(employeeId, cycleId),
+        goalsService.kras.getByEmployee(employeeId, cycleId, undefined, quarter),
+        goalsService.kpis.getByEmployee(employeeId, cycleId, undefined, quarter),
       ]);
 
       // Fetch bonus KRAs via different endpoint used in manager view
@@ -80,7 +80,7 @@ export function useTeamMemberGoals(employeeId: string | undefined) {
       logError(error, 'useTeamMemberGoals');
       setData(prev => ({ ...prev, loading: false }));
     }
-  }, [employeeId]);
+  }, [employeeId, quarter]);
 
   useEffect(() => {
     fetchData();

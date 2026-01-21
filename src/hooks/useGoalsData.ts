@@ -16,7 +16,7 @@ export interface GoalsData {
   loading: boolean;
 }
 
-export function useGoalsData(userId: string | undefined) {
+export function useGoalsData(userId: string | undefined, quarter?: number | null) {
   const [data, setData] = useState<GoalsData>({
     employeeId: null,
     employeeProfile: null,
@@ -60,12 +60,12 @@ export function useGoalsData(userId: string | undefined) {
 
       const cycleId = cycleResult.data.id;
 
-      // Fetch all data in parallel
+      // Fetch all data in parallel with quarter filter
       const [krasResult, kpisResult, bonusKrasResult, latePermResult] = await Promise.all([
-        goalsService.kras.getByEmployee(employeeId, cycleId),
-        goalsService.kpis.getByEmployee(employeeId, cycleId),
+        goalsService.kras.getByEmployee(employeeId, cycleId, undefined, quarter),
+        goalsService.kpis.getByEmployee(employeeId, cycleId, undefined, quarter),
         goalsService.bonusKras.getByEmployee(employeeId, cycleId),
-        goalsService.lateSubmission.check(cycleId).catch(() => ({ data: [], hasPermission: false })), // Handle 403 gracefully
+        goalsService.lateSubmission.check(cycleId, quarter || undefined).catch(() => ({ data: [], hasPermission: false })), // Handle 403 gracefully
       ]);
 
       const kras = krasResult.data || [];
@@ -97,7 +97,7 @@ export function useGoalsData(userId: string | undefined) {
       logError(error, 'useGoalsData');
       setData(prev => ({ ...prev, loading: false }));
     }
-  }, [userId]);
+  }, [userId, quarter]);
 
   useEffect(() => {
     fetchData();

@@ -11,6 +11,7 @@ interface UseKraOperationsProps {
   kras: KRA[];
   kpis: Goal[];
   onSuccess: () => void;
+  quarter?: number | null;
 }
 
 export function useKraOperations({
@@ -19,6 +20,7 @@ export function useKraOperations({
   kras,
   kpis,
   onSuccess,
+  quarter,
 }: UseKraOperationsProps) {
   const totalKRAWeight = kras.reduce((sum, kra) => sum + Number(kra.weight || 0), 0);
   const availableKRAWeight = TOTAL_WEIGHT - totalKRAWeight;
@@ -62,6 +64,7 @@ export function useKraOperations({
         description: data.description || null,
         weight: data.weight,
         status: 'draft',
+        quarter: quarter || null,
       });
 
       if (result.error) {
