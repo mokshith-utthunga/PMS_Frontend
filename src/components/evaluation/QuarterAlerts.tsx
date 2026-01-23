@@ -3,18 +3,20 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ClipboardCheck, Lock, AlertCircle } from 'lucide-react';
 import { isQuarterOpen, getQuarterTiming, formatQuarterDates } from '@/utils/quarterUtils';
 import type { PerformanceCycle } from '@/types';
+import type { QuarterlyCycle } from '@/services/cycle.service';
 
 interface QuarterAlertsProps {
   quarter: number;
   cycle: PerformanceCycle | null;
+  quarterlyCycles?: QuarterlyCycle[];
   isSubmitted: boolean;
 }
 
-export function QuarterAlerts({ quarter, cycle, isSubmitted }: QuarterAlertsProps) {
+export function QuarterAlerts({ quarter, cycle, quarterlyCycles, isSubmitted }: QuarterAlertsProps) {
   if (!cycle) return null;
 
-  const timing = getQuarterTiming(cycle, quarter);
-  const dates = formatQuarterDates(cycle, quarter);
+  const timing = getQuarterTiming(cycle, quarter, quarterlyCycles);
+  const dates = formatQuarterDates(cycle, quarter, quarterlyCycles);
 
   if (isSubmitted) {
     return (
@@ -27,7 +29,7 @@ export function QuarterAlerts({ quarter, cycle, isSubmitted }: QuarterAlertsProp
     );
   }
 
-  if (!isQuarterOpen(cycle, quarter) && timing === 'future') {
+  if (!isQuarterOpen(cycle, quarter, quarterlyCycles) && timing === 'future') {
     return (
       <Alert>
         <Lock className="h-4 w-4" />
@@ -39,7 +41,7 @@ export function QuarterAlerts({ quarter, cycle, isSubmitted }: QuarterAlertsProp
     );
   }
 
-  if (!isQuarterOpen(cycle, quarter) && timing === 'past') {
+  if (!isQuarterOpen(cycle, quarter, quarterlyCycles) && timing === 'past') {
     return (
       <Alert variant="destructive">
         <AlertCircle className="h-4 w-4" />

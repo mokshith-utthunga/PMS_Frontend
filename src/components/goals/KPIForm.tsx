@@ -13,6 +13,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Loader2 } from 'lucide-react';
+import { CalibrationConfig, CalibrationRule, validateCalibrationRules, sortCalibrationRules } from '@/components/admin/CalibrationConfig';
+import { toast } from 'sonner';
 import type { Goal, MetricType } from '@/types';
 
 interface KPIFormProps {
@@ -24,7 +26,7 @@ interface KPIFormProps {
     metric_type: MetricType;
     target_value: string;
     weight: number;
-    due_date: string;
+    calibration?: CalibrationRule[] | null;
   }) => Promise<void>;
   editingKPI?: Goal | null;
   availableWeight: number;
@@ -46,14 +48,14 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
     metric_type: MetricType;
     target_value: string;
     weight: string;
-    due_date: string;
+    calibration: CalibrationRule[] | null;
   }>({
     title: '',
     description: '',
     metric_type: 'number',
     target_value: '',
     weight: '',
-    due_date: '',
+    calibration: null,
   });
 
   // Sync form data when editingKPI changes or dialog opens
@@ -65,22 +67,37 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
         metric_type: editingKPI?.metric_type || 'number',
         target_value: editingKPI?.target_value || '',
         weight: editingKPI?.weight?.toString() || '',
-        due_date: editingKPI?.due_date || '',
+        calibration: editingKPI?.calibration || null,
       });
     }
   }, [open, editingKPI]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate calibration rules if provided
+    if (formData.calibration && formData.calibration.length > 0) {
+      const calibrationErrors = validateCalibrationRules(formData.calibration);
+      if (calibrationErrors.length > 0) {
+        toast.error('Calibration Error', {
+          description: calibrationErrors.join(', '),
+        });
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
+      // Sort calibration rules before submitting
+      const sortedCalibration = sortCalibrationRules(formData.calibration);
+      
       await onSubmit({
         title: formData.title,
         description: formData.description,
         metric_type: formData.metric_type,
         target_value: formData.target_value,
         weight: parseFloat(formData.weight),
-        due_date: formData.due_date,
+        calibration: sortedCalibration,
       });
       onOpenChange(false);
       setFormData({
@@ -89,7 +106,7 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
         metric_type: 'number',
         target_value: '',
         weight: '',
-        due_date: '',
+        calibration: null,
       });
     } catch (error) {
       // Error handled in parent
@@ -109,7 +126,7 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{editingKPI ? 'Edit KPI' : 'Add New KPI'}</DialogTitle>
           <DialogDescription>
@@ -181,31 +198,28 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="kpi-weight">Weight (%)</Label>
-              <Input
-                id="kpi-weight"
-                type="number"
-                min="1"
-                max={effectiveMaxWeight}
-                value={formData.weight}
-                onChange={(e) => setFormData((prev) => ({ ...prev, weight: e.target.value }))}
-                placeholder={`Max: ${maxWeight}%`}
-                required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="kpi-due-date">Due Date</Label>
-              <Input
-                id="kpi-due-date"
-                type="date"
-                value={formData.due_date}
-                onChange={(e) => setFormData((prev) => ({ ...prev, due_date: e.target.value }))}
-              />
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="kpi-weight">Weight (%)</Label>
+            <Input
+              id="kpi-weight"
+              type="number"
+              min="1"
+              max={effectiveMaxWeight}
+              value={formData.weight}
+              onChange={(e) => setFormData((prev) => ({ ...prev, weight: e.target.value }))}
+              placeholder={`Max: ${maxWeight}%`}
+              required
+            />
           </div>
+
+          {/* Calibration Settings */}
+          <CalibrationConfig
+            value={formData.calibration}
+            onChange={(calibration) => setFormData((prev) => ({ ...prev, calibration }))}
+            disabled={false}
+            targetValue={formData.target_value}
+            metricType={formData.metric_type}
+          />
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

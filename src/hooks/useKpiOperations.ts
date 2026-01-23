@@ -4,6 +4,7 @@ import { goalsService } from '@/services';
 import { toasts } from '@/toasts';
 import { TOTAL_WEIGHT } from '@/utils/constants';
 import type { Goal } from '@/types';
+import type { CalibrationRule } from '@/components/admin/CalibrationConfig';
 
 interface CreateKPIData {
   title: string;
@@ -11,7 +12,7 @@ interface CreateKPIData {
   metric_type: string;
   target_value: string;
   weight: number;
-  due_date: string;
+  calibration?: CalibrationRule[] | null;
 }
 
 interface UseKpiOperationsProps {
@@ -57,7 +58,7 @@ export function useKpiOperations({
         metric_type: data.metric_type,
         target_value: data.target_value || null,
         weight: data.weight,
-        due_date: data.due_date || null,
+        calibration: data.calibration || null,
         status: 'draft',
         quarter: quarter || null,
       });
@@ -65,7 +66,7 @@ export function useKpiOperations({
       toasts.success('KPI created successfully');
       onSuccess();
     },
-    [employeeId, cycleId, getAvailableKPIWeight, onSuccess]
+    [employeeId, cycleId, getAvailableKPIWeight, onSuccess, quarter]
   );
 
   const updateKPI = useCallback(
@@ -82,7 +83,7 @@ export function useKpiOperations({
         metric_type: data.metric_type,
         target_value: data.target_value || null,
         weight: data.weight,
-        due_date: data.due_date || null,
+        calibration: data.calibration || null,
       });
 
       toasts.success('KPI updated successfully');

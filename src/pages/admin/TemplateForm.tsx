@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/select';
 import { Plus, Trash2, Loader2, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
+import { CalibrationConfig, CalibrationRule, validateCalibrationRules, sortCalibrationRules } from '@/components/admin/CalibrationConfig';
 
 interface KPITemplateForm {
   id?: string;
@@ -26,6 +27,7 @@ interface KPITemplateForm {
   metric_type: string;
   suggested_target: string;
   suggested_weight: number;
+  calibration?: CalibrationRule[] | null;
 }
 
 interface KRATemplateForm {
@@ -44,6 +46,7 @@ const emptyKPI: KPITemplateForm = {
   metric_type: 'number',
   suggested_target: '',
   suggested_weight: 50,
+  calibration: null,
 };
 
 export default function TemplateForm() {
@@ -113,6 +116,7 @@ export default function TemplateForm() {
               metric_type: kpi.metric_type,
               suggested_target: kpi.suggested_target || '',
               suggested_weight: kpi.suggested_weight,
+              calibration: kpi.calibration || null,
             }))
           : [{ ...emptyKPI }],
       });
@@ -216,6 +220,7 @@ export default function TemplateForm() {
                 metric_type: kpi.metric_type,
                 suggested_target: kpi.suggested_target || undefined,
                 suggested_weight: kpi.suggested_weight,
+                calibration: kpi.calibration || null,
               });
               updatedKPIIds.add(kpi.id);
             } else {
@@ -227,6 +232,7 @@ export default function TemplateForm() {
                 metric_type: kpi.metric_type,
                 target_value: kpi.suggested_target || undefined,
                 weight: kpi.suggested_weight,
+                calibration: kpi.calibration || null,
               });
             }
           } catch (kpiError: any) {
@@ -265,6 +271,7 @@ export default function TemplateForm() {
               metric_type: kpi.metric_type,
               target_value: kpi.suggested_target || undefined,
               weight: kpi.suggested_weight,
+              calibration: kpi.calibration || null,
             });
           } catch (kpiError: any) {
             const errorMessage = kpiError?.response?.data?.error || kpiError?.message || 'Failed to create KPI';
@@ -304,7 +311,29 @@ export default function TemplateForm() {
       return;
     }
 
-    saveMutation.mutate(formData);
+    // Validate calibration rules for each KPI
+    const kpisWithTitles = formData.kpi_templates.filter(kpi => kpi.title.trim());
+    for (let i = 0; i < kpisWithTitles.length; i++) {
+      const kpi = kpisWithTitles[i];
+      if (kpi.calibration && kpi.calibration.length > 0) {
+        const calibrationErrors = validateCalibrationRules(kpi.calibration);
+        if (calibrationErrors.length > 0) {
+          toast.error(`KPI "${kpi.title}" calibration error: ${calibrationErrors[0]}`);
+          return;
+        }
+      }
+    }
+
+    // Sort calibration rules before saving (highest threshold first)
+    const processedFormData = {
+      ...formData,
+      kpi_templates: formData.kpi_templates.map(kpi => ({
+        ...kpi,
+        calibration: sortCalibrationRules(kpi.calibration),
+      })),
+    };
+
+    saveMutation.mutate(processedFormData);
   };
 
   const addKPI = () => {
@@ -321,7 +350,7 @@ export default function TemplateForm() {
     }));
   };
 
-  const updateKPI = (index: number, field: keyof KPITemplateForm, value: string | number) => {
+  const updateKPI = (index: number, field: keyof KPITemplateForm, value: string | number | CalibrationRule[] | null) => {
     setFormData((prev) => ({
       ...prev,
       kpi_templates: prev.kpi_templates.map((kpi, i) =>
@@ -590,6 +619,17 @@ export default function TemplateForm() {
                           }
                         />
                       </div>
+                    </div>
+
+                    {/* Calibration Configuration */}
+                    <div className="mt-4">
+                      <CalibrationConfig
+                        value={kpi.calibration}
+                        onChange={(calibration) => updateKPI(index, 'calibration', calibration)}
+                        disabled={false}
+                        targetValue={kpi.suggested_target}
+                        metricType={kpi.metric_type}
+                      />
                     </div>
                   </CardContent>
                 </Card>

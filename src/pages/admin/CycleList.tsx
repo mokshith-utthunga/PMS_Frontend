@@ -13,6 +13,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { cycleService } from '@/services';
 import { Link } from 'react-router-dom';
+import type { PerformanceCycle, CycleStatus } from '@/types';
 import { 
   Plus, 
   Calendar, 
@@ -24,35 +25,6 @@ import {
   Archive,
   Pencil
 } from 'lucide-react';
-
-interface PerformanceCycle {
-  id: string;
-  name: string;
-  description: string | null;
-  year: number;
-  status: string;
-  goal_submission_start: string;
-  goal_submission_end: string;
-  goal_approval_end: string;
-  self_evaluation_start: string | null;
-  self_evaluation_end: string | null;
-  manager_evaluation_start: string;
-  manager_evaluation_end: string;
-  calibration_start: string;
-  calibration_end: string;
-  release_date: string;
-  created_at: string;
-  applicable_departments: string[] | null;
-  applicable_business_units: string[] | null;
-  q1_self_review_start: string | null;
-  q1_self_review_end: string | null;
-  q2_self_review_start: string | null;
-  q2_self_review_end: string | null;
-  q3_self_review_start: string | null;
-  q3_self_review_end: string | null;
-  q4_self_review_start: string | null;
-  q4_self_review_end: string | null;
-}
 
 const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   draft: 'secondary',
@@ -81,7 +53,7 @@ export default function CycleList() {
     }
   };
 
-  const updateStatus = async (id: string, newStatus: string) => {
+  const updateStatus = async (id: string, newStatus: CycleStatus) => {
     try {
       if (newStatus === 'active') {
         const activeCycle = cycles.find(c => c.status === 'active' && c.id !== id);

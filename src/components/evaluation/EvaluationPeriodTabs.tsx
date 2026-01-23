@@ -15,6 +15,7 @@ import {
   getYearEndManagerEvalStatus,
   getQuarterLabel,
 } from '@/lib/evaluationPeriods';
+import type { QuarterlyCycle } from '@/services/cycle.service';
 
 export interface QuarterlySelfEvalStatus {
   quarter: number;
@@ -23,6 +24,7 @@ export interface QuarterlySelfEvalStatus {
 
 interface EvaluationPeriodTabsProps {
   cycle: PerformanceCycle | null;
+  quarterlyCycles?: QuarterlyCycle[];
   quarterlySelfEvals?: Record<number, { status: string }>;
   yearEndSelfEvalStatus?: string | null;
   defaultTab?: 'quarterly' | 'year-end';
@@ -37,6 +39,7 @@ interface EvaluationPeriodTabsProps {
 
 export function EvaluationPeriodTabs({
   cycle,
+  quarterlyCycles,
   quarterlySelfEvals = {},
   yearEndSelfEvalStatus,
   defaultTab,
@@ -48,12 +51,12 @@ export function EvaluationPeriodTabs({
   showQuarterSubTabs = true,
   className,
 }: EvaluationPeriodTabsProps) {
-  const currentQuarter = getCurrentQuarter(cycle);
+  const currentQuarter = getCurrentQuarter(cycle, quarterlyCycles);
   const activeQuarter = controlledQuarter ?? currentQuarter;
   
   // Determine default tab based on current period timing
   const yearEndStatus = getYearEndManagerEvalStatus(cycle);
-  const quarterStatus = getQuarterManagerReviewStatus(cycle, currentQuarter);
+  const quarterStatus = getQuarterManagerReviewStatus(cycle, currentQuarter, quarterlyCycles);
   
   const computedDefaultTab = defaultTab ?? (
     quarterStatus.timing === 'current' ? 'quarterly' :
@@ -103,7 +106,7 @@ export function EvaluationPeriodTabs({
           >
             <TabsList>
               {([1, 2, 3, 4] as Quarter[]).map((q) => {
-                const qStatus = getQuarterManagerReviewStatus(cycle, q);
+                const qStatus = getQuarterManagerReviewStatus(cycle, q, quarterlyCycles);
                 const selfSubmitted = quarterlySelfEvals[q]?.status === 'submitted';
                 
                 return (
@@ -121,7 +124,7 @@ export function EvaluationPeriodTabs({
             </TabsList>
 
             {([1, 2, 3, 4] as Quarter[]).map((q) => {
-              const qStatus = getQuarterManagerReviewStatus(cycle, q);
+              const qStatus = getQuarterManagerReviewStatus(cycle, q, quarterlyCycles);
               const selfSubmitted = quarterlySelfEvals[q]?.status === 'submitted';
 
               return (
@@ -241,10 +244,10 @@ export function PeriodStatusAlert({
 /**
  * Simple hook to get evaluation period info
  */
-export function useEvaluationPeriod(cycle: PerformanceCycle | null) {
-  const currentQuarter = getCurrentQuarter(cycle);
+export function useEvaluationPeriod(cycle: PerformanceCycle | null, quarterlyCycles?: QuarterlyCycle[]) {
+  const currentQuarter = getCurrentQuarter(cycle, quarterlyCycles);
   const yearEndStatus = getYearEndManagerEvalStatus(cycle);
-  const quarterStatus = getQuarterManagerReviewStatus(cycle, currentQuarter);
+  const quarterStatus = getQuarterManagerReviewStatus(cycle, currentQuarter, quarterlyCycles);
 
   return {
     currentQuarter,

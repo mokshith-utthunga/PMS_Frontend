@@ -60,21 +60,73 @@ export interface Employee {
 export interface PerformanceCycle {
   id: string;
   name: string;
+  description?: string | null;
   year: number;
   status: CycleStatus;
-  goal_submission_start: string;
-  goal_submission_end: string;
-  goal_approval_end: string;
-  self_evaluation_start?: string;
-  self_evaluation_end?: string;
-  manager_evaluation_start: string;
-  manager_evaluation_end: string;
-  calibration_start: string;
-  calibration_end: string;
-  release_date: string;
-  created_by: string;
+  // Core cycle dates
+  start_date?: string | null;
+  end_date?: string | null;
+  calibration_start?: string | null;
+  calibration_end?: string | null;
+  release_date?: string | null;
+  // Applicability
+  applicable_departments?: string[] | null;
+  applicable_business_units?: string[] | null;
+  allow_late_goal_submission?: boolean; // Global fallback - prefer goals_quarterly_cycles
+  // Metadata
+  created_by?: string;
   created_at: string;
   updated_at: string;
+  // ============================================================
+  // DEPRECATED FIELDS - Removed from database, kept for backward compatibility
+  // Use quarterly_cycles and goals_quarterly_cycles tables instead
+  // ============================================================
+  /** @deprecated Use goals_quarterly_cycles instead */
+  goal_submission_start?: string | null;
+  /** @deprecated Use goals_quarterly_cycles instead */
+  goal_submission_end?: string | null;
+  /** @deprecated Use goals_quarterly_cycles instead */
+  goal_approval_end?: string | null;
+  /** @deprecated Use quarterly_cycles (Q4 manager_review_*) instead */
+  self_evaluation_start?: string | null;
+  /** @deprecated Use quarterly_cycles (Q4 manager_review_*) instead */
+  self_evaluation_end?: string | null;
+  /** @deprecated Use quarterly_cycles (Q4 manager_review_*) instead */
+  manager_evaluation_start?: string | null;
+  /** @deprecated Use quarterly_cycles (Q4 manager_review_*) instead */
+  manager_evaluation_end?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q1_self_review_start?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q1_self_review_end?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q1_manager_review_start?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q1_manager_review_end?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q2_self_review_start?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q2_self_review_end?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q2_manager_review_start?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q2_manager_review_end?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q3_self_review_start?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q3_self_review_end?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q3_manager_review_start?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q3_manager_review_end?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q4_self_review_start?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q4_self_review_end?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q4_manager_review_start?: string | null;
+  /** @deprecated Use quarterly_cycles table instead */
+  q4_manager_review_end?: string | null;
 }
 
 export type RatingValue = 1 | 2 | 3 | 4 | 5;
@@ -101,6 +153,7 @@ export interface KRA {
   id: string;
   employee_id: string;
   cycle_id: string;
+  kra_template_id?: string | null;
   quarter?: number | null;
   title: string;
   description?: string;
@@ -117,6 +170,7 @@ export interface Goal {
   employee_id: string;
   cycle_id: string;
   kra_id?: string;
+  kpi_template_id?: string | null;
   quarter?: number | null;
   title: string;
   description?: string;
@@ -124,6 +178,7 @@ export interface Goal {
   metric_type: MetricType;
   target_value?: string;
   weight: number;
+  calibration?: Array<{ threshold: number; rating: number }> | null;
   due_date?: string | null;
   status: GoalStatus;
   manager_comments?: string | null;

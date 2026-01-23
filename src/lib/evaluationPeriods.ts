@@ -3,6 +3,8 @@
  * Used to determine current quarters, check time periods, and manage evaluation states
  */
 
+import type { QuarterlyCycle } from '@/services/cycle.service';
+
 export type Quarter = 1 | 2 | 3 | 4;
 export type PeriodTiming = 'future' | 'current' | 'past';
 
@@ -16,7 +18,7 @@ export interface PerformanceCycle {
   self_evaluation_end?: string | null;
   manager_evaluation_start?: string | null;
   manager_evaluation_end?: string | null;
-  // Quarterly dates
+  // Quarterly dates (deprecated - now stored in quarterly_cycles table)
   q1_self_review_start?: string | null;
   q1_self_review_end?: string | null;
   q1_manager_review_start?: string | null;
@@ -33,6 +35,49 @@ export interface PerformanceCycle {
   q4_self_review_end?: string | null;
   q4_manager_review_start?: string | null;
   q4_manager_review_end?: string | null;
+}
+
+/**
+ * Helper to get quarterly cycle dates from quarterlyCycles array or deprecated cycle fields
+ */
+function getQuarterlyDates(
+  cycle: PerformanceCycle | null,
+  quarter: Quarter,
+  dateType: 'self_review' | 'manager_review',
+  quarterlyCycles?: QuarterlyCycle[]
+): { startDate: string | null; endDate: string | null } {
+  // First, try to get dates from quarterlyCycles array (preferred - from quarterly_cycles table)
+  if (quarterlyCycles && quarterlyCycles.length > 0) {
+    const qc = quarterlyCycles.find(qc => {
+      const qcQuarter = typeof qc.quarter === 'string' ? parseInt(qc.quarter) : qc.quarter;
+      return qcQuarter === quarter;
+    });
+    if (qc) {
+      if (dateType === 'self_review') {
+        return {
+          startDate: qc.self_review_start_date || null,
+          endDate: qc.self_review_end_date || null,
+        };
+      } else {
+        return {
+          startDate: qc.quarterly_manager_review_start_date || null,
+          endDate: qc.quarterly_manager_review_end_date || null,
+        };
+      }
+    }
+  }
+  
+  // Fallback to deprecated cycle fields for backward compatibility
+  if (cycle) {
+    const startField = `q${quarter}_${dateType}_start` as keyof PerformanceCycle;
+    const endField = `q${quarter}_${dateType}_end` as keyof PerformanceCycle;
+    return {
+      startDate: (cycle[startField] as string | null | undefined) || null,
+      endDate: (cycle[endField] as string | null | undefined) || null,
+    };
+  }
+  
+  return { startDate: null, endDate: null };
 }
 
 export interface PeriodStatus {
@@ -68,7 +113,10 @@ export function getDateRangeTiming(
  * Get the current quarter based on cycle dates
  * Returns the quarter that is currently open or the most recent one
  */
-export function getCurrentQuarter(cycle: PerformanceCycle | null): Quarter {
+export function getCurrentQuarter(
+  cycle: PerformanceCycle | null,
+  quarterlyCycles?: QuarterlyCycle[]
+): Quarter {
   if (!cycle) return 1;
 
   const today = new Date();
@@ -79,7 +127,7 @@ export function getCurrentQuarter(cycle: PerformanceCycle | null): Quarter {
   
   // First, find if any quarter is currently open
   for (const q of quarters) {
-    const timing = getQuarterManagerReviewTiming(cycle, q);
+    const timing = getQuarterManagerReviewTiming(cycle, q, quarterlyCycles);
     if (timing === 'current') {
       return q;
     }
@@ -87,7 +135,7 @@ export function getCurrentQuarter(cycle: PerformanceCycle | null): Quarter {
 
   // If no quarter is currently open, find the next upcoming quarter
   for (const q of quarters) {
-    const timing = getQuarterManagerReviewTiming(cycle, q);
+    const timing = getQuarterManagerReviewTiming(cycle, q, quarterlyCycles);
     if (timing === 'future') {
       return q;
     }
@@ -102,17 +150,13 @@ export function getCurrentQuarter(cycle: PerformanceCycle | null): Quarter {
  */
 export function getQuarterSelfReviewTiming(
   cycle: PerformanceCycle | null,
-  quarter: Quarter
+  quarter: Quarter,
+  quarterlyCycles?: QuarterlyCycle[]
 ): PeriodTiming {
   if (!cycle) return 'future';
 
-  const startField = `q${quarter}_self_review_start` as keyof PerformanceCycle;
-  const endField = `q${quarter}_self_review_end` as keyof PerformanceCycle;
-
-  return getDateRangeTiming(
-    cycle[startField] as string | null,
-    cycle[endField] as string | null
-  );
+  const { startDate, endDate } = getQuarterlyDates(cycle, quarter, 'self_review', quarterlyCycles);
+  return getDateRangeTiming(startDate, endDate);
 }
 
 /**
@@ -120,17 +164,13 @@ export function getQuarterSelfReviewTiming(
  */
 export function getQuarterManagerReviewTiming(
   cycle: PerformanceCycle | null,
-  quarter: Quarter
+  quarter: Quarter,
+  quarterlyCycles?: QuarterlyCycle[]
 ): PeriodTiming {
   if (!cycle) return 'future';
 
-  const startField = `q${quarter}_manager_review_start` as keyof PerformanceCycle;
-  const endField = `q${quarter}_manager_review_end` as keyof PerformanceCycle;
-
-  return getDateRangeTiming(
-    cycle[startField] as string | null,
-    cycle[endField] as string | null
-  );
+  const { startDate, endDate } = getQuarterlyDates(cycle, quarter, 'manager_review', quarterlyCycles);
+  return getDateRangeTiming(startDate, endDate);
 }
 
 /**
@@ -154,7 +194,8 @@ export function getYearEndManagerEvalTiming(cycle: PerformanceCycle | null): Per
  */
 export function getQuarterManagerReviewStatus(
   cycle: PerformanceCycle | null,
-  quarter: Quarter
+  quarter: Quarter,
+  quarterlyCycles?: QuarterlyCycle[]
 ): PeriodStatus {
   if (!cycle) {
     return {
@@ -165,11 +206,9 @@ export function getQuarterManagerReviewStatus(
     };
   }
 
-  const startField = `q${quarter}_manager_review_start` as keyof PerformanceCycle;
-  const endField = `q${quarter}_manager_review_end` as keyof PerformanceCycle;
-
-  const startDateStr = cycle[startField] as string | null;
-  const endDateStr = cycle[endField] as string | null;
+  const { startDate: startDateStr, endDate: endDateStr } = getQuarterlyDates(
+    cycle, quarter, 'manager_review', quarterlyCycles
+  );
 
   const timing = getDateRangeTiming(startDateStr, endDateStr);
   const startDate = startDateStr ? new Date(startDateStr) : null;

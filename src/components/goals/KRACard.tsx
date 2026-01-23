@@ -3,7 +3,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ChevronDown, ChevronRight, Edit2, Trash2, Plus, AlertCircle } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ChevronDown, ChevronRight, Edit2, Trash2, Plus, AlertCircle, Settings2 } from 'lucide-react';
 import { useState } from 'react';
 import type { KRA, Goal } from '@/types';
 
@@ -33,6 +34,28 @@ const metricTypeLabels: Record<string, string> = {
   qualitative: 'Qualitative',
 };
 
+const getRatingLabel = (rating: number) => {
+  switch (rating) {
+    case 5: return 'Exceptional';
+    case 4: return 'Exceeds';
+    case 3: return 'Meets';
+    case 2: return 'Needs Improvement';
+    case 1: return 'Unsatisfactory';
+    default: return '';
+  }
+};
+
+const getRatingColor = (rating: number) => {
+  switch (rating) {
+    case 5: return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400';
+    case 4: return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
+    case 3: return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400';
+    case 2: return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400';
+    case 1: return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400';
+    default: return '';
+  }
+};
+
 export function KRACard({
   kra,
   kpis,
@@ -44,9 +67,17 @@ export function KRACard({
   onDeleteKPI,
 }: KRACardProps) {
   const [expanded, setExpanded] = useState(true);
+  const [expandedCalibrations, setExpandedCalibrations] = useState<Record<string, boolean>>({});
   
   const totalKPIWeight = kpis.reduce((sum, kpi) => sum + Number(kpi.weight || 0), 0);
   const isKPIWeightValid = totalKPIWeight === 100;
+
+  const toggleCalibration = (kpiId: string) => {
+    setExpandedCalibrations(prev => ({
+      ...prev,
+      [kpiId]: !prev[kpiId],
+    }));
+  };
 
   return (
     <Card className="border-l-4 border-l-primary">
@@ -122,48 +153,105 @@ export function KRACard({
                 No KPIs added yet. Add at least one KPI.
               </div>
             ) : (
-              kpis.map((kpi) => (
-                <div
-                  key={kpi.id}
-                  className="border rounded-lg p-3 bg-background hover:bg-muted/30 transition-colors"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <Badge variant="secondary" className="text-xs">KPI</Badge>
-                        <Badge variant={statusColors[kpi.status]} className="text-xs">{kpi.status}</Badge>
-                        <span className="text-xs text-muted-foreground">Weight: {kpi.weight}%</span>
+              kpis.map((kpi) => {
+                const hasCalibration = kpi.calibration && kpi.calibration.length > 0;
+                const sortedCalibration = hasCalibration 
+                  ? [...kpi.calibration!].sort((a, b) => b.threshold - a.threshold)
+                  : [];
+                
+                return (
+                  <div
+                    key={kpi.id}
+                    className="border rounded-lg p-3 bg-background hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <Badge variant="secondary" className="text-xs">KPI</Badge>
+                          <Badge variant={statusColors[kpi.status]} className="text-xs">{kpi.status}</Badge>
+                          <span className="text-xs text-muted-foreground">Weight: {kpi.weight}%</span>
+                          {hasCalibration && (
+                            <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400">
+                              <Settings2 className="h-3 w-3 mr-1" />
+                              Calibrated
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="font-medium text-sm">{kpi.title}</p>
+                        {kpi.description && (
+                          <p className="text-xs text-muted-foreground mt-1">{kpi.description}</p>
+                        )}
+                        <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
+                          <span>Metric: {metricTypeLabels[kpi.metric_type] || kpi.metric_type}</span>
+                          {kpi.target_value && <span>Target: {kpi.target_value}</span>}
+                        </div>
+
+                        {/* Calibration Display (Collapsible) */}
+                        {hasCalibration && (
+                          <Collapsible 
+                            open={expandedCalibrations[kpi.id]} 
+                            onOpenChange={() => toggleCalibration(kpi.id)}
+                            className="mt-2"
+                          >
+                            <CollapsibleTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-7 px-2 text-xs">
+                                {expandedCalibrations[kpi.id] ? (
+                                  <ChevronDown className="h-3 w-3 mr-1" />
+                                ) : (
+                                  <ChevronRight className="h-3 w-3 mr-1" />
+                                )}
+                                View Rating Scale ({sortedCalibration.length} rules)
+                              </Button>
+                            </CollapsibleTrigger>
+                            <CollapsibleContent className="mt-2">
+                              <div className="bg-muted/50 rounded-lg p-2 space-y-1">
+                                <div className="grid grid-cols-2 gap-2 text-xs font-medium text-muted-foreground mb-1 px-2">
+                                  <span>Achievement {kpi.metric_type === 'percentage' ? '(%)' : ''}</span>
+                                  <span>Rating</span>
+                                </div>
+                                {sortedCalibration.map((rule, idx) => (
+                                  <div 
+                                    key={idx} 
+                                    className="grid grid-cols-2 gap-2 text-xs px-2 py-1 rounded bg-background"
+                                  >
+                                    <span className="font-mono">
+                                      ≥ {rule.threshold}{kpi.metric_type === 'percentage' ? '%' : ''}
+                                    </span>
+                                    <Badge variant="secondary" className={`text-xs w-fit ${getRatingColor(rule.rating)}`}>
+                                      {rule.rating} - {getRatingLabel(rule.rating)}
+                                    </Badge>
+                                  </div>
+                                ))}
+                                <p className="text-[10px] text-muted-foreground px-2 pt-1">
+                                  Rating is based on the highest threshold your achievement meets or exceeds.
+                                </p>
+                              </div>
+                            </CollapsibleContent>
+                          </Collapsible>
+                        )}
+
+                        {kpi.status === 'returned' && kpi.manager_comments && (
+                          <Alert variant="destructive" className="mt-2 py-2">
+                            <AlertDescription className="text-xs">
+                              <strong>Feedback:</strong> {kpi.manager_comments}
+                            </AlertDescription>
+                          </Alert>
+                        )}
                       </div>
-                      <p className="font-medium text-sm">{kpi.title}</p>
-                      {kpi.description && (
-                        <p className="text-xs text-muted-foreground mt-1">{kpi.description}</p>
-                      )}
-                      <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
-                        <span>Metric: {metricTypeLabels[kpi.metric_type] || kpi.metric_type}</span>
-                        {kpi.target_value && <span>Target: {kpi.target_value}</span>}
-                        {kpi.due_date && <span>Due: {new Date(kpi.due_date).toLocaleDateString()}</span>}
-                      </div>
-                      {kpi.status === 'returned' && kpi.manager_comments && (
-                        <Alert variant="destructive" className="mt-2 py-2">
-                          <AlertDescription className="text-xs">
-                            <strong>Feedback:</strong> {kpi.manager_comments}
-                          </AlertDescription>
-                        </Alert>
+                      {canEdit && (kpi.status === 'draft' || kpi.status === 'returned') && (
+                        <div className="flex gap-1 ml-2">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onEditKPI(kpi)}>
+                            <Edit2 className="h-3 w-3" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onDeleteKPI(kpi.id)}>
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
                       )}
                     </div>
-                    {canEdit && (kpi.status === 'draft' || kpi.status === 'returned') && (
-                      <div className="flex gap-1 ml-2">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onEditKPI(kpi)}>
-                          <Edit2 className="h-3 w-3" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onDeleteKPI(kpi.id)}>
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    )}
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 

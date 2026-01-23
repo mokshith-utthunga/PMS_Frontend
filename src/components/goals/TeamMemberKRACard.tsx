@@ -87,31 +87,107 @@ export function TeamMemberKRACard({
                 No KPIs under this KRA
               </div>
             ) : (
-              kpis.map(kpi => (
-                <div
-                  key={kpi.id}
-                  className="border rounded-lg p-3 bg-background hover:bg-muted/30 transition-colors"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <Badge variant="secondary" className="text-xs">KPI</Badge>
-                        <Badge variant={STATUS_COLORS[kpi.status]} className="text-xs">{kpi.status}</Badge>
-                        <span className="text-xs text-muted-foreground">Weight: {kpi.weight}%</span>
+              kpis.map(kpi => {
+                // Parse calibration - handle both array and JSONB string formats
+                // PostgreSQL returns JSONB as JavaScript objects/arrays automatically
+                let calibrationArray: Array<{ threshold: number; rating: number }> = [];
+                if (kpi.calibration) {
+                  if (typeof kpi.calibration === 'string') {
+                    try {
+                      const parsed = JSON.parse(kpi.calibration);
+                      calibrationArray = Array.isArray(parsed) ? parsed : [];
+                    } catch {
+                      calibrationArray = [];
+                    }
+                  } else if (Array.isArray(kpi.calibration)) {
+                    calibrationArray = kpi.calibration;
+                  } else if (typeof kpi.calibration === 'object' && kpi.calibration !== null) {
+                    // Handle case where it might be an object instead of array
+                    calibrationArray = [];
+                  }
+                }
+
+                // Sort calibrations by threshold descending
+                const sortedCalibrations = calibrationArray.length > 0
+                  ? [...calibrationArray].sort((a, b) => b.threshold - a.threshold)
+                  : [];
+                const unit = kpi.metric_type === 'percentage' ? '%' : '';
+
+                // Generate range descriptions similar to CalibrationDisplay
+                const rangeDescriptions: Array<{ range: string; rating: number }> = [];
+                if (sortedCalibrations.length > 0) {
+                  // Highest threshold: >= threshold
+                  rangeDescriptions.push({
+                    range: `≥ ${sortedCalibrations[0].threshold}${unit}`,
+                    rating: sortedCalibrations[0].rating,
+                  });
+
+                  // Middle ranges: >= next.threshold and < current.threshold
+                  for (let i = 0; i < sortedCalibrations.length - 1; i++) {
+                    const current = sortedCalibrations[i];
+                    const next = sortedCalibrations[i + 1];
+                    rangeDescriptions.push({
+                      range: `≥ ${next.threshold}${unit} and < ${current.threshold}${unit}`,
+                      rating: next.rating,
+                    });
+                  }
+
+                  // Below lowest threshold (fallback)
+                  const lowest = sortedCalibrations[sortedCalibrations.length - 1];
+                  rangeDescriptions.push({
+                    range: `< ${lowest.threshold}${unit}`,
+                    rating: lowest.rating,
+                  });
+                }
+
+                return (
+                  <div
+                    key={kpi.id}
+                    className="border rounded-lg p-3 bg-background hover:bg-muted/30 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                          <Badge variant="secondary" className="text-xs">KPI</Badge>
+                          <Badge variant={STATUS_COLORS[kpi.status]} className="text-xs">{kpi.status}</Badge>
+                          <span className="text-xs text-muted-foreground">Weight: {kpi.weight}%</span>
+                        </div>
+                        <p className="font-medium text-sm">{kpi.title}</p>
+                        {kpi.description && (
+                          <p className="text-xs text-muted-foreground mt-1">{kpi.description}</p>
+                        )}
+                        <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
+                          <span>Metric: {METRIC_TYPE_LABELS[kpi.metric_type] || kpi.metric_type}</span>
+                          {kpi.target_value && <span>Target: {kpi.target_value}</span>}
+                          {kpi.due_date && <span>Due: {new Date(kpi.due_date).toLocaleDateString()}</span>}
+                        </div>
                       </div>
-                      <p className="font-medium text-sm">{kpi.title}</p>
-                      {kpi.description && (
-                        <p className="text-xs text-muted-foreground mt-1">{kpi.description}</p>
+                      
+                      {/* Calibrations Column */}
+                      {rangeDescriptions.length > 0 && (
+                        <div className="flex-shrink-0 border-l pl-4 ml-4 min-w-[200px]">
+                          <div className="text-xs font-medium text-muted-foreground mb-2">Calibration</div>
+                          <div className="space-y-1.5">
+                            {rangeDescriptions.map((desc, idx) => (
+                              <div
+                                key={idx}
+                                className="flex flex-col gap-1 py-1.5 px-2 rounded bg-muted/50"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-mono text-[10px] text-muted-foreground">{desc.range}</span>
+                                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                    Rating {desc.rating}
+                                  </Badge>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
-                      <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
-                        <span>Metric: {METRIC_TYPE_LABELS[kpi.metric_type] || kpi.metric_type}</span>
-                        {kpi.target_value && <span>Target: {kpi.target_value}</span>}
-                        {kpi.due_date && <span>Due: {new Date(kpi.due_date).toLocaleDateString()}</span>}
-                      </div>
                     </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </CardContent>

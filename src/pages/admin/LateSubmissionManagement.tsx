@@ -73,11 +73,20 @@ export default function LateSubmissionManagement() {
   const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [targetEmployeeId, setTargetEmployeeId] = useState<string | null>(null);
+  const [submissionType, setSubmissionType] = useState<'goals' | 'evaluations'>('goals');
 
-  // Get quarter from URL - handle "year-end" as special case
+  // Get quarter and tab from URL - handle "year-end" as special case
   const urlQuarter = searchParams.get('quarter');
+  const urlTab = searchParams.get('tab') as 'goals' | 'evaluations' | null;
   const isYearEnd = urlQuarter === 'year-end';
   const selectedQuarter = isYearEnd ? null : (urlQuarter ? parseInt(urlQuarter, 10) : null);
+  
+  // Sync submissionType with URL tab
+  useEffect(() => {
+    if (urlTab && (urlTab === 'goals' || urlTab === 'evaluations')) {
+      setSubmissionType(urlTab);
+    }
+  }, [urlTab]);
 
   // Fetch all cycles (not just active)
   const { data: cycles = [] } = useQuery({
@@ -192,14 +201,25 @@ export default function LateSubmissionManagement() {
     return highestQ;
   }, [activeCycle]);
 
-  // Auto-select current active quarter if no quarter is in URL (but not for year-end)
+  // Auto-select current active quarter and tab if not in URL (but not for year-end)
   useEffect(() => {
+    let needsUpdate = false;
+    const newParams = new URLSearchParams(searchParams);
+    
     if (!urlQuarter && activeCycle && !isYearEnd) {
-      const newParams = new URLSearchParams(searchParams);
       newParams.set('quarter', currentActiveQuarter.toString());
+      needsUpdate = true;
+    }
+    
+    if (!urlTab && !isYearEnd) {
+      newParams.set('tab', 'goals');
+      needsUpdate = true;
+    }
+    
+    if (needsUpdate) {
       setSearchParams(newParams, { replace: true });
     }
-  }, [urlQuarter, activeCycle, currentActiveQuarter, searchParams, setSearchParams, isYearEnd]);
+  }, [urlQuarter, urlTab, activeCycle, currentActiveQuarter, searchParams, setSearchParams, isYearEnd]);
 
   // Use selectedQuarter from URL or currentActiveQuarter as fallback (for quarters only)
   const effectiveSelectedQuarter = isYearEnd ? 'year-end' : (selectedQuarter ?? currentActiveQuarter);
@@ -238,10 +258,10 @@ export default function LateSubmissionManagement() {
 
   // Fetch employees who missed deadline from API (includes submission status and permissions)
   const { data: lateSubmissionEmployees = [], isLoading: employeesLoading, error: employeesError } = useQuery({
-    queryKey: ['late-submission-employees', effectiveCycleId, effectiveSelectedQuarter],
+    queryKey: ['late-submission-employees', effectiveCycleId, effectiveSelectedQuarter, submissionType],
     enabled: !!effectiveCycleId,
     queryFn: async () => {
-      const result = await permissionsService.lateSubmission.getByCycle(effectiveCycleId, effectiveSelectedQuarter);
+      const result = await permissionsService.lateSubmission.getByCycle(effectiveCycleId, effectiveSelectedQuarter, submissionType);
       return result.data || [];
     },
   });
@@ -252,20 +272,43 @@ export default function LateSubmissionManagement() {
     isLoading: detailsLoading,
     error: detailsError 
   } = useQuery({
-    queryKey: ['late-submission-details', effectiveCycleId, effectiveSelectedQuarter],
+    queryKey: ['late-submission-details', effectiveCycleId, effectiveSelectedQuarter, submissionType],
     enabled: !!effectiveCycleId,
     queryFn: async () => {
-      const result = await permissionsService.lateSubmission.getDetails(effectiveCycleId, effectiveSelectedQuarter);
+      const result = await permissionsService.lateSubmission.getDetails(effectiveCycleId, effectiveSelectedQuarter, submissionType);
       return result.data;
     },
   });
 
-  // Use API data for stats
+  // Use API data for stats - separate goals and evaluations
   const totalEmployees = submissionDetails?.totalEmployees || 0;
-  const submittedCount = submissionDetails?.submitted || 0;
-  const missedCount = submissionDetails?.missedDeadline || 0;
-  const lateAccessCount = submissionDetails?.lateAccessGranted || 0;
-  const isPastDeadline = submissionDetails?.isPastDeadline || false;
+  const goalsStats = submissionDetails?.goals || {
+    submitted: 0,
+    missedDeadline: 0,
+    lateAccessGranted: 0,
+    quarter: null,
+    isPastDeadline: false,
+    hasStarted: false,
+    startDate: null,
+  };
+  const evaluationsStats = submissionDetails?.evaluations || {
+    submitted: 0,
+    missedDeadline: 0,
+    lateAccessGranted: 0,
+    quarter: null,
+    isPastDeadline: false,
+    hasStarted: false,
+    startDate: null,
+  };
+  
+  // Use stats based on selected type
+  const currentStats = submissionType === 'goals' ? goalsStats : evaluationsStats;
+  const submittedCount = currentStats.submitted;
+  const missedCount = currentStats.missedDeadline;
+  const lateAccessCount = currentStats.lateAccessGranted;
+  const isPastDeadline = currentStats.isPastDeadline;
+  const hasStarted = currentStats.hasStarted ?? true; // Default to true for backwards compatibility
+  const startDate = currentStats.startDate;
 
   // Filter employees who missed the deadline (haven't submitted for the selected quarter)
   const missedDeadlineEmployees = lateSubmissionEmployees.filter(
@@ -284,7 +327,6 @@ export default function LateSubmissionManagement() {
     }>();
     
     missedDeadlineEmployees.forEach((emp: any) => {
-      // Use a consistent key for employees without managers
       const managerCode = emp.manager_code || '__no_manager__';
       const managerName = emp.manager_name || 'No Manager Assigned';
       const managerEmpCode = emp.manager_emp_code || emp.manager_code || '-';
@@ -455,19 +497,23 @@ export default function LateSubmissionManagement() {
 
         {/* Quarter Tabs */}
         <Tabs value={isYearEnd ? 'year-end' : `q${effectiveSelectedQuarter}`} onValueChange={(value) => {
+          const newParams = new URLSearchParams(searchParams);
           if (value === 'year-end') {
-            const newParams = new URLSearchParams(searchParams);
             newParams.set('quarter', 'year-end');
-            setSearchParams(newParams);
+            newParams.delete('tab'); // Year-end doesn't have goals/evaluations tabs
           } else {
             const q = parseInt(value.replace('q', ''));
-            if (isQuarterAccessible(q)) {
-              // Update URL query parameter while preserving other params
-              const newParams = new URLSearchParams(searchParams);
-              newParams.set('quarter', q.toString());
-              setSearchParams(newParams);
+            // Don't allow switching to a quarter that hasn't started yet
+            if (!isQuarterAccessible(q)) {
+              return;
+            }
+            newParams.set('quarter', q.toString());
+            // Ensure tab is set when switching to quarterly view
+            if (!newParams.get('tab')) {
+              newParams.set('tab', submissionType);
             }
           }
+          setSearchParams(newParams);
         }}>
           <TabsList>
             <TabsTrigger value="q1" disabled={!isQuarterAccessible(1)}>Q1</TabsTrigger>
@@ -477,6 +523,23 @@ export default function LateSubmissionManagement() {
             <TabsTrigger value="year-end">Year-End Eval</TabsTrigger>
           </TabsList>
         </Tabs>
+
+        {/* Goals vs Evaluations Tabs */}
+        {!isYearEnd && (
+          <Tabs value={submissionType} onValueChange={(value) => {
+            const newType = value as 'goals' | 'evaluations';
+            setSubmissionType(newType);
+            // Update URL with tab parameter
+            const newParams = new URLSearchParams(searchParams);
+            newParams.set('tab', newType);
+            setSearchParams(newParams);
+          }}>
+            <TabsList>
+              <TabsTrigger value="goals">Goals</TabsTrigger>
+              <TabsTrigger value="evaluations">Evaluations</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
 
         {/* Stats Cards */}
         <div className="grid gap-4 md:grid-cols-4">
@@ -509,7 +572,7 @@ export default function LateSubmissionManagement() {
             <CardContent>
               <div className="text-2xl font-bold text-destructive">{missedCount}</div>
               <p className="text-xs text-muted-foreground mt-1">
-                {submissionDetails?.isPastDeadline 
+                {isPastDeadline 
                   ? `${missedCount} not submitted` 
                   : 'Deadline not passed'}
               </p>
@@ -537,13 +600,13 @@ export default function LateSubmissionManagement() {
                 <CardTitle>
                   {isYearEnd 
                     ? `Managers with Pending Year-End Evaluations (${employeesByManager.size})`
-                    : `Employees Who Missed Deadline (${missedCount})`}
+                    : `Employees Who Missed ${submissionType === 'goals' ? 'Goals' : 'Evaluations'} Deadline (${missedCount})`}
                 </CardTitle>
                 <CardDescription>
                   {isYearEnd
                     ? 'Managers with reportees who have not submitted their year-end evaluations'
                     : (isPastDeadline 
-                      ? 'These employees have not submitted their self-evaluations for this quarter'
+                      ? `These employees have not submitted their ${submissionType === 'goals' ? 'goals' : 'self-evaluations'} for this quarter`
                       : 'Deadline has not passed yet')}
                 </CardDescription>
               </div>
@@ -556,10 +619,25 @@ export default function LateSubmissionManagement() {
             </div>
           </CardHeader>
           <CardContent>
-            {!isPastDeadline && !isYearEnd ? (
+            {!hasStarted && !isYearEnd ? (
               <div className="text-center py-8 text-muted-foreground">
-                <p className="text-lg font-medium mb-2">Quarter is still ongoing</p>
-                <p className="text-sm">The deadline has not passed yet. Employees can still submit their self-evaluations.</p>
+                <p className="text-lg font-medium mb-2">
+                  {submissionType === 'goals' ? 'Goal submission period' : 'Evaluation period'} has not started yet
+                </p>
+                <p className="text-sm">
+                  {startDate 
+                    ? `Starts on ${new Date(startDate).toLocaleDateString()}. Check back later.`
+                    : 'Start date is not configured for this quarter.'}
+                </p>
+              </div>
+            ) : !isPastDeadline && !isYearEnd ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <p className="text-lg font-medium mb-2">
+                  {submissionType === 'goals' ? 'Goal submission' : 'Evaluation'} period is still ongoing
+                </p>
+                <p className="text-sm">
+                  The deadline has not passed yet. Employees can still submit their {submissionType === 'goals' ? 'goals' : 'self-evaluations'}.
+                </p>
               </div>
             ) : (isYearEnd ? (
               // Year-End Accordion View
@@ -672,7 +750,7 @@ export default function LateSubmissionManagement() {
               )
             ) : missedDeadlineEmployees.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
-                All employees have submitted their self-evaluations on time!
+                All employees have submitted their {submissionType === 'goals' ? 'goals' : 'self-evaluations'} on time!
               </div>
             ) : (
               // Regular Quarter Table View
@@ -691,7 +769,7 @@ export default function LateSubmissionManagement() {
                     <TableHead>Employee</TableHead>
                     <TableHead>Department</TableHead>
                     <TableHead>Manager</TableHead>
-                    <TableHead>Goal Status</TableHead>
+                    <TableHead>{submissionType === 'goals' ? 'Goal Status' : 'Evaluation Status'}</TableHead>
                     <TableHead>Late Access</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>

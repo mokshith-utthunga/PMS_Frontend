@@ -14,6 +14,7 @@ export function getGoalDeadlineStatus(
   hasLatePermission: boolean
 ): DeadlineStatus | null {
   if (!cycle) return null;
+  if (!cycle.goal_submission_end) return null;
 
   const now = new Date();
   const deadline = new Date(cycle.goal_submission_end);
@@ -34,15 +35,16 @@ export function getCyclePhase(cycle: PerformanceCycle | null): string {
   
   const now = new Date();
   
-  if (now < new Date(cycle.goal_submission_end)) return 'Goal Setting Phase';
-  if (now < new Date(cycle.goal_approval_end)) return 'Goal Approval Phase';
+  if (cycle.goal_submission_end && now < new Date(cycle.goal_submission_end)) return 'Goal Setting Phase';
+  if (cycle.goal_approval_end && now < new Date(cycle.goal_approval_end)) return 'Goal Approval Phase';
   if (cycle.self_evaluation_end && now < new Date(cycle.self_evaluation_end)) return 'Self Evaluation Phase';
-  if (now < new Date(cycle.manager_evaluation_end)) return 'Manager Evaluation Phase';
-  if (now < new Date(cycle.calibration_end)) return 'Calibration Phase';
+  if (cycle.manager_evaluation_end && now < new Date(cycle.manager_evaluation_end)) return 'Manager Evaluation Phase';
+  if (cycle.calibration_end && now < new Date(cycle.calibration_end)) return 'Calibration Phase';
   
   return 'Release Phase';
 }
 
-export function formatDateRange(start: string, end: string): string {
+export function formatDateRange(start: string | null | undefined, end: string | null | undefined): string {
+  if (!start || !end) return 'Not configured';
   return `${format(new Date(start), 'MMM d')} - ${format(new Date(end), 'MMM d, yyyy')}`;
 }

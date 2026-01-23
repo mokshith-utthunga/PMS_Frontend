@@ -22,6 +22,7 @@ interface KPITemplate {
   metric_type: string;
   suggested_target: string | null;
   suggested_weight: number;
+  calibration?: Array<{ threshold: number; rating: number }> | null;
 }
 
 interface KRATemplate {
@@ -69,7 +70,7 @@ export function TemplateSelector({
       const templatesWithKPIs = await Promise.all(
         kraTemplates.map(async (kra) => {
           const kpiResult = await templateService.kpi.getByKRATemplate(kra.id);
-          // Map KPITemplateData to KPITemplate format
+          // Map KPITemplateData to KPITemplate format (include calibration!)
           const kpiTemplates: KPITemplate[] = (kpiResult.data || []).map((kpi) => ({
             id: kpi.id || '',
             title: kpi.title,
@@ -77,6 +78,7 @@ export function TemplateSelector({
             metric_type: kpi.metric_type,
             suggested_target: kpi.suggested_target || kpi.target_value || null,
             suggested_weight: kpi.suggested_weight || kpi.weight || 50,
+            calibration: kpi.calibration || null,
           }));
           return {
             ...kra,

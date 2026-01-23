@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/contexts/AuthContext';
 import { Plus, Send, Copy, ChevronDown, Calendar, Lock, AlertTriangle } from 'lucide-react';
+import { format } from 'date-fns';
 import {
   Tooltip,
   TooltipContent,
@@ -16,7 +17,6 @@ import {
 import { PageLoader } from '@/loaders';
 import { useGoalsData, useKraOperations, useKpiOperations, useBonusOperations, useTemplateSelection } from '@/hooks';
 import { useQuarterFromUrl } from '@/hooks/useQuarterFromUrl';
-import { getGoalDeadlineStatus } from '@/utils/deadlineUtils';
 import { getValidationIssues, hasDraftItems, isValidForSubmission } from '@/utils/goalsValidation';
 import { 
   getAvailableQuartersForEmployee, 
@@ -40,9 +40,12 @@ import { KPIForm } from '@/components/goals/KPIForm';
 import { TemplateSelector } from '@/components/goals/TemplateSelector';
 import { BonusKRAForm } from '@/components/goals/BonusKRAForm';
 import { BonusKPIForm } from '@/components/goals/BonusKPIForm';
-import { employeeService, goalsService } from '@/services';
+import { employeeService, goalsService, cycleService } from '@/services';
 import { toasts } from '@/toasts';
 import type { KRA, Goal, BonusKRA, BonusKPI, Employee } from '@/types';
+import type { GoalsQuarterlyCycle } from '@/services/cycle.service';
+import { useQuery } from '@tanstack/react-query';
+import PeriodClose from '@/components/evaluation/PeriodClose';
 
 export default function Goals() {
   const { user, hasAnyRole } = useAuth();
@@ -76,6 +79,69 @@ export default function Goals() {
   // Fetch all goals data with quarter filter
   const goalsData = useGoalsData(user?.id, quarter || null);
   const { employeeId, employeeProfile, activeCycle, kras, kpis, bonusKras, bonusKpis, hasLatePermission, loading, refetch } = goalsData;
+
+  // Fetch goals quarterly cycles to get correct goal submission deadlines
+  const { data: goalsQuarterlyCycles = [] } = useQuery({
+    queryKey: ['goals-quarterly-cycles', activeCycle?.id],
+    queryFn: () => cycleService.getGoalsQuarterlyCycles(activeCycle!.id).then(r => r.data || []),
+    enabled: !!activeCycle?.id
+  });
+
+  // Helper to get goal submission start date for a quarter
+  const getGoalSubmissionStartDate = (quarter: number): Date | null => {
+    const goalsCycle = goalsQuarterlyCycles.find((gqc: GoalsQuarterlyCycle) => gqc.quarter === quarter);
+    if (goalsCycle?.goal_submission_start_date) {
+      return new Date(goalsCycle.goal_submission_start_date);
+    }
+    return null;
+  };
+
+  // Helper to get goal submission end date for a quarter
+  const getGoalSubmissionEndDate = (quarter: number): Date | null => {
+    const goalsCycle = goalsQuarterlyCycles.find((gqc: GoalsQuarterlyCycle) => gqc.quarter === quarter);
+    if (goalsCycle?.goal_submission_end_date) {
+      return new Date(goalsCycle.goal_submission_end_date);
+    }
+    return null;
+  };
+
+  // Helper to check if goal submission period has started for a quarter
+  const hasGoalSubmissionStarted = (quarter: number): boolean => {
+    const startDate = getGoalSubmissionStartDate(quarter);
+    if (!startDate) return false;
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+    return now >= start;
+  };
+
+  // Helper to check if goal submission period has ended for a quarter
+  const hasGoalSubmissionEnded = (quarter: number): boolean => {
+    const endDate = getGoalSubmissionEndDate(quarter);
+    if (!endDate) return false;
+    const now = new Date();
+    now.setHours(23, 59, 59, 999);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+    return now > end;
+  };
+
+  // Helper to check if employee can work on goals for a quarter
+  const canWorkOnGoalsForQuarter = (quarter: number): { canWork: boolean; reason: 'not_started' | 'ended' | 'ok' } => {
+    const started = hasGoalSubmissionStarted(quarter);
+    const ended = hasGoalSubmissionEnded(quarter);
+
+    if (!started) {
+      return { canWork: false, reason: 'not_started' };
+    }
+
+    if (ended && !hasLatePermission) {
+      return { canWork: false, reason: 'ended' };
+    }
+
+    return { canWork: true, reason: 'ok' };
+  };
 
   // Get available quarters based on join date
   const availableQuarters = useMemo(() => {
@@ -172,35 +238,60 @@ export default function Goals() {
     krasCount: kras.length,
     availableKRAWeight: kraOps.availableKRAWeight,
     onSuccess: refetch,
+    quarter: quarter || null,
   });
 
-  // Computed values
-  const deadlineStatus = useMemo(
-    () => getGoalDeadlineStatus(activeCycle, hasLatePermission),
-    [activeCycle, hasLatePermission]
-  );
+  // Computed values - use quarterly goal submission deadline for quarterly goals
+  const deadlineStatus = useMemo(() => {
+    if (!activeCycle || !quarter) return null;
+    
+    // Get goal submission end date for the current quarter
+    const goalEndDate = getGoalSubmissionEndDate(quarter);
+    if (!goalEndDate) return null;
+
+    const now = new Date();
+    const deadline = new Date(goalEndDate);
+    const isPastDeadline = now > deadline;
+    const daysOverdue = Math.max(0, Math.floor((now.getTime() - deadline.getTime()) / (1000 * 60 * 60 * 24)));
+    
+    // Check if late submission is allowed for this quarter
+    const goalsCycle = goalsQuarterlyCycles.find((gqc: GoalsQuarterlyCycle) => gqc.quarter === quarter);
+    const allowLate = goalsCycle?.allow_late_goal_submission || activeCycle.allow_late_goal_submission || false;
+    const canSubmit = !isPastDeadline || allowLate || hasLatePermission;
+
+    return {
+      isPastDeadline,
+      daysOverdue,
+      canSubmit,
+      formattedDeadline: format(deadline, 'MMMM d, yyyy'),
+    };
+  }, [activeCycle, quarter, hasLatePermission, goalsQuarterlyCycles]);
 
   const validationIssues = useMemo(
     () => getValidationIssues(kras, kpis, kraOps.getKPIsForKRA),
     [kras, kpis, kraOps.getKPIsForKRA]
   );
 
-  const canSubmit = deadlineStatus?.canSubmit ?? false;
-  
+  // Use goal submission dates instead of self-review dates for goals
   const quarterWorkStatus = useMemo(() => {
     if (!quarter || !activeCycle) return { canWork: false, reason: 'not_started' as const };
-    return canWorkOnQuarter(activeCycle as CycleWithQuarterDates, quarter, hasLatePermission);
-  }, [quarter, activeCycle, hasLatePermission]);
+    return canWorkOnGoalsForQuarter(quarter);
+  }, [quarter, activeCycle, hasLatePermission, goalsQuarterlyCycles]);
 
+  // canSubmit should be true if quarterWorkStatus allows work, or if deadlineStatus allows it
+  // This ensures the button shows even if deadlineStatus is null (no exact deadline date)
+  const canSubmit = quarterWorkStatus.canWork || (deadlineStatus?.canSubmit ?? false);
+
+  // Use goal submission dates instead of self-review dates for goals
   const quarterHasStarted = useMemo(() => {
     if (!quarter || !activeCycle) return false;
-    return hasQuarterStarted(activeCycle as CycleWithQuarterDates, quarter);
-  }, [quarter, activeCycle]);
+    return hasGoalSubmissionStarted(quarter);
+  }, [quarter, activeCycle, goalsQuarterlyCycles]);
 
   const quarterHasEnded = useMemo(() => {
     if (!quarter || !activeCycle) return false;
-    return hasQuarterEnded(activeCycle as CycleWithQuarterDates, quarter);
-  }, [quarter, activeCycle]);
+    return hasGoalSubmissionEnded(quarter);
+  }, [quarter, activeCycle, goalsQuarterlyCycles]);
 
   const showAddButton = activeCycle && employeeId && kras.length < 5 && canSubmit && quarterWorkStatus.canWork;
   const showCloneButton = previousQuarters.length > 0 && quarter && quarterWorkStatus.canWork;
@@ -264,20 +355,21 @@ export default function Goals() {
             <Tabs value={quarter ? `q${quarter}` : undefined} onValueChange={(value) => {
               const q = parseInt(value.replace('q', ''));
               if (q >= 1 && q <= 4) {
-                // Only allow changing to quarters that have started
-                const quarterHasStarted = hasQuarterStarted(activeCycle as CycleWithQuarterDates, q);
-                if (quarterHasStarted) {
+                // Only allow changing to quarters where goal submission has started
+                const goalStarted = hasGoalSubmissionStarted(q);
+                if (goalStarted) {
                   setQuarter(q as 1 | 2 | 3 | 4);
                 }
               }
             }}>
               <TabsList>
                 {availableQuarters.map(q => {
-                  const quarterHasStarted = hasQuarterStarted(activeCycle as CycleWithQuarterDates, q);
-                  const startDate = getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
-                  const endDate = getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
+                  // Use goal submission dates for goals
+                  const goalStarted = hasGoalSubmissionStarted(q);
+                  const startDate = getGoalSubmissionStartDate(q) || getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
+                  const endDate = getGoalSubmissionEndDate(q) || getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
                   
-                  if (!quarterHasStarted) {
+                  if (!goalStarted) {
                     return (
                       <Tooltip key={q}>
                         <TooltipTrigger asChild>
@@ -312,11 +404,15 @@ export default function Goals() {
                 })}
               </TabsList>
               {availableQuarters.map(q => {
-                const qStarted = hasQuarterStarted(activeCycle as CycleWithQuarterDates, q);
-                const qEnded = hasQuarterEnded(activeCycle as CycleWithQuarterDates, q);
-                const qWorkStatus = canWorkOnQuarter(activeCycle as CycleWithQuarterDates, q, hasLatePermission);
-                const startDate = getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
-                const endDate = getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
+                // Use goal submission dates for goals, not self-review dates
+                const qStarted = hasGoalSubmissionStarted(q);
+                const qEnded = hasGoalSubmissionEnded(q);
+                const qWorkStatus = canWorkOnGoalsForQuarter(q);
+                const startDate = getGoalSubmissionStartDate(q);
+                const endDate = getGoalSubmissionEndDate(q);
+                // Fallback to quarter dates for display if goal dates not available
+                const displayStartDate = startDate || getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
+                const displayEndDate = endDate || getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
 
                 return (
                   <TabsContent key={q} value={`q${q}`} className="space-y-6">
@@ -327,11 +423,11 @@ export default function Goals() {
                           <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
                           <h3 className="font-semibold text-lg">{formatQuarterLabel(q)} Has Not Started Yet</h3>
                           <p className="text-muted-foreground text-center mt-2">
-                            {startDate && endDate ? (
+                            {displayStartDate && displayEndDate ? (
                               <>
                                 The {formatQuarterLabel(q)} goal setting period will be open from{' '}
-                                <span className="font-medium">{formatDateShort(startDate)}</span> to{' '}
-                                <span className="font-medium">{formatDateShort(endDate)}</span>.
+                                <span className="font-medium">{formatDateShort(displayStartDate)}</span> to{' '}
+                                <span className="font-medium">{formatDateShort(displayEndDate)}</span>.
                               </>
                             ) : (
                               `The ${formatQuarterLabel(q)} goal setting period has not been scheduled yet.`
@@ -343,15 +439,17 @@ export default function Goals() {
                         </CardContent>
                       </Card>
                     ) : qEnded && !hasLatePermission ? (<>
-                          <div className='flex flex-row items-start justify-start gap-2 bg-red-300 p-2'>
+                          {/* <div className='flex flex-row items-start justify-start gap-2 bg-red-300 p-2'>
                           <AlertTriangle className="h-12 w-12 text-amber-700 mr-2" />
                           <h3 className="font-normal text-lg my-auto text-black">{formatQuarterLabel(q)} Goal Setting Period Has Ended</h3>
-                          </div>
+                          </div> */}
+                          {endDate && (
+                            <PeriodClose quarterNum={q} qEndDate={endDate} title="Goal Setting" />
+                          )}
                   
-                        <div>
+                        {/* <div>
                           {kras.length > 0 && (
                             <div className="mt-6 w-full space-y-4">
-                              {/* <p className="text-sm font-medium text-center">Your {formatQuarterLabel(q)} Goals (Read-only):</p> */}
                               {kras.map(kra => (
                                 <KRACard
                                   key={kra.id}
@@ -367,7 +465,7 @@ export default function Goals() {
                               ))}
                             </div>
                           )}
-                        </div>
+                        </div> */}
              
                       </>
                     ) : (

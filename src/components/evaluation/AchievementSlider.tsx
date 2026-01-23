@@ -10,6 +10,7 @@ interface AchievementSliderProps {
   label: string;
   variant?: 'employee' | 'manager';
   showPercentage?: boolean;
+  maxPercentage?: number; // Allow custom max percentage (default 150%)
 }
 
 function parseNumericTarget(targetValue: string | null): number | null {
@@ -32,6 +33,7 @@ export function AchievementSlider({
   label,
   variant = 'employee',
   showPercentage = true,
+  maxPercentage = 150, // Default max 150% for overachievement
 }: AchievementSliderProps) {
   // Convert achieved value to percentage for display and slider
   const percentage = targetValue > 0 ? Math.round((achievedValue / targetValue) * 100) : 0;
@@ -43,15 +45,21 @@ export function AchievementSlider({
     onChange?.(newAchievedValue);
   };
 
+  // Clamp display percentage for progress bar (0-100 visual range)
+  const displayPercentage = Math.min(percentage, 100);
+  const isOverAchieved = percentage > 100;
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-sm">
         <span className="text-muted-foreground">{label}</span>
         <span className={cn(
           "font-medium",
-          isManager ? "text-green-600 dark:text-green-400" : "text-primary"
+          isManager ? "text-green-600 dark:text-green-400" : "text-primary",
+          isOverAchieved && "text-purple-600 dark:text-purple-400"
         )}>
           {percentage}%
+          {isOverAchieved && " 🎯"}
           {showPercentage && ` (Target: ${targetValue})`}
         </span>
       </div>
@@ -59,44 +67,101 @@ export function AchievementSlider({
       {disabled ? (
         <div className="relative">
           <Progress 
-            value={percentage} 
+            value={displayPercentage} 
             className={cn(
               "h-3",
-              isManager && "[&>div]:bg-green-500"
+              isManager && "[&>div]:bg-green-500",
+              isOverAchieved && "[&>div]:bg-purple-500"
             )}
           />
+          {isOverAchieved && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="text-[10px] font-bold text-white drop-shadow">EXCEEDED</span>
+            </div>
+          )}
         </div>
       ) : (
         <Slider
           value={[percentage]}
           onValueChange={(values) => handlePercentageChange(values[0])}
-          max={100}
+          max={maxPercentage}
           min={0}
           step={1}
           disabled={disabled}
           className={cn(
-            isManager && "[&_[data-radix-slider-range]]:bg-green-500 [&_[data-radix-slider-thumb]]:border-green-500"
+            isManager && "[&_[data-radix-slider-range]]:bg-green-500 [&_[data-radix-slider-thumb]]:border-green-500",
+            percentage > 100 && "[&_[data-radix-slider-range]]:bg-purple-500 [&_[data-radix-slider-thumb]]:border-purple-500"
           )}
         />
+      )}
+      
+      {/* Visual marker for 100% on slider */}
+      {!disabled && maxPercentage > 100 && (
+        <div className="relative h-1">
+          <div 
+            className="absolute w-0.5 h-2 bg-muted-foreground/50 -top-1"
+            style={{ left: `${(100 / maxPercentage) * 100}%` }}
+            title="100% Target"
+          />
+        </div>
       )}
     </div>
   );
 }
 
+export interface CalibrationRule {
+  threshold: number; // Threshold value (actual value, not percentage)
+  rating: number; // Rating value (1-5)
+}
+
 /**
- * Calculate rating based on achievement percentage
- * >= 100% → 5 (Exceptional)
- * >= 80% → 4 (Exceeds Expectations)
- * >= 60% → 3 (Meets Expectations)
- * >= 40% → 2 (Needs Improvement)
- * < 40% → 1 (Unsatisfactory)
+ * Calculate rating based on achievement using calibration rules
+ * @param valueOrPercentage - The achieved value (actual or percentage based on usage)
+ * @param calibration - Optional calibration rules. If provided, compare value directly to thresholds
+ * @param achievedValue - Optional actual achieved value for calibration comparison
  */
-export function calculateRatingFromAchievement(percentage: number): number {
-  if (percentage >= 100) return 5;
-  if (percentage >= 80) return 4;  // difference from 100% < 20%
-  if (percentage >= 60) return 3;  // difference from 100% < 40%
-  if (percentage >= 40) return 2;  // difference from 100% < 60%
-  return 1;                        // difference from 100% >= 60%
+export function calculateRatingFromAchievement(
+  valueOrPercentage: number,
+  calibration?: CalibrationRule[] | null,
+  achievedValue?: number
+): number {
+  // Use calibration rules if provided
+  if (calibration && calibration.length > 0) {
+    // Use achievedValue if provided, otherwise use valueOrPercentage
+    const compareValue = achievedValue !== undefined ? achievedValue : valueOrPercentage;
+    
+    // Sort by threshold descending (highest first)
+    const sortedRules = [...calibration].sort((a, b) => b.threshold - a.threshold);
+    
+    // Find the first rule where value >= threshold
+    for (const rule of sortedRules) {
+      if (compareValue >= rule.threshold) {
+        return rule.rating;
+      }
+    }
+    
+    // If no rule matches, return the lowest rating from rules or 1
+    return sortedRules[sortedRules.length - 1]?.rating || 1;
+  }
+  
+  // Default fallback thresholds (backward compatibility) - uses percentage
+  if (valueOrPercentage >= 100) return 5;
+  if (valueOrPercentage >= 80) return 4;
+  if (valueOrPercentage >= 60) return 3;
+  if (valueOrPercentage >= 40) return 2;
+  return 1;
+}
+
+/**
+ * Get maximum percentage based on calibration rules
+ * Returns highest threshold + 20% buffer, minimum 100
+ */
+export function getMaxPercentageFromCalibration(calibration?: CalibrationRule[] | null): number {
+  if (!calibration || calibration.length === 0) return 150; // Default
+  
+  const highestThreshold = Math.max(...calibration.map(r => r.threshold));
+  // Add 20% buffer above highest threshold, minimum 100
+  return Math.max(100, Math.ceil(highestThreshold * 1.2));
 }
 
 export function DualAchievementSlider({
@@ -107,6 +172,7 @@ export function DualAchievementSlider({
   onRatingChange,
   disabled = false,
   showAutoRating = true,
+  calibration,
 }: {
   targetValue: number;
   employeeAchieved: number;
@@ -115,19 +181,25 @@ export function DualAchievementSlider({
   onRatingChange?: (rating: number) => void;
   disabled?: boolean;
   showAutoRating?: boolean;
+  calibration?: CalibrationRule[] | null;
 }) {
   const employeePercentage = targetValue > 0 ? Math.round((employeeAchieved / targetValue) * 100) : 0;
   const managerPercentage = targetValue > 0 ? Math.round((managerAchieved / targetValue) * 100) : 0;
   const difference = managerPercentage - employeePercentage;
-  const autoRating = calculateRatingFromAchievement(managerPercentage);
+  
+  // Calculate max percentage based on calibration rules
+  const maxPercentage = getMaxPercentageFromCalibration(calibration);
+  
+  // Calculate rating: if calibration is provided, use actual achieved value; otherwise use percentage
+  const autoRating = calculateRatingFromAchievement(managerPercentage, calibration, managerAchieved);
 
   // Handle percentage change - convert back to achieved value
   const handlePercentageChange = (newPercentage: number) => {
     const newAchievedValue = (newPercentage / 100) * targetValue;
     onManagerChange?.(newAchievedValue);
     
-    // Auto-update rating based on new percentage
-    const newRating = calculateRatingFromAchievement(newPercentage);
+    // Auto-update rating based on actual achieved value when calibration exists
+    const newRating = calculateRatingFromAchievement(newPercentage, calibration, newAchievedValue);
     onRatingChange?.(newRating);
   };
 
@@ -153,49 +225,115 @@ export function DualAchievementSlider({
     }
   };
 
+  // Clamp display percentage for progress bar (0-100 visual range)
+  const employeeDisplayPercentage = Math.min(employeePercentage, 100);
+  const managerDisplayPercentage = Math.min(managerPercentage, 100);
+  const isEmployeeOverAchieved = employeePercentage > 100;
+  const isManagerOverAchieved = managerPercentage > 100;
+
   return (
     <div className="space-y-4 p-3 rounded-lg border bg-muted/30">
-      <div className="text-sm font-medium text-muted-foreground">Achievement vs Target: {targetValue}</div>
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-medium text-muted-foreground">
+          Achievement vs Target: {targetValue}
+        </div>
+        {maxPercentage > 100 && (
+          <div className="text-xs text-muted-foreground">
+            Max: {maxPercentage}%
+          </div>
+        )}
+      </div>
       
       {/* Employee's claimed achievement - read only */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Employee's Claimed</span>
-          <span className="font-medium text-primary">
+          <span className={cn(
+            "font-medium text-primary",
+            isEmployeeOverAchieved && "text-purple-600 dark:text-purple-400"
+          )}>
             {employeePercentage}%
+            {isEmployeeOverAchieved && " 🎯"}
           </span>
         </div>
-        <Progress value={employeePercentage} className="h-3" />
+        <div className="relative">
+          <Progress 
+            value={employeeDisplayPercentage} 
+            className={cn(
+              "h-3",
+              isEmployeeOverAchieved && "[&>div]:bg-purple-500"
+            )} 
+          />
+          {isEmployeeOverAchieved && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="text-[10px] font-bold text-white drop-shadow">EXCEEDED</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Manager's assessment - editable */}
       <div className="space-y-2">
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Your Assessment</span>
-          <span className="font-medium text-green-600 dark:text-green-400">
+          <span className={cn(
+            "font-medium text-green-600 dark:text-green-400",
+            isManagerOverAchieved && "text-purple-600 dark:text-purple-400"
+          )}>
             {managerPercentage}%
+            {isManagerOverAchieved && " 🎯"}
           </span>
         </div>
         {disabled ? (
-          <Progress 
-            value={managerPercentage} 
-            className="h-3 [&>div]:bg-green-500 " 
-          />
+          <div className="relative">
+            <Progress 
+              value={managerDisplayPercentage} 
+              className={cn(
+                "h-3 [&>div]:bg-green-500",
+                isManagerOverAchieved && "[&>div]:bg-purple-500"
+              )} 
+            />
+            {isManagerOverAchieved && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span className="text-[10px] font-bold text-white drop-shadow">EXCEEDED</span>
+              </div>
+            )}
+          </div>
         ) : (
-          <Slider
-            value={[managerPercentage]}
-            onValueChange={(values) => handlePercentageChange(values[0])}
-            max={100}
-            min={0}
-            step={1}
-            disabled={disabled}
-            className="[&_[data-radix-slider-range]]:bg-green-500 [&_[data-radix-slider-thumb]]:border-green-500"
-          />
+          <>
+            <Slider
+              value={[managerPercentage]}
+              onValueChange={(values) => handlePercentageChange(values[0])}
+              max={maxPercentage}
+              min={0}
+              step={1}
+              disabled={disabled}
+              className={cn(
+                "[&_[data-radix-slider-range]]:bg-green-500 [&_[data-radix-slider-thumb]]:border-green-500",
+                isManagerOverAchieved && "[&_[data-radix-slider-range]]:bg-purple-500 [&_[data-radix-slider-thumb]]:border-purple-500"
+              )}
+            />
+            {/* Visual marker for 100% on slider */}
+            {maxPercentage > 100 && (
+              <div className="relative h-0">
+                <div 
+                  className="absolute w-0.5 h-3 bg-muted-foreground/40 -top-3 rounded"
+                  style={{ left: `${(100 / maxPercentage) * 100}%` }}
+                  title="100% Target"
+                />
+                <div 
+                  className="absolute text-[9px] text-muted-foreground -top-0.5"
+                  style={{ left: `${(100 / maxPercentage) * 100}%`, transform: 'translateX(-50%)' }}
+                >
+                  100%
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
       {/* Auto-calculated rating indicator */}
-          {/* Combined rating and difference indicator */}
       {showAutoRating && (
         <div className={cn(
           "rounded-lg overflow-hidden border",

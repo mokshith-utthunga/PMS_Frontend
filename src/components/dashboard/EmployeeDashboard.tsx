@@ -14,7 +14,7 @@ interface EmployeeDashboardProps {
   selfEvalDueText: string;
   activeCycle: {
     name: string;
-    goal_submission_end: string;
+    goal_submission_end?: string | null;
     allow_late_goal_submission?: boolean;
     status?: string;
   } | null | undefined;
@@ -35,6 +35,10 @@ export function EmployeeDashboard({
   // Calculate pending status and deadline info
   const getPendingStatus = () => {
     if (!activeCycle) return { status: 'No Cycle', variant: 'secondary' as const, icon: Clock };
+    
+    if (!activeCycle.goal_submission_end) {
+      return { status: 'No Deadline Set', variant: 'secondary' as const, icon: Clock };
+    }
     
     const now = new Date();
     const goalDeadline = new Date(activeCycle.goal_submission_end);
@@ -61,6 +65,10 @@ export function EmployeeDashboard({
 
   const getDeadlineText = () => {
     if (!activeCycle) return '';
+    
+    if (!activeCycle.goal_submission_end) {
+      return 'Deadline not set';
+    }
     
     const now = new Date();
     const goalDeadline = new Date(activeCycle.goal_submission_end);

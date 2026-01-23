@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { employeeService, cycleService, goalsService, evaluationService } from '@/services';
+import type { QuarterlyCycle } from '@/services/cycle.service';
 import { useAuth } from '@/contexts/AuthContext';
 import { Link } from 'react-router-dom';
 import { 
@@ -81,6 +82,7 @@ export default function Team() {
   const [directReports, setDirectReports] = useState<DirectReport[]>([]);
   const [managerId, setManagerId] = useState<string | null>(null);
   const [activeCycle, setActiveCycle] = useState<any>(null);
+  const [quarterlyCycles, setQuarterlyCycles] = useState<QuarterlyCycle[]>([]);
   const [dashboardCounts, setDashboardCounts] = useState<DashboardCounts | null>(null);
 
   useEffect(() => {
@@ -104,6 +106,7 @@ export default function Team() {
       // Get active cycle with dashboard counts from API
       const cycleResult = await cycleService.getActive();
       setActiveCycle(cycleResult.data);
+      setQuarterlyCycles((cycleResult.quarterly_cycles || []) as QuarterlyCycle[]);
       setDashboardCounts((cycleResult as any).dashboard || null);
 
       // Get direct reports for display (still need individual report data for the list)
@@ -202,11 +205,25 @@ export default function Team() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    const startField = `q${quarter}_manager_review_start` as keyof typeof activeCycle;
-    const endField = `q${quarter}_manager_review_end` as keyof typeof activeCycle;
+    // Get dates from quarterly_cycles (preferred)
+    let startDate: Date | null = null;
+    let endDate: Date | null = null;
     
-    const startDate = activeCycle[startField] ? new Date(activeCycle[startField]) : null;
-    const endDate = activeCycle[endField] ? new Date(activeCycle[endField]) : null;
+    const qc = quarterlyCycles.find(qc => {
+      const qcQuarter = typeof qc.quarter === 'string' ? parseInt(qc.quarter) : qc.quarter;
+      return qcQuarter === quarter;
+    });
+    
+    if (qc) {
+      startDate = qc.quarterly_manager_review_start_date ? new Date(qc.quarterly_manager_review_start_date) : null;
+      endDate = qc.quarterly_manager_review_end_date ? new Date(qc.quarterly_manager_review_end_date) : null;
+    } else {
+      // Fallback to deprecated cycle fields
+      const startField = `q${quarter}_manager_review_start` as keyof typeof activeCycle;
+      const endField = `q${quarter}_manager_review_end` as keyof typeof activeCycle;
+      startDate = activeCycle[startField] ? new Date(activeCycle[startField]) : null;
+      endDate = activeCycle[endField] ? new Date(activeCycle[endField]) : null;
+    }
     
     if (!startDate || !endDate) return 'future';
     

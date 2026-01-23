@@ -23,6 +23,7 @@ import RatingRelease from "./pages/admin/RatingRelease";
 import TemplateList from "./pages/admin/TemplateList";
 import TemplateForm from "./pages/admin/TemplateForm";
 import LateSubmissionManagement from "./pages/admin/LateSubmissionManagement";
+import GoalsDeadlineConfig from "./pages/admin/GoalsDeadlineConfig";
 import DepartmentSettings from "./pages/admin/settings/DepartmentSettings";
 import GradeSettings from "./pages/admin/settings/GradeSettings";
 import LocationSettings from "./pages/admin/settings/LocationSettings";
@@ -86,6 +87,7 @@ const App = () => (
             <Route path="/admin/templates/new" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><TemplateForm /></ProtectedRoute>} />
             <Route path="/admin/templates/:id" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><TemplateForm /></ProtectedRoute>} />
             <Route path="/admin/late-submissions" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><LateSubmissionManagement /></ProtectedRoute>} />
+            <Route path="/admin/goals-deadlines" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><GoalsDeadlineConfig /></ProtectedRoute>} />
             
             {/* Admin settings */}
             <Route path="/admin/settings/departments" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><DepartmentSettings /></ProtectedRoute>} />

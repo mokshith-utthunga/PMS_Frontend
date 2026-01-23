@@ -21,11 +21,13 @@ import {
   type CycleWithQuarterDates
 } from '@/utils/quarterHelpers';
 import { calculateAllKRARatings, calculateQuarterRating, type KPIForCalculation } from '@/lib/ratingCalculations';
+import { calculateRatingFromCalibration } from '@/components/evaluation/CalibrationDisplay';
 import type { Goal } from '@/types';
 import { QuarterTabs } from '@/components/evaluation/QuarterTabs';
 import { QuarterAlerts } from '@/components/evaluation/QuarterAlerts';
 import { KRAEvaluationCard } from '@/components/evaluation/KRAEvaluationCard';
 import { OverallAssessmentTab } from '@/components/evaluation/OverallAssessmentTab';
+import PeriodClose from '@/components/evaluation/PeriodClose';
 
 export default function Evaluations() {
   const { user, hasAnyRole } = useAuth();
@@ -40,7 +42,7 @@ export default function Evaluations() {
   // Fetch evaluations data with selected quarter
   const evalData = useEvaluationsData(user?.id, parseInt(selectedQuarter));
   const {
-    employeeId, activeCycle, ratingScales,
+    employeeId, activeCycle, quarterlyCycles, ratingScales,
     quarterlyReviews: initialQuarterlyReviews,
     kpiRatings: initialKpiRatings,
     currentQuarter, loading, refetch,
@@ -60,7 +62,6 @@ export default function Evaluations() {
   const [quarterlyReviews, setQuarterlyReviews] = useState(initialQuarterlyReviews);
   const [kpiRatings, setKpiRatings] = useState(initialKpiRatings);
   const [overallComments, setOverallComments] = useState('');
-  const [overallRating, setOverallRating] = useState<number | undefined>(undefined);
   const [evaluationTab, setEvaluationTab] = useState<Record<number, string>>({});
 
   // Sync initial data
@@ -74,8 +75,8 @@ export default function Evaluations() {
     if (activeCycle && !isValidQuarter) {
       for (let q = 1; q <= 4; q++) {
         // Only select quarters that are current or past (not future)
-        const timing = getQuarterTiming(activeCycle, q);
-        if (timing !== 'future' && isQuarterOpen(activeCycle, q)) {
+        const timing = getQuarterTiming(activeCycle, q, quarterlyCycles);
+        if (timing !== 'future' && isQuarterOpen(activeCycle, q, quarterlyCycles)) {
           setSelectedQuarter(String(q));
           setQuarter(q as 1 | 2 | 3 | 4);
           return;
@@ -83,14 +84,14 @@ export default function Evaluations() {
       }
       // Fall back to current quarter if no open quarter found
       if (currentQuarter) {
-        const timing = getQuarterTiming(activeCycle, currentQuarter);
+        const timing = getQuarterTiming(activeCycle, currentQuarter, quarterlyCycles);
         if (timing !== 'future') {
           setSelectedQuarter(String(currentQuarter));
           setQuarter(currentQuarter as 1 | 2 | 3 | 4);
         } else {
           // Find the latest non-future quarter
           for (let q = 4; q >= 1; q--) {
-            const t = getQuarterTiming(activeCycle, q);
+            const t = getQuarterTiming(activeCycle, q, quarterlyCycles);
             if (t !== 'future') {
               setSelectedQuarter(String(q));
               setQuarter(q as 1 | 2 | 3 | 4);
@@ -100,7 +101,7 @@ export default function Evaluations() {
         }
       }
     }
-  }, [activeCycle, currentQuarter, isValidQuarter, setQuarter]);
+  }, [activeCycle, currentQuarter, isValidQuarter, setQuarter, quarterlyCycles]);
 
   // Update form when quarter changes and sync URL
   useEffect(() => {
@@ -111,10 +112,8 @@ export default function Evaluations() {
     const review = quarterlyReviews[q];
     if (review) {
       setOverallComments(review.overall_comments || '');
-      setOverallRating(review.overall_rating);
     } else {
       setOverallComments('');
-      setOverallRating(undefined);
     }
     // Initialize tab state for quarter if not set
     setEvaluationTab(prev => {
@@ -159,23 +158,55 @@ export default function Evaluations() {
     [selectedQuarter]
   );
 
+  // Calculate overall rating for a specific quarter based on calibration
+  const calculateOverallRatingForQuarter = useCallback((quarterNum: number) => {
+    const qKras = quarterKras[quarterNum] || [];
+    const qKpis = quarterKpis[quarterNum] || [];
+    const qKpiRatings = kpiRatings[quarterNum] || {};
+
+    // Build KPI ratings for calculation
+    const qKpisWithKra: KPIForCalculation[] = qKpis
+      .filter((kpi): kpi is Goal & { kra_id: string } => !!kpi.kra_id)
+      .map(kpi => ({
+        id: kpi.id,
+        kra_id: kpi.kra_id,
+        weight: kpi.weight,
+      }));
+
+    const qKpiRatingsForCalc: Record<string, number | null> = {};
+    qKpis.forEach(kpi => {
+      const achievedValue = qKpiRatings[kpi.id]?.achieved_value;
+      if (kpi.calibration && kpi.calibration.length > 0 && achievedValue !== null && achievedValue !== undefined) {
+        qKpiRatingsForCalc[kpi.id] = calculateRatingFromCalibration(achievedValue, kpi.calibration);
+      } else {
+        qKpiRatingsForCalc[kpi.id] = qKpiRatings[kpi.id]?.self_rating || null;
+      }
+    });
+
+    const qKraRatings = calculateAllKRARatings(qKras, qKpisWithKra, qKpiRatingsForCalc);
+    return calculateQuarterRating(qKras, qKraRatings);
+  }, [quarterKras, quarterKpis, kpiRatings]);
+
   const handleSave = useCallback(() => {
     const q = parseInt(selectedQuarter);
-    evalOps.saveProgress(q, overallComments, overallRating, setQuarterlyReviews);
-  }, [selectedQuarter, overallComments, overallRating, evalOps]);
+    const calculatedRating = calculateOverallRatingForQuarter(q);
+    evalOps.saveProgress(q, overallComments, calculatedRating ?? undefined, setQuarterlyReviews);
+  }, [selectedQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
 
   const handleSubmit = useCallback(() => {
     const q = parseInt(selectedQuarter);
-    evalOps.submitEvaluation(q, overallComments, overallRating, setQuarterlyReviews);
-  }, [selectedQuarter, overallComments, overallRating, evalOps]);
+    const calculatedRating = calculateOverallRatingForQuarter(q);
+    evalOps.submitEvaluation(q, overallComments, calculatedRating ?? undefined, setQuarterlyReviews);
+  }, [selectedQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
 
   const handleNext = useCallback(async () => {
     const q = parseInt(selectedQuarter);
+    const calculatedRating = calculateOverallRatingForQuarter(q);
     // Save current progress before navigating to ensure data persistence
-    await evalOps.saveProgress(q, overallComments, overallRating, setQuarterlyReviews);
+    await evalOps.saveProgress(q, overallComments, calculatedRating ?? undefined, setQuarterlyReviews);
     // Navigate to overall assessment tab
     setEvaluationTab(prev => ({ ...prev, [q]: 'overall' }));
-  }, [selectedQuarter, overallComments, overallRating, evalOps]);
+  }, [selectedQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
 
   const handleTabChange = useCallback((quarter: number, value: string) => {
     setEvaluationTab(prev => ({ ...prev, [quarter]: value }));
@@ -236,17 +267,17 @@ export default function Evaluations() {
 
   // Determine what content to render for the selected quarter
   const renderQuarterContent = (quarterNum: number) => {
-    const qTiming = getQuarterTiming(activeCycle, quarterNum);
+    const qTiming = getQuarterTiming(activeCycle, quarterNum, quarterlyCycles);
     const qHasGoals = (quarterKras[quarterNum] || []).length > 0 && (quarterKpis[quarterNum] || []).length > 0;
     const qKras = quarterKras[quarterNum] || [];
     const qKpis = quarterKpis[quarterNum] || [];
     const qHasLatePermission = latePermissions[quarterNum] || false;
-    const qEnded = hasQuarterEnded(activeCycle as CycleWithQuarterDates, quarterNum);
-    const qEndDate = getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, quarterNum);
+    const qEnded = hasQuarterEnded(activeCycle as CycleWithQuarterDates, quarterNum, quarterlyCycles);
+    const qEndDate = getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, quarterNum, quarterlyCycles);
 
     // If quarter is in the future, show not accessible message
     if (qTiming === 'future') {
-      const qDates = formatQuarterDates(activeCycle, quarterNum);
+      const qDates = formatQuarterDates(activeCycle, quarterNum, quarterlyCycles);
       return (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
@@ -268,21 +299,22 @@ export default function Evaluations() {
 
     // If quarter has ended and no late permission, show message
     if (qEnded && !qHasLatePermission) {
-      return (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <AlertTriangle className="h-12 w-12 text-amber-500 mb-4" />
-            <h3 className="font-semibold text-lg">Q{quarterNum} Self-Review Period Has Ended</h3>
-            <p className="text-muted-foreground text-center mt-2">
-              The deadline for Q{quarterNum} self-review was{' '}
-              <span className="font-medium">{qEndDate ? formatDateShort(qEndDate) : 'passed'}</span>.
-            </p>
-            <p className="text-sm text-muted-foreground mt-2">
-              Please contact your HR/Admin to request late submission access.
-            </p>
-          </CardContent>
-        </Card>
-      );
+      return <PeriodClose quarterNum={quarterNum} qEndDate={qEndDate} title="Self-Review" />
+      // return (
+      //   <Card>
+      //     <CardContent className="flex flex-col items-center justify-center py-12">
+      //       <AlertTriangle className="h-12 w-12 text-amber-500 mb-4" />
+      //       <h3 className="font-semibold text-lg">Q{quarterNum} Self-Review Period Has Ended</h3>
+      //       <p className="text-muted-foreground text-center mt-2">
+      //         The deadline for Q{quarterNum} self-review was{' '}
+      //         <span className="font-medium">{qEndDate ? formatDateShort(qEndDate) : 'passed'}</span>.
+      //       </p>
+      //       <p className="text-sm text-muted-foreground mt-2">
+      //         Please contact your HR/Admin to request late submission access.
+      //       </p>
+      //     </CardContent>
+      //   </Card>
+      // );
     }
 
     // If no goals for this quarter, show message to set goals
@@ -307,7 +339,7 @@ export default function Evaluations() {
     }
 
     // Quarter has goals and is accessible (or has late permission) - show evaluation content
-    const qIsOpen = isQuarterOpen(activeCycle, quarterNum);
+    const qIsOpen = isQuarterOpen(activeCycle, quarterNum, quarterlyCycles);
     const qReview = quarterlyReviews[quarterNum];
     const qIsSubmitted = qReview?.status === 'submitted';
     // Can edit if: (quarter is open OR has late permission) AND not already submitted
@@ -323,9 +355,17 @@ export default function Evaluations() {
         weight: kpi.weight,
       }));
 
+    // Build KPI ratings for calculation - use calibration if available, otherwise use self_rating
     const qKpiRatingsForCalc: Record<string, number | null> = {};
-    qKpisWithKra.forEach(kpi => {
-      qKpiRatingsForCalc[kpi.id] = qKpiRatings[kpi.id]?.self_rating || null;
+    qKpis.forEach(kpi => {
+      const achievedValue = qKpiRatings[kpi.id]?.achieved_value;
+      // Calculate rating from calibration if available
+      if (kpi.calibration && kpi.calibration.length > 0 && achievedValue !== null && achievedValue !== undefined) {
+        qKpiRatingsForCalc[kpi.id] = calculateRatingFromCalibration(achievedValue, kpi.calibration);
+      } else {
+        // Fallback to self_rating if no calibration
+        qKpiRatingsForCalc[kpi.id] = qKpiRatings[kpi.id]?.self_rating || null;
+      }
     });
 
     const qKraRatings = calculateAllKRARatings(qKras, qKpisWithKra, qKpiRatingsForCalc);
@@ -336,6 +376,7 @@ export default function Evaluations() {
         <QuarterAlerts
           quarter={quarterNum}
           cycle={activeCycle}
+          quarterlyCycles={quarterlyCycles}
           isSubmitted={qIsSubmitted}
         />
 
@@ -401,10 +442,8 @@ export default function Evaluations() {
             <OverallAssessmentTab
               quarter={quarterNum}
               calculatedRating={qOverallCalc}
-              overallRating={quarterNum === q ? overallRating : undefined}
               overallComments={quarterNum === q ? overallComments : ''}
               canEdit={qCanEdit}
-              onRatingChange={setOverallRating}
               onCommentsChange={setOverallComments}
             />
             
@@ -454,6 +493,7 @@ export default function Evaluations() {
             }
           }}
           cycle={activeCycle}
+          quarterlyCycles={quarterlyCycles}
           quarterlyEvaluations={Object.fromEntries(
             Object.entries(quarterlyReviews).map(([qKey, review]) => [
               qKey,

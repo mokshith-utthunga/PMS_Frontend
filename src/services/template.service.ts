@@ -18,6 +18,7 @@ export interface KPITemplateData {
   suggested_weight?: number;
   target_value?: string; // Legacy field name
   weight?: number; // Legacy field name
+  calibration?: Array<{ threshold: number; rating: number }> | null;
   created_at?: string;
   updated_at?: string;
 }

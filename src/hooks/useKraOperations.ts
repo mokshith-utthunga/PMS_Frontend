@@ -75,7 +75,7 @@ export function useKraOperations({
       toasts.success('KRA created successfully');
       onSuccess();
     },
-    [employeeId, cycleId, kras.length, availableKRAWeight, onSuccess]
+    [employeeId, cycleId, kras.length, availableKRAWeight, onSuccess, quarter]
   );
 
   const updateKRA = useCallback(

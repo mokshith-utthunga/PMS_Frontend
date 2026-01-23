@@ -10,19 +10,25 @@ interface UseTemplateSelectionProps {
   krasCount: number;
   availableKRAWeight: number;
   onSuccess: () => void;
+  quarter?: number | null;
+}
+
+interface KPITemplate {
+  id?: string;
+  title: string;
+  description?: string | null;
+  metric_type: string;
+  suggested_target?: string | null;
+  suggested_weight: number;
+  calibration?: Array<{ threshold: number; rating: number }> | null;
 }
 
 interface Template {
+  id?: string; // KRA template ID for traceability
   title: string;
   description?: string | null;
   suggested_weight: number;
-  kpi_templates?: Array<{
-    title: string;
-    description?: string | null;
-    metric_type: string;
-    suggested_target?: string | null;
-    suggested_weight: number;
-  }>;
+  kpi_templates?: KPITemplate[];
 }
 
 export function useTemplateSelection({
@@ -31,6 +37,7 @@ export function useTemplateSelection({
   krasCount,
   availableKRAWeight,
   onSuccess,
+  quarter,
 }: UseTemplateSelectionProps) {
   const selectTemplate = useCallback(
     async (template: Template) => {
@@ -47,14 +54,16 @@ export function useTemplateSelection({
         throw new Error('No weight available');
       }
 
-      // Create KRA from template
+      // Create KRA from template (include kra_template_id for traceability)
       const kraResult = await goalsService.kras.create({
         employee_id: employeeId,
         cycle_id: cycleId,
+        kra_template_id: template.id || null, // Track which template was used
         title: template.title,
         description: template.description || null,
         weight: weight,
         status: 'draft',
+        quarter: quarter || null,
       });
 
       if (kraResult.error) {
@@ -69,13 +78,16 @@ export function useTemplateSelection({
             employee_id: employeeId,
             cycle_id: cycleId,
             kra_id: kraResult.data.id,
+            kpi_template_id: kpi.id || null, // Track which KPI template was used
             title: kpi.title,
             description: kpi.description || null,
             goal_type: 'kpi',
             metric_type: kpi.metric_type,
             target_value: kpi.suggested_target || null,
             weight: kpi.suggested_weight,
+            calibration: kpi.calibration || null,
             status: 'draft',
+            quarter: quarter || null,
           });
         }
       }
@@ -83,7 +95,7 @@ export function useTemplateSelection({
       toasts.success('KRA created from template with KPIs');
       onSuccess();
     },
-    [employeeId, cycleId, krasCount, availableKRAWeight, onSuccess]
+    [employeeId, cycleId, krasCount, availableKRAWeight, onSuccess, quarter]
   );
 
   return { selectTemplate };

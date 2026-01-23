@@ -26,11 +26,25 @@ export default function Dashboard() {
     enabled: !!user?.id
   });
 
-  // Fetch active cycle
-  const { data: activeCycle } = useQuery({
+  // Fetch active cycle with quarterly cycles data (cached and memorized)
+  // This single API call includes:
+  // - Active cycle data
+  // - Quarterly cycles (quarterly_cycles table)
+  // - Goals quarterly cycles (goals_quarterly_cycles table)
+  // All data is cached for 5 minutes to reduce API calls
+  const { data: activeCycleData } = useQuery({
     queryKey: ['active-cycle'],
-    queryFn: () => cycleService.getActive().then(r => r.data)
+    queryFn: async () => {
+      const result = await cycleService.getActive();
+      return result.data;
+    },
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    cacheTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
   });
+  
+  const activeCycle = activeCycleData?.data || null;
+  const quarterlyCycles = activeCycleData?.quarterly_cycles || [];
+  const goalsQuarterlyCycles = activeCycleData?.goals_quarterly_cycles || [];
 
   // Fetch my goals
   const { data: goals = [] } = useQuery({
@@ -98,11 +112,11 @@ export default function Dashboard() {
   const getCyclePhase = () => {
     if (!activeCycle) return 'No active cycle';
     const now = new Date();
-    if (now < new Date(activeCycle.goal_submission_end)) return 'Goal Setting Phase';
-    if (now < new Date(activeCycle.goal_approval_end)) return 'Goal Approval Phase';
+    if (activeCycle.goal_submission_end && now < new Date(activeCycle.goal_submission_end)) return 'Goal Setting Phase';
+    if (activeCycle.goal_approval_end && now < new Date(activeCycle.goal_approval_end)) return 'Goal Approval Phase';
     if (activeCycle.self_evaluation_end && now < new Date(activeCycle.self_evaluation_end)) return 'Self Evaluation Phase';
-    if (now < new Date(activeCycle.manager_evaluation_end)) return 'Manager Evaluation Phase';
-    if (now < new Date(activeCycle.calibration_end)) return 'Calibration Phase';
+    if (activeCycle.manager_evaluation_end && now < new Date(activeCycle.manager_evaluation_end)) return 'Manager Evaluation Phase';
+    if (activeCycle.calibration_end && now < new Date(activeCycle.calibration_end)) return 'Calibration Phase';
     return 'Release Phase';
   };
 
@@ -119,13 +133,19 @@ export default function Dashboard() {
     const now = new Date();
     const items = [];
 
+    // Goal Submission
+    if (activeCycle.goal_submission_start && activeCycle.goal_submission_end) {
     items.push({
       label: 'Goal Submission',
       date: `${format(new Date(activeCycle.goal_submission_start), 'MMM d')} - ${format(new Date(activeCycle.goal_submission_end), 'MMM d, yyyy')}`,
       status: now <= new Date(activeCycle.goal_submission_end) ? 'active' : 'done',
       badge: now <= new Date(activeCycle.goal_submission_end) ? 'Current' : 'Completed',
     });
+    } else {
+      items.push({ label: 'Goal Submission', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
+    }
 
+    // Self Evaluation
     if (activeCycle.self_evaluation_start && activeCycle.self_evaluation_end) {
       items.push({
         label: 'Self Evaluation',
@@ -137,19 +157,29 @@ export default function Dashboard() {
       items.push({ label: 'Self Evaluation', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
     }
 
+    // Manager Evaluation
+    if (activeCycle.manager_evaluation_start && activeCycle.manager_evaluation_end) {
     items.push({
       label: 'Manager Evaluation',
       date: `${format(new Date(activeCycle.manager_evaluation_start), 'MMM d')} - ${format(new Date(activeCycle.manager_evaluation_end), 'MMM d, yyyy')}`,
       status: now < new Date(activeCycle.manager_evaluation_start) ? 'upcoming' : now <= new Date(activeCycle.manager_evaluation_end) ? 'active' : 'done',
       badge: now < new Date(activeCycle.manager_evaluation_start) ? 'Upcoming' : now <= new Date(activeCycle.manager_evaluation_end) ? 'Current' : 'Completed',
     });
+    } else {
+      items.push({ label: 'Manager Evaluation', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
+    }
 
+    // Calibration & Release
+    if (activeCycle.calibration_start && activeCycle.release_date) {
     items.push({
       label: 'Calibration & Release',
       date: `${format(new Date(activeCycle.calibration_start), 'MMM d')} - ${format(new Date(activeCycle.release_date), 'MMM d, yyyy')}`,
       status: now < new Date(activeCycle.calibration_start) ? 'upcoming' : now <= new Date(activeCycle.release_date) ? 'active' : 'done',
       badge: now < new Date(activeCycle.calibration_start) ? 'Upcoming' : now <= new Date(activeCycle.release_date) ? 'Current' : 'Completed',
     });
+    } else {
+      items.push({ label: 'Calibration & Release', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
+    }
 
     return items;
   };

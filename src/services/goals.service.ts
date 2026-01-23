@@ -6,6 +6,7 @@ import type { KRA, Goal, BonusKRA, BonusKPI, GoalStatus } from '@/types';
 export interface CreateKRAData {
   employee_id: string;
   cycle_id: string;
+  kra_template_id?: string | null;
   title: string;
   description?: string | null;
   weight: number;
@@ -27,12 +28,14 @@ export interface CreateKPIData {
   employee_id: string;
   cycle_id: string;
   kra_id: string;
+  kpi_template_id?: string | null;
   title: string;
   description?: string | null;
   goal_type?: string;
   metric_type: string;
   target_value?: string | null;
   weight: number;
+  calibration?: Array<{ threshold: number; rating: number }> | null;
   due_date?: string | null;
   status?: GoalStatus;
   quarter?: number | null;
@@ -44,6 +47,7 @@ export interface UpdateKPIData {
   metric_type?: string;
   target_value?: string | null;
   weight?: number;
+  calibration?: Array<{ threshold: number; rating: number }> | null;
   due_date?: string | null;
   status?: GoalStatus;
   manager_comments?: string | null;

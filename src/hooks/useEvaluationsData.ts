@@ -5,6 +5,7 @@ import { logError } from '@/errors';
 import { parseNumericTarget } from '@/components/evaluation/AchievementSlider';
 import type { KRA, Goal, PerformanceCycle, RatingScale } from '@/types';
 import type { QuarterlySelfReviewData, GoalSelfRatingData } from '@/services/evaluation.service';
+import type { QuarterlyCycle } from '@/services/cycle.service';
 
 export interface KpiRating {
   goal_id: string;
@@ -21,6 +22,7 @@ export type GoalRating = KpiRating;
 export interface EvaluationsData {
   employeeId: string | null;
   activeCycle: PerformanceCycle | null;
+  quarterlyCycles: QuarterlyCycle[];
   kras: KRA[];
   kpis: Goal[];
   ratingScales: RatingScale[];
@@ -38,6 +40,7 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
   const [data, setData] = useState<EvaluationsData>({
     employeeId: null,
     activeCycle: null,
+    quarterlyCycles: [],
     kras: [],
     kpis: [],
     ratingScales: [],
@@ -62,7 +65,7 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
 
       const employeeId = empResult.data.id;
 
-      // Get active cycle
+      // Get active cycle (includes quarterly_cycles and goals_quarterly_cycles)
       const cycleResult = await cycleService.getActive();
       if (!cycleResult.data) {
         setData(prev => ({ ...prev, employeeId, loading: false }));
@@ -70,6 +73,7 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
       }
 
       const cycleId = cycleResult.data.id;
+      const quarterlyCycles = (cycleResult.quarterly_cycles || []) as QuarterlyCycle[];
 
       // Fetch base data in parallel - get scales, self reviews, and quarter-specific goals
       const [scalesResult, selfReviewsResult] = await Promise.all([
@@ -177,6 +181,7 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
       setData({
         employeeId,
         activeCycle: cycleResult.data,
+        quarterlyCycles,
         kras: allKras,
         kpis: allKpis,
         ratingScales,
