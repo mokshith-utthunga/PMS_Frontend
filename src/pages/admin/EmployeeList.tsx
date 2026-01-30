@@ -65,18 +65,18 @@ export default function EmployeeList() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Select value={filters.status} onValueChange={setStatus}>
+                {/* <Select value={filters.status} onValueChange={setStatus}>
                   <SelectTrigger className="w-[150px]">
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Status</SelectItem>
                     <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="inactive">Inactive</SelectItem>
-                    <SelectItem value="on_leave">On Leave</SelectItem>
-                    <SelectItem value="terminated">Terminated</SelectItem>
+                     <SelectItem value="inactive">Inactive</SelectItem> 
+                     <SelectItem value="on_leave">On Leave</SelectItem>
+                    <SelectItem value="terminated">Terminated</SelectItem> 
                   </SelectContent>
-                </Select>
+                </Select> */}
               </div>
             </div>
           </CardHeader>

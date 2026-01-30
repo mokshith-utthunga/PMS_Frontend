@@ -1,6 +1,7 @@
 // Export all custom hooks
 export { useMobile, useIsMobile } from './use-mobile';
 export { useToast, toast } from './use-toast';
+export { useCurrentEmployee } from './useCurrentEmployee';
 
 // Goals hooks
 export { useGoalsData } from './useGoalsData';

@@ -64,13 +64,11 @@ export default function Evaluations() {
   const [overallComments, setOverallComments] = useState('');
   const [evaluationTab, setEvaluationTab] = useState<Record<number, string>>({});
 
-  // Sync initial data
   useEffect(() => {
     setQuarterlyReviews(initialQuarterlyReviews);
     setKpiRatings(initialKpiRatings);
   }, [initialQuarterlyReviews, initialKpiRatings]);
 
-  // Set initial quarter from URL or find first open quarter
   useEffect(() => {
     if (activeCycle && !isValidQuarter) {
       for (let q = 1; q <= 4; q++) {
@@ -82,7 +80,6 @@ export default function Evaluations() {
           return;
         }
       }
-      // Fall back to current quarter if no open quarter found
       if (currentQuarter) {
         const timing = getQuarterTiming(activeCycle, currentQuarter, quarterlyCycles);
         if (timing !== 'future') {
@@ -103,7 +100,6 @@ export default function Evaluations() {
     }
   }, [activeCycle, currentQuarter, isValidQuarter, setQuarter, quarterlyCycles]);
 
-  // Update form when quarter changes and sync URL
   useEffect(() => {
     const q = parseInt(selectedQuarter);
     if (q >= 1 && q <= 4) {
@@ -115,7 +111,7 @@ export default function Evaluations() {
     } else {
       setOverallComments('');
     }
-    // Initialize tab state for quarter if not set
+
     setEvaluationTab(prev => {
       if (!prev[q]) {
         return { ...prev, [q]: 'goals' };
@@ -124,12 +120,10 @@ export default function Evaluations() {
     });
   }, [selectedQuarter, quarterlyReviews, setQuarter]);
 
-  // Get all KPIs for the selected quarter (for evaluation operations)
   const currentQuarterKpis = useMemo(() => {
     return quarterKpis[parseInt(selectedQuarter)] || [];
   }, [quarterKpis, selectedQuarter]);
 
-  // Evaluation operations
   const evalOps = useEvaluationOperations({
     employeeId,
     cycleId: activeCycle?.id || null,
@@ -139,7 +133,6 @@ export default function Evaluations() {
     onSuccess: refetch,
   });
 
-  // Handlers
 
   const handleKpiRatingChange = useCallback(
     (goalId: string, field: keyof KpiRating, value: unknown) => {
@@ -158,13 +151,11 @@ export default function Evaluations() {
     [selectedQuarter]
   );
 
-  // Calculate overall rating for a specific quarter based on calibration
   const calculateOverallRatingForQuarter = useCallback((quarterNum: number) => {
     const qKras = quarterKras[quarterNum] || [];
     const qKpis = quarterKpis[quarterNum] || [];
     const qKpiRatings = kpiRatings[quarterNum] || {};
 
-    // Build KPI ratings for calculation
     const qKpisWithKra: KPIForCalculation[] = qKpis
       .filter((kpi): kpi is Goal & { kra_id: string } => !!kpi.kra_id)
       .map(kpi => ({
@@ -202,9 +193,7 @@ export default function Evaluations() {
   const handleNext = useCallback(async () => {
     const q = parseInt(selectedQuarter);
     const calculatedRating = calculateOverallRatingForQuarter(q);
-    // Save current progress before navigating to ensure data persistence
     await evalOps.saveProgress(q, overallComments, calculatedRating ?? undefined, setQuarterlyReviews);
-    // Navigate to overall assessment tab
     setEvaluationTab(prev => ({ ...prev, [q]: 'overall' }));
   }, [selectedQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
 
@@ -300,24 +289,9 @@ export default function Evaluations() {
     // If quarter has ended and no late permission, show message
     if (qEnded && !qHasLatePermission) {
       return <PeriodClose quarterNum={quarterNum} qEndDate={qEndDate} title="Self-Review" />
-      // return (
-      //   <Card>
-      //     <CardContent className="flex flex-col items-center justify-center py-12">
-      //       <AlertTriangle className="h-12 w-12 text-amber-500 mb-4" />
-      //       <h3 className="font-semibold text-lg">Q{quarterNum} Self-Review Period Has Ended</h3>
-      //       <p className="text-muted-foreground text-center mt-2">
-      //         The deadline for Q{quarterNum} self-review was{' '}
-      //         <span className="font-medium">{qEndDate ? formatDateShort(qEndDate) : 'passed'}</span>.
-      //       </p>
-      //       <p className="text-sm text-muted-foreground mt-2">
-      //         Please contact your HR/Admin to request late submission access.
-      //       </p>
-      //     </CardContent>
-      //   </Card>
-      // );
+ 
     }
 
-    // If no goals for this quarter, show message to set goals
     if (!qHasGoals) {
       return (
         <Card>
@@ -342,11 +316,9 @@ export default function Evaluations() {
     const qIsOpen = isQuarterOpen(activeCycle, quarterNum, quarterlyCycles);
     const qReview = quarterlyReviews[quarterNum];
     const qIsSubmitted = qReview?.status === 'submitted';
-    // Can edit if: (quarter is open OR has late permission) AND not already submitted
     const qCanEdit = (qIsOpen || qHasLatePermission) && !qIsSubmitted;
     const qKpiRatings = kpiRatings[quarterNum] || {};
 
-    // Calculate ratings for this quarter
     const qKpisWithKra: KPIForCalculation[] = qKpis
       .filter((kpi): kpi is Goal & { kra_id: string } => !!kpi.kra_id)
       .map(kpi => ({
@@ -355,22 +327,19 @@ export default function Evaluations() {
         weight: kpi.weight,
       }));
 
-    // Build KPI ratings for calculation - use calibration if available, otherwise use self_rating
     const qKpiRatingsForCalc: Record<string, number | null> = {};
     qKpis.forEach(kpi => {
       const achievedValue = qKpiRatings[kpi.id]?.achieved_value;
-      // Calculate rating from calibration if available
       if (kpi.calibration && kpi.calibration.length > 0 && achievedValue !== null && achievedValue !== undefined) {
         qKpiRatingsForCalc[kpi.id] = calculateRatingFromCalibration(achievedValue, kpi.calibration);
       } else {
-        // Fallback to self_rating if no calibration
         qKpiRatingsForCalc[kpi.id] = qKpiRatings[kpi.id]?.self_rating || null;
       }
     });
 
     const qKraRatings = calculateAllKRARatings(qKras, qKpisWithKra, qKpiRatingsForCalc);
     const qOverallCalc = calculateQuarterRating(qKras, qKraRatings);
-
+    console.log('kras',qKras,'kpis',qKpis)
     return (
       <>
         <QuarterAlerts
@@ -403,6 +372,7 @@ export default function Evaluations() {
           </TabsList>
 
           <TabsContent value="goals" className="space-y-6">
+            
             {qKras.map(kra => (
               <KRAEvaluationCard
                 key={kra.id}
@@ -416,7 +386,7 @@ export default function Evaluations() {
               />
             ))}
             
-            {/* Action Buttons for KRA/KPI Ratings Tab */}
+
             {qCanEdit && (
               <div className="flex justify-end gap-3 pt-4 border-t">
                 <Button 
@@ -461,8 +431,9 @@ export default function Evaluations() {
                 <Button 
                   onClick={handleSubmit}
                   disabled={evalOps.saving}
+                  className="bg-blue-600 text-white hover:bg-blue-700/90"
                 >
-                  <Send className="mr-2 h-4 w-4" />
+                  <Send className="mr-2 h-4 w-4 " />
                   Submit
                 </Button>
               </div>
@@ -482,7 +453,6 @@ export default function Evaluations() {
           <p className="text-muted-foreground">{activeCycle.name}</p>
         </div>
 
-        {/* Quarter Tabs */}
         <QuarterTabs
           selectedQuarter={selectedQuarter}
           onQuarterChange={(qStr) => {

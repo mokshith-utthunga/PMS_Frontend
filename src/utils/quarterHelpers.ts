@@ -41,46 +41,76 @@ export function getQuarterEndDate(year: number, quarter: 1 | 2 | 3 | 4): Date {
   return new Date(year, month, 0); // Last day of previous month
 }
 
-/**
- * Get available quarters for an employee based on their join date and cycle year
- * Returns array of quarter numbers (1-4) that the employee should have access to
- */
+
 export function getAvailableQuartersForEmployee(
   employee: Employee | null,
-  cycle: PerformanceCycle | null
+  cycle: PerformanceCycle | null,
+  goalsQuarterlyCycles?: GoalsQuarterlyCycle[]
 ): (1 | 2 | 3 | 4)[] {
   if (!employee || !cycle) return [];
 
   const joinDate = new Date(employee.date_of_joining);
-  const cycleYear = cycle.year;
+  joinDate.setHours(0, 0, 0, 0);
   
-  // Get the quarter when employee joined
-  const joinQuarter = getQuarterForDate(joinDate);
-  
-  // Get the start date of the join quarter in the cycle year
-  const joinQuarterStart = getQuarterStartDate(cycleYear, joinQuarter);
-  
-  // If employee joined before or during the cycle year, they have access to all quarters from their join quarter
-  if (joinDate <= joinQuarterStart) {
-    // Employee joined before or at the start of their join quarter
-    // They have access to all quarters from Q1
-    return [1, 2, 3, 4];
+  // If we have goals quarterly cycles, use actual dates from API
+  if (goalsQuarterlyCycles && goalsQuarterlyCycles.length > 0) {
+    // Find Q1 start date from actual data
+    const q1Cycle = goalsQuarterlyCycles.find(gqc => {
+      const q = typeof gqc.quarter === 'string' ? parseInt(gqc.quarter) : gqc.quarter;
+      return q === 1;
+    });
+    
+    if (q1Cycle?.quarterly_start_date) {
+      const q1Start = new Date(q1Cycle.quarterly_start_date);
+      q1Start.setHours(0, 0, 0, 0);
+      
+      // If employee joined before Q1 starts, they have access to all quarters
+      if (joinDate < q1Start) {
+        return [1, 2, 3, 4];
+      }
+      
+      // Find which quarter the employee joined in based on actual quarter dates
+      for (let q = 1; q <= 4; q++) {
+        const qCycle = goalsQuarterlyCycles.find(gqc => {
+          const gqcQuarter = typeof gqc.quarter === 'string' ? parseInt(gqc.quarter) : gqc.quarter;
+          return gqcQuarter === q;
+        });
+        
+        if (qCycle?.quarterly_start_date) {
+          const qStart = new Date(qCycle.quarterly_start_date);
+          qStart.setHours(0, 0, 0, 0);
+          
+          // If employee joined before this quarter starts, they get all quarters from previous quarter onwards
+          if (joinDate < qStart) {
+            const availableQuarters: (1 | 2 | 3 | 4)[] = [];
+            for (let availableQ = Math.max(1, q - 1); availableQ <= 4; availableQ++) {
+              availableQuarters.push(availableQ as 1 | 2 | 3 | 4);
+            }
+            return availableQuarters.length > 0 ? availableQuarters : [1, 2, 3, 4];
+          }
+          
+          // If employee joined on or before this quarter starts, they get this quarter and onwards
+          if (joinDate <= qStart) {
+            const availableQuarters: (1 | 2 | 3 | 4)[] = [];
+            for (let availableQ = q; availableQ <= 4; availableQ++) {
+              availableQuarters.push(availableQ as 1 | 2 | 3 | 4);
+            }
+            return availableQuarters;
+          }
+        }
+      }
+      
+      // If employee joined after all quarters started, they get all quarters
+      return [1, 2, 3, 4];
+    }
   }
   
-  // Employee joined during the cycle year
-  // They have access to quarters from their join quarter onwards
-  const availableQuarters: (1 | 2 | 3 | 4)[] = [];
-  for (let q = joinQuarter; q <= 4; q++) {
-    availableQuarters.push(q as 1 | 2 | 3 | 4);
-  }
-  
-  return availableQuarters;
+  // Fallback: If no goals quarterly cycles data, return all quarters
+  // This should not happen in normal operation, but provides a safe default
+  return [1, 2, 3, 4];
 }
 
-/**
- * Get previous quarters available for cloning
- * Returns quarters that are before the current quarter
- */
+
 export function getPreviousQuarters(
   currentQuarter: number | null,
   availableQuarters: (1 | 2 | 3 | 4)[]
@@ -90,22 +120,17 @@ export function getPreviousQuarters(
   return availableQuarters.filter(q => q < currentQuarter);
 }
 
-/**
- * Format quarter label (Q1, Q2, Q3, Q4)
- */
+
 export function formatQuarterLabel(quarter: number): string {
   return `Q${quarter}`;
 }
 
-/**
- * Helper to get quarterly cycle data from quarterlyCycles array or fallback to deprecated cycle fields
- */
+
 function getQuarterlyCycleDates(
   cycle: CycleWithQuarterDates | null,
   quarter: number,
   quarterlyCycles?: QuarterlyCycle[]
 ): { start: string | null; end: string | null } {
-  // First, try to get dates from quarterlyCycles array (preferred - from quarterly_cycles table)
   if (quarterlyCycles && quarterlyCycles.length > 0) {
     const qc = quarterlyCycles.find(qc => {
       const qcQuarter = typeof qc.quarter === 'string' ? parseInt(qc.quarter) : qc.quarter;
@@ -119,7 +144,6 @@ function getQuarterlyCycleDates(
     }
   }
   
-  // Fallback to deprecated cycle fields for backward compatibility
   if (cycle) {
     const startField = `q${quarter}_self_review_start` as keyof CycleWithQuarterDates;
     const endField = `q${quarter}_self_review_end` as keyof CycleWithQuarterDates;
@@ -132,9 +156,6 @@ function getQuarterlyCycleDates(
   return { start: null, end: null };
 }
 
-/**
- * Helper to get goals quarterly cycle data
- */
 function getGoalsQuarterlyCycleDates(
   cycle: PerformanceCycle | null,
   quarter: number,
@@ -174,10 +195,7 @@ function getGoalsQuarterlyCycleDates(
   };
 }
 
-/**
- * Check if a quarter has started based on the cycle's self-review start date
- * Uses quarterlyCycles array if available, falls back to deprecated cycle fields
- */
+
 export function hasQuarterStarted(
   cycle: CycleWithQuarterDates | null,
   quarter: number,
@@ -188,12 +206,8 @@ export function hasQuarterStarted(
   const { start } = getQuarterlyCycleDates(cycle, quarter, quarterlyCycles);
 
   if (!start) {
-    // If no start date is set, fall back to calendar quarter start
-    const cycleYear = cycle.year;
-    const quarterStartDate = getQuarterStartDate(cycleYear, quarter as 1 | 2 | 3 | 4);
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    return now >= quarterStartDate;
+    // No start date from API - quarter has not started
+    return false;
   }
 
   const startDate = new Date(start);
@@ -205,9 +219,7 @@ export function hasQuarterStarted(
   return now >= startDate;
 }
 
-/**
- * Get the start date for a quarter from the cycle or quarterlyCycles
- */
+
 export function getQuarterStartDateFromCycle(
   cycle: CycleWithQuarterDates | null,
   quarter: number,
@@ -218,16 +230,13 @@ export function getQuarterStartDateFromCycle(
   const { start } = getQuarterlyCycleDates(cycle, quarter, quarterlyCycles);
 
   if (!start) {
-    // Fall back to calendar quarter start
-    return getQuarterStartDate(cycle.year, quarter as 1 | 2 | 3 | 4);
+    return null;
   }
 
   return new Date(start);
 }
 
-/**
- * Get the end date for a quarter from the cycle or quarterlyCycles
- */
+
 export function getQuarterEndDateFromCycle(
   cycle: CycleWithQuarterDates | null,
   quarter: number,
@@ -238,16 +247,13 @@ export function getQuarterEndDateFromCycle(
   const { end } = getQuarterlyCycleDates(cycle, quarter, quarterlyCycles);
 
   if (!end) {
-    // Fall back to calendar quarter end
-    return getQuarterEndDate(cycle.year, quarter as 1 | 2 | 3 | 4);
+    return null;
   }
 
   return new Date(end);
 }
 
-/**
- * Format a date to a readable string
- */
+
 export function formatDateShort(date: Date | null): string {
   if (!date) return '';
   return date.toLocaleDateString('en-US', { 
@@ -257,9 +263,7 @@ export function formatDateShort(date: Date | null): string {
   });
 }
 
-/**
- * Get quarter timing status
- */
+
 export type QuarterTimingStatus = 'not_started' | 'in_progress' | 'ended';
 
 export function getQuarterTimingStatus(
@@ -291,10 +295,7 @@ export function getQuarterTimingStatus(
   return 'in_progress';
 }
 
-/**
- * Check if a quarter has ended based on the cycle's self-review end date
- * Uses quarterlyCycles array if available, falls back to deprecated cycle fields
- */
+
 export function hasQuarterEnded(
   cycle: CycleWithQuarterDates | null,
   quarter: number,
@@ -305,12 +306,8 @@ export function hasQuarterEnded(
   const endDate = getQuarterEndDateFromCycle(cycle, quarter, quarterlyCycles);
   
   if (!endDate) {
-    // If no end date, fall back to calendar quarter end
-    const cycleYear = cycle.year;
-    const quarterEndDate = getQuarterEndDate(cycleYear, quarter as 1 | 2 | 3 | 4);
-    const now = new Date();
-    now.setHours(23, 59, 59, 999);
-    return now > quarterEndDate;
+    // No end date from API - quarter has not ended
+    return false;
   }
 
   const end = new Date(endDate);
@@ -321,12 +318,7 @@ export function hasQuarterEnded(
   return now > end;
 }
 
-/**
- * Check if an employee can work on goals/evaluations for a quarter
- * Returns true if:
- * - Quarter has started AND not ended, OR
- * - Quarter has ended but employee has late permission
- */
+
 export function canWorkOnQuarter(
   cycle: CycleWithQuarterDates | null,
   quarter: number,
@@ -349,9 +341,7 @@ export function canWorkOnQuarter(
   return { canWork: true, reason: 'ok' };
 }
 
-/**
- * Check if goal submission has started for a quarter
- */
+
 export function hasGoalSubmissionStarted(
   cycle: PerformanceCycle | null,
   quarter: number,
@@ -362,11 +352,8 @@ export function hasGoalSubmissionStarted(
   const { submissionStart } = getGoalsQuarterlyCycleDates(cycle, quarter, goalsQuarterlyCycles);
 
   if (!submissionStart) {
-    // If no start date, fall back to calendar quarter start
-    const quarterStartDate = getQuarterStartDate(cycle.year, quarter as 1 | 2 | 3 | 4);
-    const now = new Date();
-    now.setHours(0, 0, 0, 0);
-    return now >= quarterStartDate;
+    // No start date from API - goal submission has not started
+    return false;
   }
 
   const startDate = new Date(submissionStart);
@@ -378,9 +365,7 @@ export function hasGoalSubmissionStarted(
   return now >= startDate;
 }
 
-/**
- * Check if goal submission has ended for a quarter
- */
+
 export function hasGoalSubmissionEnded(
   cycle: PerformanceCycle | null,
   quarter: number,
@@ -391,10 +376,8 @@ export function hasGoalSubmissionEnded(
   const { submissionEnd } = getGoalsQuarterlyCycleDates(cycle, quarter, goalsQuarterlyCycles);
 
   if (!submissionEnd) {
-    // If no end date, fall back to calendar quarter end
-    const quarterEndDate = getQuarterEndDate(cycle.year, quarter as 1 | 2 | 3 | 4);
-    const now = new Date();
-    return now > quarterEndDate;
+    // No end date from API - goal submission has not ended
+    return false;
   }
 
   const endDate = new Date(submissionEnd);
@@ -405,9 +388,7 @@ export function hasGoalSubmissionEnded(
   return now > endDate;
 }
 
-/**
- * Get goal submission end date for a quarter
- */
+
 export function getGoalSubmissionEndDate(
   cycle: PerformanceCycle | null,
   quarter: number,
@@ -418,15 +399,13 @@ export function getGoalSubmissionEndDate(
   const { submissionEnd } = getGoalsQuarterlyCycleDates(cycle, quarter, goalsQuarterlyCycles);
 
   if (!submissionEnd) {
-    return getQuarterEndDate(cycle.year, quarter as 1 | 2 | 3 | 4);
+    return null;
   }
 
   return new Date(submissionEnd);
 }
 
-/**
- * Get goal submission start date for a quarter
- */
+
 export function getGoalSubmissionStartDate(
   cycle: PerformanceCycle | null,
   quarter: number,
@@ -437,15 +416,12 @@ export function getGoalSubmissionStartDate(
   const { submissionStart } = getGoalsQuarterlyCycleDates(cycle, quarter, goalsQuarterlyCycles);
 
   if (!submissionStart) {
-    return getQuarterStartDate(cycle.year, quarter as 1 | 2 | 3 | 4);
+    return null;
   }
 
   return new Date(submissionStart);
 }
 
-/**
- * Get manager goal review dates for a quarter
- */
 export function getManagerGoalReviewDates(
   cycle: PerformanceCycle | null,
   quarter: number,

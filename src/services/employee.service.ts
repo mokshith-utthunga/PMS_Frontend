@@ -8,6 +8,7 @@ export interface EmployeeFilters {
   grade?: string;
   business_unit?: string;
   manager_id?: string;
+  manager_code?: string;
   ids?: string[];
   limit?: number;
   offset?: number;
@@ -36,6 +37,7 @@ export const employeeService = {
     if (filters?.status) params.append('status', filters.status);
     if (filters?.grade) params.append('grade', filters.grade);
     if (filters?.business_unit) params.append('business_unit', filters.business_unit);
+    if (filters?.manager_code) params.append('manager_code', filters.manager_code);
     if (filters?.manager_id) params.append('manager_id', filters.manager_id);
     if (filters?.ids?.length) params.append('ids', filters.ids.join(','));
     if (filters?.limit) params.append('limit', String(filters.limit));

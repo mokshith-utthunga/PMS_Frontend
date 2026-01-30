@@ -40,3 +40,8 @@ export const TOTAL_WEIGHT = 100;
 // Rating descriptions
 export const BONUS_RATING_DESCRIPTION = 
   'Extra achievements that earn bonus points. Rating 5 = +5 pts, Rating 4 = +3 pts, Rating 3 = 0 pts, Rating 2 = -3 pts, Rating 1 = -5 pts.';
+
+// Cache time constants (in milliseconds)
+export const CACHE_STALE_TIME = 30 * 60 * 1000; // 30 minutes - data is fresh for this duration
+export const CACHE_GC_TIME = 60 * 60 * 1000; // 1 hour - keep in cache for this duration after last use
+export const LOCAL_STORAGE_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes - localStorage cache expires after this duration

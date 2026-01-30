@@ -33,10 +33,10 @@ import { Link } from 'react-router-dom';
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, roles: ['employee', 'manager', 'dept_head', 'hr_admin', 'hrbp', 'system_admin'] },
-  { name: 'My Goals', href: '/goals', icon: Target, roles: ['employee', 'manager', 'dept_head'] },
-  { name: 'Self Evaluation', href: '/evaluations', icon: ClipboardCheck, roles: ['employee', 'manager', 'dept_head'] },
+  { name: 'My Goals', href: '/goals', icon: Target, roles: ['employee', 'manager', 'dept_head', 'hr_admin'] },
+  { name: 'Self Evaluation', href: '/evaluations', icon: ClipboardCheck, roles: ['employee', 'manager', 'dept_head','hr_admin'] },
   { name: 'My Rating', href: '/my-rating', icon: Star, roles: ['employee', 'manager', 'dept_head'] },
-  { name: 'Team', href: '/team', icon: Users, roles: ['manager', 'dept_head'] },
+  { name: 'Team', href: '/team', icon: Users, roles: ['manager', 'dept_head','hr_admin'] },
   { name: 'Calibration', href: '/calibration', icon: Scale, roles: ['hr_admin', 'hrbp'] },
   { name: 'Reports', href: '/reports', icon: BarChart3, roles: ['hr_admin', 'hrbp', 'dept_head'] },
   { name: 'HR Review', href: '/admin/review', icon: FileCheck, roles: ['hr_admin', 'hrbp', 'system_admin', 'dept_head'] },

@@ -24,9 +24,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { evaluationService, cycleService, goalsService, employeeService } from '@/services';
+import { evaluationService, goalsService, employeeService } from '@/services';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 import {
   Loader2,
   CheckCircle,
@@ -104,9 +105,13 @@ interface RatingRejection {
 export default function HRReview() {
   const { hasAnyRole } = useAuth();
   const { toast } = useToast();
+  
+  // Get active cycle from context (fetched once at app initialization)
+  const { activeCycle: activeCycleFromContext } = useActiveCycle();
+  
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
-  const [activeCycle, setActiveCycle] = useState<any>(null);
+  const [activeCycle, setActiveCycle] = useState<any>(activeCycleFromContext);
   
   const [pendingReviews, setPendingReviews] = useState<PendingReview[]>([]);
   const [pendingYearEndReviews, setPendingYearEndReviews] = useState<PendingYearEndReview[]>([]);
@@ -142,28 +147,38 @@ export default function HRReview() {
       return;
     }
     fetchData();
-  }, [isHR, isBUHead]);
+  }, [isHR, isBUHead, activeCycleFromContext, activeCycle]);
+
+  // Update activeCycle when context data changes
+  useEffect(() => {
+    if (activeCycleFromContext) {
+      setActiveCycle(activeCycleFromContext);
+    }
+  }, [activeCycleFromContext]);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       
-      const cycleResult = await cycleService.getActive();
-      if (cycleResult.data) {
-        setActiveCycle(cycleResult.data);
-        
-        // Fetch pending quarterly reviews
-        const reviewsResult = await evaluationService.hrReview.getPendingReviews(cycleResult.data.id);
-        setPendingReviews(reviewsResult.data || []);
-        
-        // Fetch pending year-end reviews
-        const yearEndReviewsResult = await evaluationService.yearEndHRReview.getPendingReviews(cycleResult.data.id);
-        setPendingYearEndReviews(yearEndReviewsResult.data || []);
-        
-        // Fetch rating rejections
-        const rejectionsResult = await evaluationService.ratingRejections.get(cycleResult.data.id);
-        setRatingRejections(rejectionsResult.data || []);
+      // Use active cycle from context (already fetched at app initialization)
+      const currentActiveCycle = activeCycleFromContext || activeCycle;
+      if (!currentActiveCycle) {
+        setLoading(false);
+        return;
       }
+      setActiveCycle(currentActiveCycle);
+      
+      // Fetch pending quarterly reviews
+      const reviewsResult = await evaluationService.hrReview.getPendingReviews(currentActiveCycle.id);
+      setPendingReviews(reviewsResult.data || []);
+      
+      // Fetch pending year-end reviews
+      const yearEndReviewsResult = await evaluationService.yearEndHRReview.getPendingReviews(currentActiveCycle.id);
+      setPendingYearEndReviews(yearEndReviewsResult.data || []);
+
+      // Fetch rating rejections
+      const rejectionsResult = await evaluationService.ratingRejections.get(currentActiveCycle.id);
+      setRatingRejections(rejectionsResult.data || []);
     } catch (error: any) {
       console.error('Error fetching data:', error);
       toast({
@@ -555,7 +570,7 @@ export default function HRReview() {
             ) : (
               <div className="grid gap-4">
                 {pendingYearEndReviews.map((review) => (
-                  <Card key={review.id} className="hover:shadow-md transition-shadow border-l-4 border-l-primary">
+                  <Card key={review.id} className="hover:shadow-md transition-shadow border-l-4 border-l-card-border">
                     <CardHeader>
                       <div className="flex items-start justify-between">
                         <div className="flex-1">

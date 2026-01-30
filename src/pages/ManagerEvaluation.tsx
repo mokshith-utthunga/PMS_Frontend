@@ -11,8 +11,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
-import { employeeService, cycleService, goalsService, evaluationService, settingsService } from '@/services';
+import { employeeService, goalsService, evaluationService, settingsService, delegationService } from '@/services';
 import { useAuth } from '@/contexts/AuthContext';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import { useCurrentEmployee } from '@/hooks/useCurrentEmployee';
 import {
   Loader2,
   AlertCircle,
@@ -89,6 +91,7 @@ interface KPIDisplay {
   target_value?: string | null;
   calibration?: Array<{ threshold: number; rating: number }> | null;
   quarter?: number | null;
+  metric_type?: string | null;
 }
 
 interface GoalSelfRating {
@@ -98,6 +101,7 @@ interface GoalSelfRating {
   evidence: string | null;
   achieved_value?: number | null;
   target_value?: number | null;
+  metric_type?: string;
 }
 
 interface GoalManagerRating {
@@ -133,12 +137,17 @@ export default function ManagerEvaluation() {
   const { user } = useAuth();
   const { toast } = useToast();
 
+  // Get active cycle data from context (fetched once at app initialization)
+  const { activeCycle: activeCycleFromContext, quarterlyCycles: quarterlyCyclesFromContext } = useActiveCycle();
+  // Get current employee from cached hook (fetched once at app initialization)
+  const { employee: currentEmployee } = useCurrentEmployee();
+  
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [managerId, setManagerId] = useState<string | null>(null);
+  const [managerId, setManagerId] = useState<string | null>(currentEmployee?.id || null);
   const [employee, setEmployee] = useState<Employee | null>(null);
-  const [activeCycle, setActiveCycle] = useState<PerformanceCycle | null>(null);
-  const [quarterlyCycles, setQuarterlyCycles] = useState<QuarterlyCycle[]>([]);
+  const [activeCycle, setActiveCycle] = useState<PerformanceCycle | null>(activeCycleFromContext);
+  const [quarterlyCycles, setQuarterlyCycles] = useState<QuarterlyCycle[]>((quarterlyCyclesFromContext || []) as QuarterlyCycle[]);
   const [kras, setKras] = useState<KRADisplay[]>([]);
   const [kpis, setKpis] = useState<KPIDisplay[]>([]);
   const [ratingScales, setRatingScales] = useState<RatingScaleDisplay[]>([]);
@@ -198,18 +207,18 @@ export default function ManagerEvaluation() {
     }
   }, [kras]);
 
+  // Update managerId when employee data changes
+  useEffect(() => {
+    if (currentEmployee) {
+      setManagerId(currentEmployee.id);
+    }
+  }, [currentEmployee]);
+
   const fetchData = async () => {
-    if (!user || !employeeId) return;
+    if (!user || !employeeId || !currentEmployee) return;
 
     try {
-      // Fetch current manager's employee record
-      const mgrResult = await employeeService.getMe();
-
-      if (!mgrResult.data) {
-        setLoading(false);
-        return;
-      }
-      setManagerId(mgrResult.data.id);
+      const managerId = currentEmployee.id;
 
       // Fetch the employee being evaluated
       const empResult = await employeeService.getById(employeeId);
@@ -221,12 +230,34 @@ export default function ManagerEvaluation() {
         return;
       }
 
-      // Check authorization: manager_code references emp_code, not id
+      // Check authorization: manager_code stores emp_code value
       const employee = empResult.data as any;
       const managerCode = employee.manager_code;
-      const managerEmpCode = mgrResult.data.emp_code;
+      const managerEmpCode = currentEmployee.emp_code;
       
-      if (managerCode !== managerEmpCode) {
+      // Check if user is direct manager
+      const isDirectManager = managerCode === managerEmpCode;
+      
+      // If not direct manager, check for delegation (for current quarter if in quarterly mode)
+      let isDelegate = false;
+      if (!isDirectManager && activeCycleFromContext) {
+        try {
+          const quarter = evaluationMode === 'quarterly' ? selectedQuarter : null;
+          if (quarter) {
+            const delegationsResult = await delegationService.get({
+              delegate_id: currentEmployee.id,
+              reportee_id: employeeId,
+              cycle_id: activeCycleFromContext.id,
+              quarter,
+            });
+            isDelegate = (delegationsResult.data || []).length > 0;
+          }
+        } catch (error) {
+          console.error('Error checking delegation:', error);
+        }
+      }
+      
+      if (!isDirectManager && !isDelegate) {
         toast({ title: 'Not authorized to evaluate this employee', variant: 'destructive' });
         navigate('/team');
         setLoading(false);
@@ -235,15 +266,15 @@ export default function ManagerEvaluation() {
 
       setEmployee(employee);
 
-      // Fetch active cycle (includes quarterly_cycles and goals_quarterly_cycles)
-      const cycleResult = await cycleService.getActive();
-
-      if (!cycleResult.data) {
+      // Use active cycle data from context (already fetched at app initialization)
+      if (!activeCycleFromContext) {
         setLoading(false);
         return;
       }
-      setActiveCycle(cycleResult.data);
-      setQuarterlyCycles((cycleResult.quarterly_cycles || []) as QuarterlyCycle[]);
+      setActiveCycle(activeCycleFromContext);
+      if (quarterlyCyclesFromContext) {
+        setQuarterlyCycles((quarterlyCyclesFromContext || []) as QuarterlyCycle[]);
+      }
 
       // Fetch rating scales
       const scalesResult = await settingsService.ratingScales.getDefault();
@@ -256,7 +287,7 @@ export default function ManagerEvaluation() {
       setRatingScales(scales);
 
       // Fetch approved KRAs for this employee - include quarter
-      const krasResult = await goalsService.kras.getByEmployee(employeeId, cycleResult.data.id, 'approved');
+      const krasResult = await goalsService.kras.getByEmployee(employeeId, activeCycleFromContext.id, 'approved');
       const mappedKras = (krasResult.data || []).map((kra: any) => ({
         id: kra.id,
         title: kra.title,
@@ -267,7 +298,7 @@ export default function ManagerEvaluation() {
       setKras(mappedKras);
 
       // Fetch approved KPIs (goals with kra_id) - include calibration and quarter
-      const kpisResult = await goalsService.kpis.getByEmployee(employeeId, cycleResult.data.id, 'approved');
+      const kpisResult = await goalsService.kpis.getByEmployee(employeeId, activeCycleFromContext.id, 'approved');
       const filteredKpis = (kpisResult.data || [])
         .filter((kpi: any) => kpi.kra_id)
         .map((kpi: any) => ({
@@ -279,11 +310,13 @@ export default function ManagerEvaluation() {
           target_value: kpi.target_value,
           calibration: kpi.calibration || null,
           quarter: kpi.quarter || null,
+          metric_type: kpi.metric_type || null,
         }));
       setKpis(filteredKpis);
 
       // Fetch quarterly self reviews (from quarterly_self_reviews table)
-      const allQuarterlySelfResult = await evaluationService.selfReviews.get(employeeId, cycleResult.data.id);
+      const allQuarterlySelfResult = await evaluationService.selfReviews.get(employeeId, activeCycleFromContext.id);
+      console.log('allQuarterlySelfResult',allQuarterlySelfResult)
 
       const qSelfEvalsMap: Record<number, QuarterlySelfEval> = {};
       (allQuarterlySelfResult.data || []).forEach((e: any) => {
@@ -310,6 +343,7 @@ export default function ManagerEvaluation() {
         
         try {
           const qRatingsResult = await evaluationService.goalSelfRatings.get(qEval.id);
+          console.log('qRatingsResult',qRatingsResult)
 
           const ratingsMap: Record<string, GoalSelfRating> = {};
           (qRatingsResult.data || []).forEach((r: any) => {
@@ -320,6 +354,7 @@ export default function ManagerEvaluation() {
               evidence: r.evidence || '',
               achieved_value: r.achieved_value,
               target_value: r.target_value,
+              metric_type: r.metric_type || '',
             };
           });
           qGoalRatingsMap[parseInt(quarter)] = ratingsMap;
@@ -330,8 +365,6 @@ export default function ManagerEvaluation() {
       }
       setQuarterlyGoalSelfRatings(qGoalRatingsMap);
 
-      // For year-end, use the same data (no separate year-end table now)
-      // Just use Q4 data as a proxy for now
       const q4SelfEval = qSelfEvalsMap[4];
       if (q4SelfEval) {
         setSelfEvaluation(q4SelfEval as any);
@@ -339,7 +372,7 @@ export default function ManagerEvaluation() {
       }
 
       // Fetch or create quarterly manager review (instead of manager_evaluations)
-      const mgrReviewsResult = await evaluationService.managerReviews.get(employeeId, cycleResult.data.id);
+      const mgrReviewsResult = await evaluationService.managerReviews.get(employeeId, activeCycleFromContext.id);
       
       // Create a map of manager reviews by quarter
       const mgrReviewsByQuarter: Record<number, any> = {};
@@ -401,7 +434,6 @@ export default function ManagerEvaluation() {
 
         setGoalManagerRatings(mgrRatingsMap);
 
-        // Set quarterly ratings from manager reviews
         const qRatings: Record<string, number | null> = { q1: null, q2: null, q3: null, q4: null };
         Object.entries(mgrReviewsByQuarter).forEach(([q, review]: [string, any]) => {
           const key = `q${q}` as keyof typeof qRatings;
@@ -425,7 +457,7 @@ export default function ManagerEvaluation() {
 
       // Always fetch year-end evaluation data (outside of quarterly review block)
       try {
-        const yearEndResult = await evaluationService.yearEndEvaluation.get(employeeId, cycleResult.data.id);
+        const yearEndResult = await evaluationService.yearEndEvaluation.get(employeeId, activeCycleFromContext.id);
         if (yearEndResult.data) {
           setYearEndManagerEvaluation(yearEndResult.data);
           // Populate year-end specific form fields
@@ -469,6 +501,7 @@ export default function ManagerEvaluation() {
   };
 
   const getKPIsForKRA = (kraId: string) => quarterKpis.filter((kpi) => kpi.kra_id === kraId);
+  
 
   // Auto-calculate ratings from achievement values using calibration
   useEffect(() => {
@@ -483,6 +516,7 @@ export default function ManagerEvaluation() {
 
     const updatedRatings = { ...goalManagerRatings };
     let hasChanges = false;
+
 
     kpis.forEach((kpi) => {
       const numericTarget = parseNumericTarget(kpi.target_value);
@@ -542,6 +576,8 @@ export default function ManagerEvaluation() {
     if (evaluationMode !== 'quarterly') return kpis;
     return kpis.filter(kpi => kpi.quarter === selectedQuarter || kpi.quarter === null);
   }, [kpis, selectedQuarter, evaluationMode]);
+
+  console.log('quarterKpis',quarterKpis)
 
   // Calculate KPI ratings using calibration rules (filtered by quarter)
   const calculatedKPIRatings = useMemo(() => {
@@ -664,14 +700,38 @@ export default function ManagerEvaluation() {
         setManagerEvaluation(mgrReviewResult.data);
 
         // Save KPI manager feedback
-        const ratingsToSave = Object.values(goalManagerRatings).map(rating => ({
-          goal_id: rating.goal_id,
-          rating: rating.rating,
-          comments: rating.comments,
-        }));
+        // Get KPIs for the selected quarter
+        const relevantKpis = evaluationMode === 'quarterly' 
+          ? kpis.filter((k: any) => k.quarter === selectedQuarter)
+          : kpis;
+        
+        const ratingsToSave = Object.values(goalManagerRatings)
+          .filter(rating => rating.goal_id) // Only include ratings with valid goal_id
+          .map(rating => {
+            // Calculate progress_percentage from manager_achieved_value
+            let progressPercentage = null;
+            if (rating.manager_achieved_value !== null && rating.manager_achieved_value !== undefined) {
+              const kpi = relevantKpis.find((k: any) => k.id === rating.goal_id);
+              if (kpi && kpi.target_value) {
+                const numericTarget = parseNumericTarget(kpi.target_value);
+                if (numericTarget && numericTarget > 0) {
+                  progressPercentage = Math.round((rating.manager_achieved_value / numericTarget) * 100);
+                }
+              }
+            }
+            
+            return {
+              goal_id: rating.goal_id,
+              rating: rating.rating ?? null,
+              comments: rating.comments ?? '',
+              progress_percentage: progressPercentage ?? rating.progress_percentage ?? null,
+            };
+          });
 
         if (ratingsToSave.length > 0) {
           await evaluationService.kpiManagerFeedback.bulkUpsert(mgrReviewResult.data.id, ratingsToSave);
+        } else {
+          console.warn('No ratings to save - goalManagerRatings might be empty');
         }
       }
 
@@ -685,7 +745,7 @@ export default function ManagerEvaluation() {
     } finally {
       setSaving(false);
     }
-  }, [activeCycle, managerId, employeeId, selectedQuarter, evaluationMode, overallRating, overallComments, yearEndOverallComments, potentialRating, developmentRecommendations, goalManagerRatings, calculatedQuarterRating, toast]);
+  }, [activeCycle, managerId, employeeId, selectedQuarter, evaluationMode, overallRating, overallComments, yearEndOverallComments, potentialRating, developmentRecommendations, goalManagerRatings, calculatedQuarterRating, kpis, toast]);
 
   const handleNext = useCallback(async () => {
     // Save current progress before navigating to ensure data persistence
@@ -766,8 +826,7 @@ export default function ManagerEvaluation() {
       return;
     }
 
-    // Quarterly evaluation logic
-    // Check for missing ratings (only for KPIs in selected quarter)
+
     const missingRatings = quarterKpis.filter((g) => !goalManagerRatings[g.id]?.rating);
     if (missingRatings.length > 0) {
       toast({
@@ -793,10 +852,7 @@ export default function ManagerEvaluation() {
 
     setSaving(true);
     try {
-      // Use the calculated weighted average (KRA weights -> KPI weights)
-      // calculatedQuarterRating is already computed using weighted averages
-
-      // Create or update quarterly manager review with submitted status
+    
       const mgrReviewResult = await evaluationService.managerReviews.upsert({
         employee_id: employeeId,
         cycle_id: activeCycle.id,
@@ -909,7 +965,6 @@ export default function ManagerEvaluation() {
     );
   }
 
-  // Determine which quarter or year-end view based on evaluation mode
   const quarterNumber = evaluationMode === 'quarterly' ? selectedQuarter : null;
 
   const relevantSelfEval = quarterNumber 
@@ -921,11 +976,9 @@ export default function ManagerEvaluation() {
     ? quarterlyGoalSelfRatings[quarterNumber] || {}
     : goalSelfRatings;
 
-  // Get period status for the current view
   const quarterPeriodStatus = getQuarterManagerReviewStatus(activeCycle, selectedQuarter, quarterlyCycles);
   const yearEndPeriodStatus = getYearEndManagerEvalStatus(activeCycle);
   
-  // Handler for tab changes
   const handleEvaluationTabChange = (tab: 'quarterly' | 'year-end', quarter?: Quarter) => {
     setEvaluationMode(tab);
     if (quarter) {
@@ -941,15 +994,10 @@ export default function ManagerEvaluation() {
     setSearchParams({ quarter: quarter.toString() });
   };
 
-  // Check if evaluation can proceed
-  // For quarterly: period is open and self-eval is submitted
-  // For year-end: always allow (no self-eval required, no period restriction)
   const canEvaluate = evaluationMode === 'quarterly'
     ? quarterPeriodStatus.timing === 'current' && relevantSelfEval?.status === 'submitted'
     : true;
 
-  // Check submission status based on evaluation mode
-  // For year-end: only consider submitted if yearEndManagerEvaluation exists AND has status 'submitted'
   const isSubmitted = evaluationMode === 'quarterly' 
     ? managerEvaluation?.status === 'submitted'
     : Boolean(yearEndManagerEvaluation && yearEndManagerEvaluation.status === 'submitted');
@@ -1000,6 +1048,7 @@ export default function ManagerEvaluation() {
           </Card>
 
             {quarterKras.map((kra) => {
+              console.log('kra in the manager evaluation',kra)
               const kraKpis = getKPIsForKRA(kra.id);
               const isExpanded = expandedKRAs.has(kra.id);
 
@@ -1049,6 +1098,12 @@ export default function ManagerEvaluation() {
                             <h4 className="font-medium">{kpi.title}</h4>
                             {kpi.description && (
                               <p className="text-sm text-muted-foreground mt-1">{kpi.description}</p>
+                            )}
+                            {kpi.metric_type && (
+                              <p className="text-sm mt-1">
+                                <span className="text-muted-foreground">Metric Type: </span>
+                                  {kpi.metric_type}
+                              </p>
                             )}
                             {kpi.target_value && (
                               <p className="text-sm mt-1">
@@ -1102,6 +1157,7 @@ export default function ManagerEvaluation() {
                                   onManagerChange={(value) => handleGoalRatingChange(kpi.id, 'manager_achieved_value' as keyof GoalManagerRating, value)}
                                   onRatingChange={(rating) => handleGoalRatingChange(kpi.id, 'rating', rating)}
                                   disabled={isSubmitted}
+                                  metricType={kpi.metric_type || relevantGoalSelfRatings[kpi.id]?.metric_type}
                                 />
                               );
                             }
@@ -1114,7 +1170,7 @@ export default function ManagerEvaluation() {
                               calibration={kpi.calibration}
                               targetValue={kpi.target_value}
                               achievedValue={goalManagerRatings[kpi.id]?.manager_achieved_value ?? relevantGoalSelfRatings[kpi.id]?.achieved_value ?? null}
-                              metricType="number"
+                              metricType={kpi.metric_type || relevantGoalSelfRatings[kpi.id]?.metric_type || "number"}
                               className="mt-4"
                             />
                           )}
@@ -1389,6 +1445,7 @@ export default function ManagerEvaluation() {
                 <Button 
                   onClick={handleSubmit}
                   disabled={saving}
+                  variant="primary"
                 >
                   <Send className="mr-2 h-4 w-4" />
                   Submit

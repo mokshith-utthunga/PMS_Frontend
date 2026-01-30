@@ -1,5 +1,4 @@
-// Custom hook for evaluation save/submit operations
-// Uses quarterly_self_reviews and goal_self_ratings tables
+
 import { useState, useCallback } from 'react';
 import { evaluationService, QuarterlySelfReviewData } from '@/services';
 import { toasts } from '@/toasts';

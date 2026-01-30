@@ -26,7 +26,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { employeeService, goalsService, evaluationService, settingsService, cycleService } from '@/services';
+import { goalsService, evaluationService, settingsService } from '@/services';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import { useCurrentEmployee } from '@/hooks/useCurrentEmployee';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { 
@@ -41,10 +43,12 @@ import {
   CalendarDays,
   XCircle,
   CheckCircle2,
-  Calendar
+  Calendar,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { formatRating } from '@/lib/ratingCalculations';
+import { formatRating, calculateAllKRARatings, calculateKRARating } from '@/lib/ratingCalculations';
 import type { YearEndEvaluationData } from '@/services/evaluation.service';
 
 interface GoalRating {
@@ -55,6 +59,17 @@ interface GoalRating {
   self_rating: number | null;
   manager_rating: number | null;
   manager_comments: string | null;
+  kra_id?: string | null;
+  quarter?: number | null;
+}
+
+interface KRARating {
+  id: string;
+  title: string;
+  weight: number;
+  self_rating: number | null;
+  manager_rating: number | null;
+  quarter?: number | null;
 }
 
 interface RatingScaleDisplay {
@@ -86,11 +101,16 @@ export default function MyRating() {
   const { toast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   
+  // Get active cycle from context (fetched once at app initialization)
+  const { activeCycle: activeCycleFromContext } = useActiveCycle();
+  // Get current employee from cached hook (fetched once at app initialization)
+  const { employee: currentEmployee } = useCurrentEmployee();
+  
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [employeeId, setEmployeeId] = useState<string | null>(null);
-  const [employee, setEmployee] = useState<any>(null);
-  const [activeCycle, setActiveCycle] = useState<any>(null);
+  const [employeeId, setEmployeeId] = useState<string | null>(currentEmployee?.id || null);
+  const [employee, setEmployee] = useState<any>(currentEmployee);
+  const [activeCycle, setActiveCycle] = useState<any>(activeCycleFromContext);
   const [selectedQuarter, setSelectedQuarter] = useState<string>('1');
   const [viewMode, setViewMode] = useState<'quarterly' | 'year-end'>('quarterly');
   
@@ -98,6 +118,8 @@ export default function MyRating() {
   const [selfReview, setSelfReview] = useState<any>(null);
   const [managerReview, setManagerReview] = useState<any>(null);
   const [goalRatings, setGoalRatings] = useState<GoalRating[]>([]);
+  const [kraRatings, setKraRatings] = useState<KRARating[]>([]);
+  const [kras, setKras] = useState<any[]>([]);
   const [ratingScales, setRatingScales] = useState<RatingScaleDisplay[]>([]);
   const [evaluationState, setEvaluationState] = useState<EvaluationState>('no_self_eval');
   
@@ -110,6 +132,9 @@ export default function MyRating() {
   const [showRejectionConfirmation, setShowRejectionConfirmation] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
   const [isYearEndRejection, setIsYearEndRejection] = useState(false);
+  
+  // Track expanded KRAs
+  const [expandedKRAs, setExpandedKRAs] = useState<Record<string, boolean>>({});
 
   // Initialize quarter from URL or default to 1
   useEffect(() => {
@@ -122,24 +147,25 @@ export default function MyRating() {
     }
   }, [searchParams]);
 
+  // Update activeCycle when context data changes
+  useEffect(() => {
+    if (activeCycleFromContext) {
+      setActiveCycle(activeCycleFromContext);
+    }
+  }, [activeCycleFromContext]);
+
   useEffect(() => {
     fetchData();
-  }, [user, selectedQuarter, viewMode]);
+  }, [user, selectedQuarter, viewMode, activeCycleFromContext]);
 
   const fetchData = useCallback(async () => {
-    if (!user) return;
+    if (!user || !currentEmployee) return;
 
     try {
       setLoading(true);
       
-      // Get current user's employee record
-      const empResult = await employeeService.getMe();
-      if (!empResult.data) {
-        setLoading(false);
-        return;
-      }
-      setEmployeeId(empResult.data.id);
-      setEmployee(empResult.data);
+      const employeeId = currentEmployee.id;
+      const employee = currentEmployee;
 
       // Get rating scales
       const scalesResult = await settingsService.ratingScales.getDefault();
@@ -151,19 +177,19 @@ export default function MyRating() {
       }));
       setRatingScales(scales.sort((a, b) => b.value - a.value));
 
-      // Get active cycle
-      const cycleResult = await cycleService.getActive();
-      if (!cycleResult.data) {
+      // Use active cycle from context (already fetched at app initialization)
+      const currentActiveCycle = activeCycleFromContext || activeCycle;
+      if (!currentActiveCycle) {
         setLoading(false);
         return;
       }
-      setActiveCycle(cycleResult.data);
+      setActiveCycle(currentActiveCycle);
 
       // Fetch year-end evaluation data (always fetch for both modes)
       try {
         const yearEndResult = await evaluationService.yearEndEvaluation.get(
-          empResult.data.id,
-          cycleResult.data.id
+          employeeId,
+          currentActiveCycle.id
         );
         setYearEndEvaluation(yearEndResult.data);
         
@@ -198,8 +224,8 @@ export default function MyRating() {
       
       // Get self-review for selected quarter
       const selfReviewsResult = await evaluationService.selfReviews.get(
-        empResult.data.id, 
-        cycleResult.data.id, 
+        employeeId, 
+        currentActiveCycle.id, 
         quarter
       );
       const selfReviewData = selfReviewsResult.data?.find((r: any) => r.quarter === quarter);
@@ -210,43 +236,29 @@ export default function MyRating() {
         setEvaluationState('no_self_eval');
         setManagerReview(null);
         setGoalRatings([]);
+        setKraRatings([]);
         setLoading(false);
         return;
       }
 
-      // Get manager review for selected quarter
-      const mgrReviewsResult = await evaluationService.managerReviews.get(
-        empResult.data.id, 
-        cycleResult.data.id, 
+      // Get KRAs for selected quarter (fetch before manager review check)
+      const krasResult = await goalsService.kras.getByEmployee(
+        employeeId, 
+        currentActiveCycle.id, 
+        'approved',
         quarter
       );
-      const mgrReviewData = mgrReviewsResult.data?.find((r: any) => r.quarter === quarter);
-      setManagerReview(mgrReviewData || null);
+      const quarterKras = (krasResult.data || []).filter((kra: any) => kra.quarter === quarter);
+      setKras(quarterKras);
 
-      if (!mgrReviewData) {
-        setEvaluationState('manager_pending');
-        setGoalRatings([]);
-        setLoading(false);
-        return;
-      }
-
-      // Check HR approval status
-      if (!mgrReviewData.hr_approved_at) {
-        setEvaluationState('hr_pending');
-      } else if (mgrReviewData.employee_acknowledged_at) {
-        setEvaluationState('employee_accepted');
-      } else if (mgrReviewData.employee_rejected_at) {
-        setEvaluationState('employee_rejected');
-      } else {
-        setEvaluationState('hr_approved');
-      }
-
-      // Get goals and ratings
+      // Get KPIs for selected quarter
       const goalsResult = await goalsService.kpis.getByEmployee(
-        empResult.data.id, 
-        cycleResult.data.id, 
-        'approved'
+        employeeId, 
+        currentActiveCycle.id, 
+        'approved',
+        quarter
       );
+      const quarterKpis = (goalsResult.data || []).filter((kpi: any) => kpi.kra_id && kpi.quarter === quarter);
 
       // Get self ratings
       let selfRatings: any[] = [];
@@ -255,26 +267,85 @@ export default function MyRating() {
         selfRatings = selfProgressResult.data || [];
       }
 
+      // Get manager review for selected quarter
+      const mgrReviewsResult = await evaluationService.managerReviews.get(
+        employeeId, 
+        currentActiveCycle.id, 
+        quarter
+      );
+      const mgrReviewData = mgrReviewsResult.data?.find((r: any) => r.quarter === quarter);
+      setManagerReview(mgrReviewData || null);
+
       // Get manager KPI feedback (only if HR approved or employee can see)
       let mgrFeedback: any[] = [];
-      if (mgrReviewData.hr_approved_at || mgrReviewData.status === 'submitted') {
+      if (mgrReviewData && (mgrReviewData.hr_approved_at || mgrReviewData.status === 'submitted')) {
         const mgrFeedbackResult = await evaluationService.kpiManagerFeedback.getByReview(mgrReviewData.id);
         mgrFeedback = mgrFeedbackResult.data || [];
       }
 
-      const combinedGoals: GoalRating[] = (goalsResult.data || []).map((goal: any) => {
+      // Combine KPIs with ratings
+      const combinedGoals: GoalRating[] = quarterKpis.map((goal: any) => {
         const selfRating = selfRatings.find((r: any) => r.goal_id === goal.id);
         const mgrFeedbackItem = mgrFeedback.find((r: any) => r.goal_id === goal.id);
 
         return {
           ...goal,
           self_rating: selfRating?.self_rating || null,
-          manager_rating: mgrReviewData.hr_approved_at ? (mgrFeedbackItem?.rating || null) : null,
-          manager_comments: mgrReviewData.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null
+          manager_rating: mgrReviewData?.hr_approved_at ? (mgrFeedbackItem?.rating || null) : null,
+          manager_comments: mgrReviewData?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null
         };
       });
 
       setGoalRatings(combinedGoals);
+
+      // Calculate KRA ratings from KPI ratings
+      const selfKPIRatings: Record<string, number | null> = {};
+      const managerKPIRatings: Record<string, number | null> = {};
+      
+      combinedGoals.forEach((goal) => {
+        if (goal.kra_id) {
+          selfKPIRatings[goal.id] = goal.self_rating;
+          managerKPIRatings[goal.id] = goal.manager_rating;
+        }
+      });
+
+      // Calculate KRA ratings
+      const calculatedSelfKRARatings = calculateAllKRARatings(
+        quarterKras.map((kra: any) => ({ id: kra.id, weight: kra.weight })),
+        combinedGoals.map((goal) => ({ id: goal.id, kra_id: goal.kra_id || '', weight: goal.weight })),
+        selfKPIRatings
+      );
+
+      const calculatedManagerKRARatings = calculateAllKRARatings(
+        quarterKras.map((kra: any) => ({ id: kra.id, weight: kra.weight })),
+        combinedGoals.map((goal) => ({ id: goal.id, kra_id: goal.kra_id || '', weight: goal.weight })),
+        managerKPIRatings
+      );
+
+      // Set KRA ratings
+      const kraRatingsData: KRARating[] = quarterKras.map((kra: any) => ({
+        id: kra.id,
+        title: kra.title,
+        weight: kra.weight,
+        self_rating: calculatedSelfKRARatings[kra.id] || null,
+        manager_rating: mgrReviewData?.hr_approved_at ? (calculatedManagerKRARatings[kra.id] || null) : null,
+        quarter: kra.quarter || null,
+      }));
+
+      setKraRatings(kraRatingsData);
+
+      // Determine evaluation state after fetching all data
+      if (!mgrReviewData) {
+        setEvaluationState('manager_pending');
+      } else if (!mgrReviewData.hr_approved_at) {
+        setEvaluationState('hr_pending');
+      } else if (mgrReviewData.employee_acknowledged_at) {
+        setEvaluationState('employee_accepted');
+      } else if (mgrReviewData.employee_rejected_at) {
+        setEvaluationState('employee_rejected');
+      } else {
+        setEvaluationState('hr_approved');
+      }
     } catch (error: any) {
       console.error('Error fetching data:', error);
       toast({
@@ -285,7 +356,7 @@ export default function MyRating() {
     } finally {
       setLoading(false);
     }
-  }, [user, selectedQuarter, viewMode, toast]);
+  }, [user, selectedQuarter, viewMode, activeCycleFromContext, activeCycle, currentEmployee, toast]);
 
   const handleAcceptRating = useCallback(async () => {
     if (!managerReview) return;
@@ -369,22 +440,23 @@ export default function MyRating() {
     setSearchParams({ quarter });
   }, [setSearchParams]);
 
-  const handleViewModeChange = useCallback((mode: 'quarterly' | 'year-end') => {
+  const handleViewModeChange = useCallback((mode: 'quarterly' | 'year-end', quarterOverride?: string) => {
     setViewMode(mode);
     if (mode === 'year-end') {
       setSearchParams({ quarter: 'year-end' });
     } else {
-      setSearchParams({ quarter: selectedQuarter });
+      // Use quarterOverride if provided, otherwise use current selectedQuarter
+      setSearchParams({ quarter: quarterOverride || selectedQuarter });
     }
   }, [selectedQuarter, setSearchParams]);
 
   const getRatingLabel = useCallback((value: number | null) => {
     if (!value) return '-';
-    const scale = ratingScales.find(s => s.value === value);
-    return scale ? `${value} - ${scale.name}` : value.toString();
+    const lookupValue = Math.floor(value);
+    const scale = ratingScales.find(s => s.value === lookupValue);
+      return scale ? `${value} - ${scale.name}` : value.toString();
   }, [ratingScales]);
 
-  // Unified tab value: 'q1', 'q2', 'q3', 'q4', or 'year-end'
   const activeTab = useMemo(() => {
     if (viewMode === 'year-end') return 'year-end';
     return `q${selectedQuarter}`;
@@ -394,14 +466,12 @@ export default function MyRating() {
     if (tab === 'year-end') {
       handleViewModeChange('year-end');
     } else {
-      // Extract quarter number from 'q1', 'q2', etc.
       const quarter = tab.replace('q', '');
       setSelectedQuarter(quarter);
-      handleViewModeChange('quarterly');
+      handleViewModeChange('quarterly', quarter);
     }
   }, [handleViewModeChange]);
 
-  // Helper function to format join date
   const formatJoinDate = (date: string | null | undefined) => {
     if (!date) return '-';
     return new Date(date).toLocaleDateString('en-US', {
@@ -775,27 +845,81 @@ export default function MyRating() {
                   </CardTitle>
                   <CardDescription>Q{selectedQuarter} Self-Review</CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  {goalRatings.map((goal) => (
-                    <div key={goal.id} className="p-4 rounded-lg border">
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <Badge variant="outline">{goal.goal_type.toUpperCase()}</Badge>
-                            <span className="text-sm text-muted-foreground">Weight: {goal.weight}%</span>
-                          </div>
-                          <h4 className="font-medium">{goal.title}</h4>
-                        </div>
-                      </div>
-                      
-                      <div className="mt-4">
-                        <div className="p-3 rounded bg-muted/30">
-                          <div className="text-xs text-muted-foreground mb-1">Your Self Rating</div>
-                          <div className="font-medium">{getRatingLabel(goal.self_rating)}</div>
-                        </div>
-                      </div>
+                <CardContent className="space-y-6">
+                  {kraRatings.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <p>No KRAs found for Q{selectedQuarter}</p>
                     </div>
-                  ))}
+                  ) : (
+                    kraRatings.map((kra) => {
+                      const kraKPIs = goalRatings.filter((kpi) => kpi.kra_id === kra.id);
+                      const isExpanded = expandedKRAs[kra.id] || false;
+                      
+                      return (
+                        <Card key={kra.id} className="border-l-4 border-l-card-border">
+                          <CardHeader className="pb-3">
+                            <div className="flex items-start gap-2">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 shrink-0 mt-1"
+                                onClick={() => setExpandedKRAs(prev => ({ ...prev, [kra.id]: !prev[kra.id] }))}
+                              >
+                                {isExpanded ? <ChevronDown className="h-4 w-4 text-[hsl(var(--card-arrow))]" /> : <ChevronRight className="h-4 w-4 text-[hsl(var(--card-arrow))]" />}
+                              </Button>
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Badge variant="outline" className="bg-primary/10">KRA</Badge>
+                                  <span className="text-sm font-medium text-primary">Weight: {kra.weight}%</span>
+                                  <span className="text-sm text-muted-foreground">({kraKPIs.length} KPIs)</span>
+                                </div>
+                                <CardTitle className="text-lg">{kra.title}</CardTitle>
+                              </div>
+                              <div className="text-right">
+                                <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                                  <Calculator className="h-3 w-3" />
+                                  KRA Rating
+                                </div>
+                                <div className="text-xl font-bold text-primary">
+                                  {getRatingLabel(kra.self_rating)}
+                                </div>
+                              </div>
+                            </div>
+                          </CardHeader>
+
+                          {isExpanded && (
+                            <CardContent className="space-y-4">
+                              {/* KPIs under this KRA */}
+                              {kraKPIs.length > 0 && (
+                                <div className="space-y-3">
+                                  {kraKPIs.map((kpi) => (
+                                    <div key={kpi.id} className="p-4 rounded-lg border bg-card">
+                                      <div className="flex items-start justify-between mb-2">
+                                        <div className="flex-1">
+                                          <div className="flex items-center gap-2 mb-1">
+                                            <Badge variant="secondary">KPI</Badge>
+                                            <span className="text-sm text-muted-foreground">Weight: {kpi.weight}%</span>
+                                          </div>
+                                          <h5 className="font-medium">{kpi.title}</h5>
+                                        </div>
+                                      </div>
+                                      
+                                      <div className="mt-3">
+                                        <div className="p-3 rounded bg-muted/30">
+                                          <div className="text-xs text-muted-foreground mb-1">Your Self Rating</div>
+                                          <div className="font-medium">{getRatingLabel(kpi.self_rating)}</div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </CardContent>
+                          )}
+                        </Card>
+                      );
+                    })
+                  )}
                   
                   {selfReview?.overall_comments && (
                     <div className="mt-4 p-4 rounded-lg bg-muted/20">
@@ -812,7 +936,6 @@ export default function MyRating() {
     );
   }
 
-  // Render quarterly content for HR pending / approved / accepted / rejected cases
   const renderQuarterlyContent = () => (
     <>
       {evaluationState === 'hr_pending' && (
@@ -830,28 +953,85 @@ export default function MyRating() {
                 <Target className="h-5 w-5" />
                 Your Self-Evaluation
               </CardTitle>
+              <CardDescription>
+                Your self-evaluation ratings for Q{selectedQuarter}
+              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {goalRatings.map((goal) => (
-                <div key={goal.id} className="p-4 rounded-lg border">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge variant="outline">{goal.goal_type.toUpperCase()}</Badge>
-                        <span className="text-sm text-muted-foreground">Weight: {goal.weight}%</span>
-                      </div>
-                      <h4 className="font-medium">{goal.title}</h4>
-                    </div>
-                  </div>
-                  
-                  <div className="mt-4">
-                    <div className="p-3 rounded bg-muted/30">
-                      <div className="text-xs text-muted-foreground mb-1">Your Self Rating</div>
-                      <div className="font-medium">{getRatingLabel(goal.self_rating)}</div>
-                    </div>
-                  </div>
+            <CardContent className="space-y-6">
+              {kraRatings.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No KRAs found for Q{selectedQuarter}</p>
                 </div>
-              ))}
+              ) : (
+                kraRatings.map((kra) => {
+                  const kraKPIs = goalRatings.filter((kpi) => kpi.kra_id === kra.id);
+                  const isExpanded = expandedKRAs[kra.id] || false;
+                  
+                  return (
+                    <Card key={kra.id} className="border-l-4 border-l-card-border">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-start gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 shrink-0 mt-1"
+                            onClick={() => setExpandedKRAs(prev => ({ ...prev, [kra.id]: !prev[kra.id] }))}
+                          >
+                            {isExpanded ? <ChevronDown className="h-4 w-4 text-[hsl(var(--card-arrow))]" /> : <ChevronRight className="h-4 w-4 text-[hsl(var(--card-arrow))]" />}
+                          </Button>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Badge variant="outline" className="bg-primary/10">KRA</Badge>
+                              <span className="text-sm font-medium text-primary">Weight: {kra.weight}%</span>
+                              <span className="text-sm text-muted-foreground">({kraKPIs.length} KPIs)</span>
+                            </div>
+                            <CardTitle className="text-lg">{kra.title}</CardTitle>
+                          </div>
+                          <div className="text-right">
+                            <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                              <Calculator className="h-3 w-3" />
+                              KRA Rating
+                            </div>
+                            <div className="text-xl font-bold text-primary">
+                              {getRatingLabel(kra.self_rating)}
+                            </div>
+                          </div>
+                        </div>
+                      </CardHeader>
+
+                      {isExpanded && (
+                        <CardContent className="space-y-4">
+                          {/* KPIs under this KRA */}
+                          {kraKPIs.length > 0 && (
+                            <div className="space-y-3">
+                              {kraKPIs.map((kpi) => (
+                                <div key={kpi.id} className="p-4 rounded-lg border bg-card">
+                                  <div className="flex items-start justify-between mb-2">
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <Badge variant="secondary">KPI</Badge>
+                                        <span className="text-sm text-muted-foreground">Weight: {kpi.weight}%</span>
+                                      </div>
+                                      <h5 className="font-medium">{kpi.title}</h5>
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="mt-3">
+                                    <div className="p-3 rounded bg-muted/30">
+                                      <div className="text-xs text-muted-foreground mb-1">Your Self Rating</div>
+                                      <div className="font-medium">{getRatingLabel(kpi.self_rating)}</div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </CardContent>
+                      )}
+                    </Card>
+                  );
+                })
+              )}
             </CardContent>
           </Card>
         </>
@@ -878,48 +1058,115 @@ export default function MyRating() {
             </CardContent>
           </Card>
 
+          {/* KRA and KPI Ratings */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Target className="h-5 w-5" />
-                Goal Ratings
+                KRA & KPI Ratings
               </CardTitle>
+              <CardDescription>
+                Your self-evaluation and manager ratings for Q{selectedQuarter}
+              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {goalRatings.map((goal) => (
-                <div key={goal.id} className="p-4 rounded-lg border">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge variant="outline">{goal.goal_type.toUpperCase()}</Badge>
-                        <span className="text-sm text-muted-foreground">Weight: {goal.weight}%</span>
-                      </div>
-                      <h4 className="font-medium">{goal.title}</h4>
-                    </div>
-                  </div>
-                  
-                  <div className="grid gap-4 sm:grid-cols-2 mt-4">
-                    <div className="p-3 rounded bg-muted/30">
-                      <div className="text-xs text-muted-foreground mb-1">Your Self Rating</div>
-                      <div className="font-medium">{getRatingLabel(goal.self_rating)}</div>
-                    </div>
-                    <div className="p-3 rounded bg-primary/5">
-                      <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
-                      <div className="font-medium">{getRatingLabel(goal.manager_rating)}</div>
-                    </div>
-                  </div>
-
-                  {goal.manager_comments && (
-                    <div className="mt-3 p-3 rounded bg-muted/20">
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                        <MessageSquare className="h-3 w-3" />
-                        Manager Feedback
-                      </div>
-                      <p className="text-sm">{goal.manager_comments}</p>
-                    </div>
-                  )}
+            <CardContent className="space-y-6">
+              {kraRatings.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>No KRAs found for Q{selectedQuarter}</p>
                 </div>
-              ))}
+              ) : (
+                kraRatings.map((kra) => {
+                  const kraKPIs = goalRatings.filter((kpi) => kpi.kra_id === kra.id);
+                  const isExpanded = expandedKRAs[kra.id] || false;
+                  
+                  return (
+                    <Card key={kra.id} className="border-l-4 border-l-card-border">
+                      <CardHeader className="pb-3">
+                        <div className="flex items-start gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 shrink-0 mt-1"
+                            onClick={() => setExpandedKRAs(prev => ({ ...prev, [kra.id]: !prev[kra.id] }))}
+                          >
+                            {isExpanded ? <ChevronDown className="h-4 w-4 text-[hsl(var(--card-arrow))]" /> : <ChevronRight className="h-4 w-4 text-[hsl(var(--card-arrow))]" />}
+                          </Button>
+                          <div className="flex-1 ">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Badge variant="outline" className="bg-primary/10">KRA</Badge>
+                              <span className="text-sm font-medium text-primary">Weight: {kra.weight}%</span>
+                              <span className="text-sm text-muted-foreground">({kraKPIs.length} KPIs)</span>
+                            </div>
+                            <CardTitle className="text-lg">{kra.title}</CardTitle>
+                          </div>
+                          <div className="text-right">
+                            <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                              <Calculator className="h-3 w-3" />
+                              KRA Rating
+                            </div>
+                            <div className="text-right flex flex-col justify-between items-start gap-1">
+                            {kra.manager_rating && (
+                              <div className="text-sm font-normal text-primary mt-1">
+                               <span className="text-right text-sm font-medium"> Manager: </span> <span className="text-right ">{getRatingLabel(kra.manager_rating)}</span>
+                              </div>
+                            )}
+                            <div className="text-sm  font-normal text-primary">
+                              <span className="text-right text-sm font-medium"> Self: </span> <span className="text-right ">{getRatingLabel(kra.self_rating)}</span>
+                            </div>
+                            </div>
+                          </div>
+                        </div>
+                      </CardHeader>
+
+                      {isExpanded && (
+                        <CardContent className="space-y-4">
+                          {/* KPIs under this KRA */}
+                          {kraKPIs.length > 0 && (
+                            <div className="space-y-3">
+                              {kraKPIs.map((kpi) => (
+                                <div key={kpi.id} className="p-4 rounded-lg border bg-card">
+                                  <div className="flex items-start justify-between mb-2">
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <Badge variant="secondary">KPI</Badge>
+                                        <span className="text-sm text-muted-foreground">Weight: {kpi.weight}%</span>
+                                      </div>
+                                      <h5 className="font-medium">{kpi.title}</h5>
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="grid gap-4 sm:grid-cols-2 mt-3">
+                                    <div className="p-3 rounded bg-muted/30">
+                                      <div className="text-xs text-muted-foreground mb-1">Your Self Rating</div>
+                                      <div className="font-medium">{getRatingLabel(kpi.self_rating)}</div>
+                                    </div>
+                                    {kpi.manager_rating && (
+                                      <div className="p-3 rounded bg-primary/5">
+                                        <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
+                                        <div className="font-medium">{getRatingLabel(kpi.manager_rating)}</div>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {kpi.manager_comments && (
+                                    <div className="mt-3 p-3 rounded bg-muted/20">
+                                      <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                                        <MessageSquare className="h-3 w-3" />
+                                        Manager Feedback
+                                      </div>
+                                      <p className="text-sm">{kpi.manager_comments}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </CardContent>
+                      )}
+                    </Card>
+                  );
+                })
+              )}
             </CardContent>
           </Card>
 
@@ -989,7 +1236,7 @@ export default function MyRating() {
     </>
   );
 
-  // Case: HR pending or HR approved or employee accepted/rejected
+  // Case: HR pending or HR approved or employee accepted/rejected (quarterly mode only - year-end handled by early return)
   return (
     <MainLayout>
       <div className="space-y-6 max-w-4xl mx-auto">
@@ -997,32 +1244,18 @@ export default function MyRating() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">My Rating</h1>
             <p className="text-muted-foreground">
-              {viewMode === 'year-end' 
-                ? 'Year-End Performance Rating'
-                : managerReview?.released_at 
-                  ? `Released on ${new Date(managerReview.released_at).toLocaleDateString()}`
-                  : `Q${selectedQuarter} Performance Rating`}
+              {managerReview?.released_at 
+                ? `Released on ${new Date(managerReview.released_at).toLocaleDateString()}`
+                : `Q${selectedQuarter} Performance Rating`}
             </p>
           </div>
-          {viewMode === 'quarterly' && evaluationState === 'employee_accepted' && (
+          {evaluationState === 'employee_accepted' && (
             <Badge variant="outline" className="bg-green-50">
               <CheckCircle className="mr-1 h-3 w-3" />
               Accepted
             </Badge>
           )}
-          {viewMode === 'quarterly' && evaluationState === 'employee_rejected' && (
-            <Badge variant="outline" className="bg-red-50">
-              <XCircle className="mr-1 h-3 w-3" />
-              Rejected
-            </Badge>
-          )}
-          {viewMode === 'year-end' && yearEndState === 'employee_accepted' && (
-            <Badge variant="outline" className="bg-green-50">
-              <CheckCircle className="mr-1 h-3 w-3" />
-              Accepted
-            </Badge>
-          )}
-          {viewMode === 'year-end' && yearEndState === 'employee_rejected' && (
+          {evaluationState === 'employee_rejected' && (
             <Badge variant="outline" className="bg-red-50">
               <XCircle className="mr-1 h-3 w-3" />
               Rejected
@@ -1085,7 +1318,8 @@ export default function MyRating() {
             <Button 
               onClick={handleRejectRating} 
               disabled={!rejectionReason.trim() || saving}
-              variant="destructive"
+              // className="bg-blue-600 hover:bg-blue-700"
+              variant="primary"
             >
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Submit

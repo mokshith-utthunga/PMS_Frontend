@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "./contexts/AuthContext";
+import { ActiveCycleProvider } from "./contexts/ActiveCycleContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
@@ -36,7 +37,18 @@ import HRReview from "./pages/admin/HRReview";
 import SSOCallback from "./pages/SSOCallback";
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+// Configure React Query with default options for active-cycle query
+// This ensures all components using ['active-cycle'] queryKey share the same cached data
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30 * 60 * 1000, // 30 minutes - data is fresh for 30 minutes
+      gcTime: 60 * 60 * 1000, // 1 hour - keep in cache for 1 hour (gcTime replaces cacheTime in v5)
+      refetchOnWindowFocus: false, // Don't refetch on window focus
+      refetchOnMount: false, // Don't refetch on mount if data exists
+    },
+  },
+});
 
 const App = () => (
   <BrowserRouter>
@@ -44,7 +56,8 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <AuthProvider>
-          <Routes>
+          <ActiveCycleProvider>
+            <Routes>
             {/* Public routes */}
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/auth" element={<Auth />} />
@@ -58,9 +71,9 @@ const App = () => (
             <Route path="/my-rating" element={<ProtectedRoute><MyRating /></ProtectedRoute>} />
             
             {/* Manager routes */}
-            <Route path="/team" element={<ProtectedRoute requiredRoles={['manager', 'dept_head']}><Team /></ProtectedRoute>} />
-            <Route path="/team/:employeeId/goals" element={<ProtectedRoute requiredRoles={['manager', 'dept_head']}><TeamMemberGoals /></ProtectedRoute>} />
-            <Route path="/team/:employeeId/evaluate" element={<ProtectedRoute requiredRoles={['manager', 'dept_head']}><ManagerEvaluation /></ProtectedRoute>} />
+            <Route path="/team" element={<ProtectedRoute requiredRoles={['manager', 'dept_head', 'hr_admin', 'hrbp', 'system_admin']}><Team /></ProtectedRoute>} />
+            <Route path="/team/:employeeId/goals" element={<ProtectedRoute requiredRoles={['manager', 'dept_head', 'hr_admin', 'hrbp', 'system_admin']}><TeamMemberGoals /></ProtectedRoute>} />
+            <Route path="/team/:employeeId/evaluate" element={<ProtectedRoute requiredRoles={['manager', 'dept_head', 'hr_admin', 'hrbp', 'system_admin']}><ManagerEvaluation /></ProtectedRoute>} />
             
             {/* Calibration routes */}
             <Route path="/calibration" element={<ProtectedRoute requiredRoles={['hr_admin', 'hrbp']}><CalibrationList /></ProtectedRoute>} />
@@ -99,6 +112,7 @@ const App = () => (
             {/* 404 */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </ActiveCycleProvider>
         </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>

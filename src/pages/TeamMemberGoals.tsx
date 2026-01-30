@@ -13,9 +13,8 @@ import { useTeamMemberGoals, useGoalApproval } from '@/hooks';
 import { useQuarterFromUrl } from '@/hooks/useQuarterFromUrl';
 import { formatQuarterLabel, getQuarterStartDateFromCycle, getQuarterEndDateFromCycle, formatDateShort, type CycleWithQuarterDates } from '@/utils/quarterHelpers';
 import { TOTAL_WEIGHT } from '@/utils/constants';
-import { useQuery } from '@tanstack/react-query';
-import { cycleService } from '@/services';
-import type { GoalsQuarterlyCycle, ActiveCycleResponse } from '@/services/cycle.service';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import type { GoalsQuarterlyCycle } from '@/services/cycle.service';
 import { TeamMemberHeader } from '@/components/goals/TeamMemberHeader';
 import { TeamMemberKRACard } from '@/components/goals/TeamMemberKRACard';
 import { TeamMemberBonusSection } from '@/components/goals/TeamMemberBonusSection';
@@ -32,18 +31,9 @@ interface ReturnDialogState {
 export default function TeamMemberGoals() {
   const { employeeId } = useParams();
   
-  // Fetch active cycle with quarterly cycles data
-  const { data: activeCycleData, isLoading: isLoadingCycle } = useQuery({
-    queryKey: ['active-cycle'],
-    queryFn: async () => {
-      // Returns full response: { data: cycle, quarterly_cycles: [...], goals_quarterly_cycles: [...], dashboard: {...} }
-      const result = await cycleService.getActive();
-      return result;
-    },
-  });
-  
-  const activeCycle = (activeCycleData as ActiveCycleResponse | undefined)?.data || null;
-  const goalsQuarterlyCycles = ((activeCycleData as ActiveCycleResponse | undefined)?.goals_quarterly_cycles || []) as GoalsQuarterlyCycle[];
+  // Get active cycle data from context (fetched once at app initialization)
+  const { activeCycle, goalsQuarterlyCycles: goalsQuarterlyCyclesFromContext, isLoading: isLoadingCycle } = useActiveCycle();
+  const goalsQuarterlyCycles = (goalsQuarterlyCyclesFromContext || []) as GoalsQuarterlyCycle[];
   
   // Helper functions for goal submission dates
   const getGoalSubmissionStartDate = useCallback((quarter: number): Date | null => {
@@ -88,20 +78,16 @@ export default function TeamMemberGoals() {
     const startDate = new Date(goalsCycle.goal_submission_start_date);
     const now = new Date();
     
-    // Set both to start of day for accurate comparison
     startDate.setHours(0, 0, 0, 0);
     now.setHours(0, 0, 0, 0);
     
     return now >= startDate;
   }, [goalsQuarterlyCycles]);
   
-  // URL-based quarter handling
   const { quarter, setQuarter, isValidQuarter } = useQuarterFromUrl();
   
-  // Available quarters (1-4) - managers can view all quarters
   const availableQuarters: (1 | 2 | 3 | 4)[] = [1, 2, 3, 4];
   
-  // Find the first quarter that has started
   const firstStartedQuarter = useMemo(() => {
     for (const q of availableQuarters) {
       if (hasGoalSubmissionStarted(q)) {
@@ -139,7 +125,6 @@ export default function TeamMemberGoals() {
     id: null,
   });
 
-  // Goal approval operations
   const approval = useGoalApproval({
     employee,
     kras,
@@ -149,7 +134,6 @@ export default function TeamMemberGoals() {
     onSuccess: refetch,
   });
 
-  // Computed values
   const submittedCount = useMemo(() => 
     kras.filter(k => k.status === 'submitted').length +
     kpis.filter(k => k.status === 'submitted').length +
@@ -186,7 +170,6 @@ export default function TeamMemberGoals() {
     );
   }
 
-  // Employee not found
   if (!employee) {
     return (
       <MainLayout>
@@ -306,9 +289,9 @@ export default function TeamMemberGoals() {
                       </span>
                     </div>
                     <div className="flex gap-4 text-sm">
-                      <span>
+                      {/* <span>
                         Submitted: <Badge variant="default">{kras.filter(k => k.status === 'submitted').length} KRAs</Badge>
-                      </span>
+                      </span> */}
                       <span>
                         Approved: <Badge variant="outline">{kras.filter(k => k.status === 'approved').length} KRAs</Badge>
                       </span>

@@ -1,7 +1,8 @@
 // Custom hook for Team Member Goals data fetching
 import { useState, useEffect, useCallback } from 'react';
-import { employeeService, cycleService, goalsService } from '@/services';
+import { employeeService, goalsService } from '@/services';
 import { logError } from '@/errors';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 import type { Employee, KRA, Goal, BonusKRA, BonusKPI } from '@/types';
 
 export interface TeamMemberGoalsData {
@@ -14,6 +15,9 @@ export interface TeamMemberGoalsData {
 }
 
 export function useTeamMemberGoals(employeeId: string | undefined, quarter?: number | null) {
+  // Get active cycle from context (fetched once at app initialization)
+  const { activeCycle: activeCycleFromContext } = useActiveCycle();
+  
   const [data, setData] = useState<TeamMemberGoalsData>({
     employee: null,
     kras: [],
@@ -34,14 +38,14 @@ export function useTeamMemberGoals(employeeId: string | undefined, quarter?: num
         return;
       }
 
-      // Fetch active cycle
-      const cycleResult = await cycleService.getActive();
-      if (!cycleResult.data) {
+      // Use active cycle from context (already fetched at app initialization)
+      const activeCycle = activeCycleFromContext;
+      if (!activeCycle) {
         setData(prev => ({ ...prev, employee: empResult.data, loading: false }));
         return;
       }
 
-      const cycleId = cycleResult.data.id;
+      const cycleId = activeCycle.id;
 
       // Fetch all data in parallel with quarter filter
       const [krasResult, kpisResult] = await Promise.all([
@@ -80,7 +84,7 @@ export function useTeamMemberGoals(employeeId: string | undefined, quarter?: num
       logError(error, 'useTeamMemberGoals');
       setData(prev => ({ ...prev, loading: false }));
     }
-  }, [employeeId, quarter]);
+  }, [employeeId, quarter, activeCycleFromContext]);
 
   useEffect(() => {
     fetchData();

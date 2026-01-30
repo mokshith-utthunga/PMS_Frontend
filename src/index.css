@@ -20,6 +20,11 @@
     --primary: 222.2 47.4% 11.2%;
     --primary-foreground: 210 40% 98%;
 
+    --submit-button:221.3,97.5%,53.5%;
+
+    --status-success:139.2, 100%, 95.1%;
+    --status-success-foreground:140.9, 29.1%, 84.5%;
+
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
 
@@ -64,6 +69,9 @@
     --card-border: 217.5 40% 52.9%;
     --card-arrow:217.4 39.9% 37.8%;
 
+    --submit-button:221.3,97.5%,53.5%;
+
+    --status-success:139.2, 100%, 95.1%;
 
     --popover: 222.2 84% 4.9%;
     --popover-foreground: 210 40% 98%;

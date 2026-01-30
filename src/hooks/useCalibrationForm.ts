@@ -1,9 +1,11 @@
 // Custom hook for Calibration Form data and operations
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { cycleService, settingsService, calibrationService, employeeService, evaluationService } from '@/services';
+import { settingsService, calibrationService, evaluationService } from '@/services';
 import { toasts } from '@/toasts';
 import { logError } from '@/errors';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import { useCurrentEmployee } from './useCurrentEmployee';
 import type { PerformanceCycle, RatingScale } from '@/types';
 
 export interface QuotaRule {
@@ -23,8 +25,11 @@ export interface CalibrationFormData {
 }
 
 export function useCalibrationFormData() {
+  // Get active cycle from context (fetched once at app initialization)
+  const { activeCycle: activeCycleFromContext } = useActiveCycle();
+  
   const [data, setData] = useState<CalibrationFormData>({
-    activeCycle: null,
+    activeCycle: activeCycleFromContext,
     departments: [],
     grades: [],
     businessUnits: [],
@@ -34,11 +39,19 @@ export function useCalibrationFormData() {
     loading: true,
   });
 
+  // Update activeCycle when context data changes
+  useEffect(() => {
+    if (activeCycleFromContext) {
+      setData(prev => ({ ...prev, activeCycle: activeCycleFromContext }));
+    }
+  }, [activeCycleFromContext]);
+
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const cycleResult = await cycleService.getActive();
-        if (!cycleResult.data) {
+        // Use active cycle from context (already fetched at app initialization)
+        const activeCycle = activeCycleFromContext;
+        if (!activeCycle) {
           setData(prev => ({ ...prev, loading: false }));
           return;
         }
@@ -67,7 +80,7 @@ export function useCalibrationFormData() {
         });
 
         setData({
-          activeCycle: cycleResult.data,
+          activeCycle: activeCycle,
           departments: deptResult.data?.map(d => d.name) || [],
           grades: gradeResult.data?.map(g => g.name) || [],
           businessUnits: buResult.data?.map(b => b.name) || [],
@@ -83,7 +96,7 @@ export function useCalibrationFormData() {
     };
 
     fetchData();
-  }, []);
+  }, [activeCycleFromContext]);
 
   return data;
 }
@@ -95,6 +108,8 @@ export function useCalibrationFormOperations(
   departmentQuotas: Record<string, Record<number, number>>
 ) {
   const navigate = useNavigate();
+  // Get current employee from cached hook (fetched once at app initialization)
+  const { employee: currentEmployee } = useCurrentEmployee();
   const [saving, setSaving] = useState(false);
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [quotaRules, setQuotaRules] = useState<QuotaRule[]>([]);
@@ -178,7 +193,11 @@ export function useCalibrationFormOperations(
 
       setSaving(true);
       try {
-        const empResult = await employeeService.getMe();
+        if (!currentEmployee) {
+          toasts.error('Error', 'Employee data not available');
+          setSaving(false);
+          return;
+        }
 
         const filters: Record<string, string> = {};
         if (formData.department) filters.department = formData.department;
@@ -191,7 +210,7 @@ export function useCalibrationFormOperations(
           cycle_id: activeCycle.id,
           filters,
           status: 'draft',
-          created_by: empResult.data?.id || null,
+          created_by: currentEmployee.id,
         });
 
         // Create quota rules

@@ -1,6 +1,8 @@
-import { useAuth } from '@/contexts/AuthContext';
 import { useQuery } from '@tanstack/react-query';
-import { employeeService, cycleService, goalsService, evaluationService } from '@/services';
+import { useAuth } from '@/contexts/AuthContext';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import { useCurrentEmployee } from '@/hooks/useCurrentEmployee';
+import { employeeService, goalsService, evaluationService } from '@/services';
 import MainLayout from '@/components/layout/MainLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -19,32 +21,11 @@ export default function Dashboard() {
   const isManager = hasAnyRole(['manager', 'dept_head']);
   const isHR = hasAnyRole(['hr_admin', 'hrbp']);
 
-  // Fetch current employee
-  const { data: employee } = useQuery({
-    queryKey: ['my-employee'],
-    queryFn: () => employeeService.getMe().then(r => r.data).catch(() => null),
-    enabled: !!user?.id
-  });
+  // Get current employee from cached hook (fetched once at app initialization)
+  const { employee } = useCurrentEmployee();
 
-  // Fetch active cycle with quarterly cycles data (cached and memorized)
-  // This single API call includes:
-  // - Active cycle data
-  // - Quarterly cycles (quarterly_cycles table)
-  // - Goals quarterly cycles (goals_quarterly_cycles table)
-  // All data is cached for 5 minutes to reduce API calls
-  const { data: activeCycleData } = useQuery({
-    queryKey: ['active-cycle'],
-    queryFn: async () => {
-      const result = await cycleService.getActive();
-      return result.data;
-    },
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
-    cacheTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
-  });
-  
-  const activeCycle = activeCycleData?.data || null;
-  const quarterlyCycles = activeCycleData?.quarterly_cycles || [];
-  const goalsQuarterlyCycles = activeCycleData?.goals_quarterly_cycles || [];
+  // Get active cycle data from context (fetched once at app initialization)
+  const { activeCycle, quarterlyCycles, goalsQuarterlyCycles } = useActiveCycle();
 
   // Fetch my goals
   const { data: goals = [] } = useQuery({

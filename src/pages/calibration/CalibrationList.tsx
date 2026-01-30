@@ -9,8 +9,10 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { calibrationService, cycleService, settingsService } from '@/services';
+import { calibrationService, settingsService } from '@/services';
 import { useToast } from '@/hooks/use-toast';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import type { CalibrationGroup as BaseCalibrationGroup } from '@/types';
 import { 
   Loader2, 
   Users,
@@ -22,13 +24,9 @@ import {
   AlertCircle
 } from 'lucide-react';
 
-interface CalibrationGroup {
-  id: string;
-  name: string;
-  description: string | null;
-  status: string;
-  filters: any;
-  cycle_id: string;
+interface CalibrationGroup extends BaseCalibrationGroup {
+  description?: string | null;
+  filters?: any;
   cycle_name?: string;
   employee_count?: number;
 }
@@ -47,10 +45,14 @@ interface DepartmentOverride {
 
 export default function CalibrationList() {
   const { toast } = useToast();
+  
+  // Get active cycle from context (fetched once at app initialization)
+  const { activeCycle: activeCycleFromContext } = useActiveCycle();
+  
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [groups, setGroups] = useState<CalibrationGroup[]>([]);
-  const [activeCycle, setActiveCycle] = useState<any>(null);
+  const [activeCycle, setActiveCycle] = useState<any>(activeCycleFromContext);
   
   // Settings state
   const [isEnabled, setIsEnabled] = useState(true);
@@ -60,9 +62,16 @@ export default function CalibrationList() {
   const [ratingScales, setRatingScales] = useState<any[]>([]);
   const [newDepartment, setNewDepartment] = useState('');
 
+  // Update activeCycle when context data changes
+  useEffect(() => {
+    if (activeCycleFromContext) {
+      setActiveCycle(activeCycleFromContext);
+    }
+  }, [activeCycleFromContext]);
+
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [activeCycleFromContext]);
 
   const fetchData = async () => {
     try {
@@ -73,10 +82,10 @@ export default function CalibrationList() {
         setIsEnabled(settingsResult.data.is_enabled);
       }
 
-      // Get active cycle
-      const cycleResult = await cycleService.getActive();
-
-      setActiveCycle(cycleResult.data);
+      // Use active cycle from context (already fetched at app initialization)
+      if (activeCycleFromContext) {
+        setActiveCycle(activeCycleFromContext);
+      }
 
       // Get calibration groups with counts
       const groupsResult = await calibrationService.groups.getAll();

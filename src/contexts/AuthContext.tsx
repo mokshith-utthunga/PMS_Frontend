@@ -1,5 +1,6 @@
 // Authentication Context - Simple email/password auth
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { clearAllCacheFromLocalStorage } from '@/utils/localStorageCache';
 
 type AppRole = 'employee' | 'manager' | 'dept_head' | 'hr_admin' | 'hrbp' | 'system_admin';
 
@@ -138,6 +139,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // Ignore logout errors
     }
+    
+    // Clear cached data from localStorage on logout
+    clearAllCacheFromLocalStorage();
+    
+    // Also clear all localStorage (in case there are other items)
+    try {
+      localStorage.clear();
+    } catch (e) {
+      console.warn('Failed to clear localStorage on logout:', e);
+    }
+    
     setUser(null);
     setRoles([]);
   };

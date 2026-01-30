@@ -1,8 +1,10 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { employeeService, cycleService, goalsService, evaluationService, settingsService } from '@/services';
+import { goalsService, evaluationService, settingsService } from '@/services';
 import { logError } from '@/errors';
 import { parseNumericTarget } from '@/components/evaluation/AchievementSlider';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import { useCurrentEmployee } from './useCurrentEmployee';
 import type { KRA, Goal, PerformanceCycle, RatingScale } from '@/types';
 import type { QuarterlySelfReviewData, GoalSelfRatingData } from '@/services/evaluation.service';
 import type { QuarterlyCycle } from '@/services/cycle.service';
@@ -37,10 +39,15 @@ export interface EvaluationsData {
 }
 
 export function useEvaluationsData(userId: string | undefined, selectedQuarter?: number | null) {
+  // Get active cycle data from context (fetched once at app initialization)
+  const { activeCycle: activeCycleFromContext, quarterlyCycles: quarterlyCyclesFromContext } = useActiveCycle();
+  // Get current employee from cached hook (fetched once at app initialization)
+  const { employee: currentEmployee } = useCurrentEmployee();
+  
   const [data, setData] = useState<EvaluationsData>({
-    employeeId: null,
-    activeCycle: null,
-    quarterlyCycles: [],
+    employeeId: currentEmployee?.id || null,
+    activeCycle: activeCycleFromContext,
+    quarterlyCycles: (quarterlyCyclesFromContext || []) as QuarterlyCycle[],
     kras: [],
     kpis: [],
     ratingScales: [],
@@ -52,28 +59,35 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
     latePermissions: {},
   });
 
+  // Update activeCycle, quarterlyCycles, and employee when context data changes
+  useEffect(() => {
+    if (activeCycleFromContext || quarterlyCyclesFromContext) {
+      setData(prev => ({
+        ...prev,
+        activeCycle: activeCycleFromContext || prev.activeCycle,
+        quarterlyCycles: (quarterlyCyclesFromContext || []) as QuarterlyCycle[],
+      }));
+    }
+    if (currentEmployee) {
+      setData(prev => ({ ...prev, employeeId: currentEmployee.id }));
+    }
+  }, [activeCycleFromContext, quarterlyCyclesFromContext, currentEmployee]);
+
   const fetchData = useCallback(async () => {
-    if (!userId) return;
+    if (!userId || !currentEmployee) return;
 
     try {
-      // Get employee
-      const empResult = await employeeService.getMe();
-      if (!empResult.data) {
-        setData(prev => ({ ...prev, loading: false }));
-        return;
-      }
+      const employeeId = currentEmployee.id;
 
-      const employeeId = empResult.data.id;
-
-      // Get active cycle (includes quarterly_cycles and goals_quarterly_cycles)
-      const cycleResult = await cycleService.getActive();
-      if (!cycleResult.data) {
+      // Use active cycle from context (already fetched at app initialization)
+      const activeCycle = activeCycleFromContext;
+      if (!activeCycle) {
         setData(prev => ({ ...prev, employeeId, loading: false }));
         return;
       }
 
-      const cycleId = cycleResult.data.id;
-      const quarterlyCycles = (cycleResult.quarterly_cycles || []) as QuarterlyCycle[];
+      const cycleId = activeCycle.id;
+      const quarterlyCycles = (quarterlyCyclesFromContext || []) as QuarterlyCycle[];
 
       // Fetch base data in parallel - get scales, self reviews, and quarter-specific goals
       const [scalesResult, selfReviewsResult] = await Promise.all([
@@ -180,7 +194,7 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
 
       setData({
         employeeId,
-        activeCycle: cycleResult.data,
+        activeCycle: activeCycle,
         quarterlyCycles,
         kras: allKras,
         kpis: allKpis,
@@ -196,7 +210,7 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
       logError(error, 'useEvaluationsData');
       setData(prev => ({ ...prev, loading: false }));
     }
-  }, [userId]);
+  }, [userId, selectedQuarter, activeCycleFromContext, quarterlyCyclesFromContext, currentEmployee]);
 
   useEffect(() => {
     fetchData();

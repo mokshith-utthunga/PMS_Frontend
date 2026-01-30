@@ -11,10 +11,7 @@ interface CalibrationDisplayProps {
   className?: string;
 }
 
-/**
- * Calculate rating from calibration rules based on achieved value
- * This is the core function for deriving KPI rating from calibration
- */
+
 export function calculateRatingFromCalibration(
   achievedValue: number | null | undefined,
   calibration: CalibrationRule[] | null | undefined
@@ -47,7 +44,6 @@ export function CalibrationDisplay({
     return null;
   }
 
-  // Sort by threshold descending
   const sortedRules = [...calibration].sort((a, b) => b.threshold - a.threshold);
 
   // Find current rating based on achieved value
@@ -131,19 +127,24 @@ export function CalibrationDisplay({
       default: return '';
     }
   };
+  const getRatingBorderColor = (rating: number) => {
+    switch (rating) {
+      case 5: return '#9333ea'; // purple-600
+      case 4: return '#16a34a'; // green-600
+      case 3: return '#2563eb'; // blue-600
+      case 2: return '#ea580c'; // orange-600
+      case 1: return '#dc2626'; // red-600
+      default: return 'transparent';
+    }
+  };
 
-  // Check if the current achievement falls in a specific range
   const isCurrentRange = (desc: { range: string; rating: number; isFallback?: boolean }) => {
     if (achievedValue === null || achievedValue === undefined || currentRating === null) return false;
     
-    // If it's a fallback and we didn't match any threshold
     if (desc.isFallback && matchedThreshold === null) return true;
     
-    // Otherwise check if rating matches and it's not fallback
     if (!desc.isFallback && currentRating === desc.rating) {
-      // Make sure this is the correct range by checking the threshold
       if (matchedThreshold !== null) {
-        // Check if the range string contains the matched threshold
         return desc.range.includes(`≥ ${matchedThreshold}`);
       }
     }
@@ -155,20 +156,19 @@ export function CalibrationDisplay({
     <Card className={className}>
       <CardHeader>
         <CardTitle className="text-base">Calibration Scale</CardTitle>
-        <CardDescription>
+        <CardDescription className='flex justify-between items-center'>
           Rating thresholds for this KPI.
           {targetValue && (
             <span className="block mt-1">Target: <strong>{targetValue}</strong></span>
           )}
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        {/* Achievement result */}
-        {achievedValue !== null && achievedValue !== undefined && currentRating !== null && (
+      <CardContent   >
+        {/* {achievedValue !== null && achievedValue !== undefined && currentRating !== null && (
           <div className="mb-4 p-3 rounded-lg bg-primary/5 border border-primary/20">
             <div className="text-sm">
               <span className="text-muted-foreground">Your achievement: </span>
-              <span className="font-bold">{achievedValue}{metricType === 'percentage' ? '%' : ''}</span>
+              <span className="font-medium">{achievedValue && achievedValue > 0 ? achievedValue.toFixed(2) : 0}{metricType === 'percentage' ? '%' : ''}</span>
             </div>
             <div className="mt-1 flex items-center gap-2">
               <span className="text-sm text-muted-foreground">Rating: </span>
@@ -180,23 +180,28 @@ export function CalibrationDisplay({
               )}
             </div>
           </div>
-        )}
+        )} */}
 
         {/* Range breakdown */}
-        <div className="space-y-2">
+        <div className='space-y-2' >
           <div className="text-xs font-medium text-muted-foreground mb-2">Rating Ranges</div>
-          {rangeDescriptions.map((desc, index) => (
+          <div className='flex flex-row justify-between gap-2 items-center '>
+          {rangeDescriptions.map((desc, index) => {
+            const isCurrent = isCurrentRange(desc)
+            const ratingColor = getRatingColor(desc.rating);
+            return(
             <div
               key={index}
-              className={`flex items-center justify-between p-2 rounded-md text-sm ${
+              className={`flex items-center justify-start gap-2 rounded-md text-sm p-1 ${
                 isCurrentRange(desc) 
-                  ? 'bg-primary/10 border border-primary ring-1 ring-primary/20' 
-                  : 'bg-muted/50'
+                  ? `${getRatingColor(desc.rating)} border-2 `
+                  : 'bg-white/50 border'
               }`}
+              style={isCurrentRange(desc)?{ borderColor:  getRatingBorderColor(desc.rating) }:undefined}
               role="row"
               aria-label={`Achievement ${desc.range} gets rating ${desc.rating}`}
             >
-              <span className={`font-mono ${desc.isFallback ? 'text-muted-foreground italic' : ''}`}>
+              <span className={`text-xs font-mono ${desc.isFallback ? 'text-muted-foreground italic' : ''}`}>
                 {desc.range}
                 {desc.isFallback && <span className="text-xs ml-1">(fallback)</span>}
               </span>
@@ -204,13 +209,12 @@ export function CalibrationDisplay({
                 {desc.rating}
               </Badge>
             </div>
-          ))}
+            )
+})}
+          </div>
         </div>
         
-        <p className="text-xs text-muted-foreground mt-4">
-          <strong>How it works:</strong> Ratings are determined by finding the highest threshold that your achievement meets or exceeds (≥). 
-          If your achievement is below all thresholds, the lowest defined rating is applied.
-        </p>
+
       </CardContent>
     </Card>
   );

@@ -19,9 +19,9 @@ interface KRACardProps {
   onDeleteKPI: (id: string) => void;
 }
 
-const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline' | 'statusSuccess'> = {
   draft: 'secondary',
-  submitted: 'default',
+  submitted: 'statusSuccess',
   approved: 'outline',
   returned: 'destructive',
   locked: 'outline',
@@ -80,7 +80,7 @@ export function KRACard({
   };
 
   return (
-    <Card className="border-l-4 border-l-primary">
+    <Card className="border-l-4 border-l-card-border">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-2 flex-1">
@@ -93,10 +93,13 @@ export function KRACard({
               {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </Button>
             <div className="flex-1">
-              <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <Badge variant="outline" className="bg-primary/10">KRA</Badge>
-                <Badge variant={statusColors[kra.status]}>{kra.status}</Badge>
+                
                 <span className="text-sm font-medium text-primary">Weight: {kra.weight}%</span>
+                </div>
+                <div><Badge variant={statusColors[kra.status]}>{kra.status}</Badge></div>
               </div>
               <CardTitle className="text-lg">{kra.title}</CardTitle>
               {kra.description && (
@@ -136,7 +139,7 @@ export function KRACard({
                 {totalKPIWeight}% / 100%
               </span>
             </div>
-            <Progress value={totalKPIWeight} className="h-2" />
+            <Progress value={totalKPIWeight} className="h-2 [&>div]:bg-[#00562c]" />
             {!isKPIWeightValid && kpis.length > 0 && (
               <p className="text-xs text-muted-foreground mt-1">
                 {totalKPIWeight < 100
@@ -166,9 +169,9 @@ export function KRACard({
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex-1">
+                        <div className="flex justify-between items-center">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <Badge variant="secondary" className="text-xs">KPI</Badge>
-                          <Badge variant={statusColors[kpi.status]} className="text-xs">{kpi.status}</Badge>
                           <span className="text-xs text-muted-foreground">Weight: {kpi.weight}%</span>
                           {hasCalibration && (
                             <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400">
@@ -176,6 +179,8 @@ export function KRACard({
                               Calibrated
                             </Badge>
                           )}
+                          </div>
+                          <div><Badge variant={statusColors[kpi.status]}>{kpi.status}</Badge></div>
                         </div>
                         <p className="font-medium text-sm">{kpi.title}</p>
                         {kpi.description && (

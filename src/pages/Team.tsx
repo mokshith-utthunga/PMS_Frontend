@@ -6,9 +6,13 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { employeeService, cycleService, goalsService, evaluationService } from '@/services';
+import { employeeService, goalsService, evaluationService, delegationService } from '@/services';
 import type { QuarterlyCycle } from '@/services/cycle.service';
 import { useAuth } from '@/contexts/AuthContext';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import { useCurrentEmployee } from '@/hooks/useCurrentEmployee';
+import { DelegateButton } from '@/components/team/DelegateButton';
+import { getCurrentQuarter } from '@/lib/evaluationPeriods';
 import { Link } from 'react-router-dom';
 import { 
   Users, 
@@ -20,7 +24,8 @@ import {
   Calendar,
   Lock,
   Clock,
-  CheckCircle2
+  CheckCircle2,
+  UserPlus
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
@@ -47,6 +52,19 @@ interface DirectReport {
   q2: QuarterlyStatus;
   q3: QuarterlyStatus;
   q4: QuarterlyStatus;
+  delegations?: Record<number, {
+    id: string;
+    delegate_name: string;
+    delegate_email: string;
+    quarter: number;
+  }>;
+  isDelegatedToMe?: boolean; 
+  ReportsCount?: number; // True if this employee is delegated to current user
+  delegatedBy?: {
+    manager_name: string;
+    manager_email: string;
+    quarter: number;
+  } | null; // Info about who delegated this employee to current user
 }
 
 // Helper function to get initials from name
@@ -61,13 +79,19 @@ const getInitials = (report: DirectReport): string => {
   return '??';
 };
 
-// Helper function to get display name
 const getDisplayName = (report: DirectReport): string => {
   return report.full_name || 'Unknown';
 };
 
+const getEmailUsername = (email: string | null | undefined): string => {
+  if (!email) return '';
+  const atIndex = email.indexOf('@');
+  return atIndex > 0 ? email.substring(0, atIndex) : email;
+};
+
 interface DashboardCounts {
   direct_reports_count: number;
+  delegated_count: number;
   goals_pending_approval: number;
   evaluations_pending: number;
   quarterly_pending: number;
@@ -78,49 +102,157 @@ interface DashboardCounts {
 export default function Team() {
   const { user, hasAnyRole } = useAuth();
   const isHR = hasAnyRole(['hr_admin', 'hrbp', 'system_admin']);
+  
+  const { activeCycle: activeCycleFromContext, quarterlyCycles: quarterlyCyclesFromContext, dashboard: dashboardFromContext } = useActiveCycle();
+  const { employee: currentEmployee, isLoading: isLoadingEmployee } = useCurrentEmployee();
+  
   const [loading, setLoading] = useState(true);
   const [directReports, setDirectReports] = useState<DirectReport[]>([]);
-  const [managerId, setManagerId] = useState<string | null>(null);
-  const [activeCycle, setActiveCycle] = useState<any>(null);
-  const [quarterlyCycles, setQuarterlyCycles] = useState<QuarterlyCycle[]>([]);
-  const [dashboardCounts, setDashboardCounts] = useState<DashboardCounts | null>(null);
+  const [managerId, setManagerId] = useState<string | null>(currentEmployee?.id || null);
+  const [activeCycle, setActiveCycle] = useState<any>(activeCycleFromContext);
+  const [quarterlyCycles, setQuarterlyCycles] = useState<QuarterlyCycle[]>((quarterlyCyclesFromContext || []) as QuarterlyCycle[]);
+  const [dashboardCounts, setDashboardCounts] = useState<DashboardCounts | null>(dashboardFromContext as DashboardCounts | null);
+
+  // Calculate current quarter based on active cycle
+  const currentQuarter = getCurrentQuarter(activeCycleFromContext, quarterlyCyclesFromContext);
+
+  // Update managerId when employee data changes
+  useEffect(() => {
+    if (currentEmployee) {
+      setManagerId(currentEmployee.id);
+    }
+  }, [currentEmployee]);
 
   useEffect(() => {
-    fetchTeamData();
-  }, [user]);
+    // Wait for employee to load before fetching team data
+    if (!isLoadingEmployee && user) {
+      fetchTeamData();
+    }
+  }, [user, currentEmployee, isLoadingEmployee]);
 
   const fetchTeamData = async () => {
-    if (!user) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
 
-    try {
-      // Get current user's employee record
-      const managerResult = await employeeService.getMe();
 
-      if (!managerResult.data) {
+    if (!currentEmployee) {
+      if (isHR) {
+        setDirectReports([]);
         setLoading(false);
         return;
       }
+      setLoading(false);
+      return;
+    }
 
-      setManagerId(managerResult.data.id);
 
-      // Get active cycle with dashboard counts from API
-      const cycleResult = await cycleService.getActive();
-      setActiveCycle(cycleResult.data);
-      setQuarterlyCycles((cycleResult.quarterly_cycles || []) as QuarterlyCycle[]);
-      setDashboardCounts((cycleResult as any).dashboard || null);
+    if (!currentEmployee.emp_code) {
+      if (isHR) {
 
-      // Get direct reports for display (still need individual report data for the list)
-      const reportsResult = await employeeService.getList({ manager_id: managerResult.data.id, status: 'active' });
+        setDirectReports([]);
+        setLoading(false);
+        return;
+      }
+      console.error('Current employee emp_code is missing. Cannot fetch team members.');
+      setDirectReports([]);
+      setLoading(false);
+      return;
+    }
 
-      if (!reportsResult.data || reportsResult.data.length === 0) {
+    try {
+      setLoading(true);
+      const managerId = currentEmployee.id;
+
+      if (activeCycleFromContext) {
+        setActiveCycle(activeCycleFromContext);
+      }
+      if (quarterlyCyclesFromContext) {
+        setQuarterlyCycles((quarterlyCyclesFromContext || []) as QuarterlyCycle[]);
+      }
+      if (dashboardFromContext) {
+        setDashboardCounts(dashboardFromContext as DashboardCounts);
+      }
+
+      const reportsResult = await employeeService.getList({ 
+        manager_code: currentEmployee.emp_code, 
+        status: 'active' 
+      });
+
+      const delegationParams: any = {
+        delegate_id: currentEmployee.id,
+      };
+      if (activeCycleFromContext?.id) {
+        delegationParams.cycle_id = activeCycleFromContext.id;
+      }
+      const delegatedReportsResult = await delegationService.get(delegationParams);
+
+      const delegatedEmployeesMap: Record<string, {
+        employee: any;
+        delegation: {
+          manager_name: string;
+          manager_email: string;
+          quarter: number;
+        };
+      }> = {};
+      
+      if (delegatedReportsResult.data && delegatedReportsResult.data.length > 0) {
+        const delegatedReporteeIds = [...new Set((delegatedReportsResult.data || []).map((d: any) => d.reportee_id))];
+        
+        const delegatedEmployeesPromises = delegatedReporteeIds.map(async (reporteeId: string) => {
+          const empResult = await employeeService.getById(reporteeId);
+          const delegationsForReportee = (delegatedReportsResult.data || []).filter((d: any) => d.reportee_id === reporteeId);
+          const delegation = delegationsForReportee.find((d: any) => d.quarter === currentQuarter) 
+            || delegationsForReportee[0]; // Use first available if current quarter not found
+          
+          return {
+            employee: empResult.data,
+            delegation: delegation ? {
+              manager_name: delegation.manager_name || '',
+              manager_email: delegation.manager_email || '',
+              quarter: delegation.quarter
+            } : null
+          };
+        });
+        
+        const delegatedEmployeesResults = await Promise.all(delegatedEmployeesPromises);
+        delegatedEmployeesResults.forEach(({ employee, delegation }) => {
+          if (employee && employee.status === 'active' && delegation) {
+            delegatedEmployeesMap[employee.id] = { employee, delegation };
+          }
+        });
+      }
+      
+      const delegatedEmployees = Object.values(delegatedEmployeesMap).map(item => item.employee);
+
+      const directReportIds = new Set((reportsResult.data || []).map((r: any) => r.id));
+      const ReportsCount = reportsResult.count;
+      const allReports = [
+        ...(reportsResult.data || []),
+        ...delegatedEmployees.filter((emp: any) => emp && !directReportIds.has(emp.id)),
+      ];
+
+      if (allReports.length === 0) {
         setDirectReports([]);
         setLoading(false);
         return;
       }
 
-      // Fetch additional data for each report (for display purposes only)
+      const delegationsResult = await delegationService.get({
+        manager_id: currentEmployee.id,
+        cycle_id: activeCycle?.id,
+      });
+      const delegationsMap: Record<string, Record<number, any>> = {};
+      (delegationsResult.data || []).forEach((d: any) => {
+        if (!delegationsMap[d.reportee_id]) {
+          delegationsMap[d.reportee_id] = {};
+        }
+        delegationsMap[d.reportee_id][d.quarter] = d;
+      });
+
       const reportsWithGoals = await Promise.all(
-        reportsResult.data.map(async (report) => {
+        allReports.map(async (report) => {
           let goals_count = 0;
           let pending_goals = 0;
           let approved_goals = 0;
@@ -134,20 +266,17 @@ export default function Team() {
             q4: { self_status: null, manager_status: null },
           };
 
-          if (cycleResult.data) {
+          if (activeCycle) {
             // Get goals for this report
-            const goalsResult = await goalsService.kpis.getByEmployee(report.id, cycleResult.data.id);
+            const goalsResult = await goalsService.kpis.getByEmployee(report.id, activeCycle.id);
             goals_count = goalsResult.data?.length || 0;
             pending_goals = goalsResult.data?.filter(g => g.status === 'submitted').length || 0;
             approved_goals = goalsResult.data?.filter(g => g.status === 'approved').length || 0;
 
-            // Get quarterly self reviews for this report (from quarterly_self_reviews table)
-            const selfReviewsResult = await evaluationService.selfReviews.get(report.id, cycleResult.data.id);
+            const selfReviewsResult = await evaluationService.selfReviews.get(report.id, activeCycle.id);
             
-            // Get quarterly manager reviews for this report (from quarterly_manager_reviews table)
-            const mgrReviewsResult = await evaluationService.managerReviews.get(report.id, cycleResult.data.id);
+            const mgrReviewsResult = await evaluationService.managerReviews.get(report.id, activeCycle.id);
 
-            // Map quarterly self reviews to statuses
             (selfReviewsResult.data || []).forEach((q: any) => {
               if (q.quarter) {
                 const key = `q${q.quarter}` as keyof typeof quarterlyStatuses;
@@ -157,7 +286,6 @@ export default function Team() {
               }
             });
 
-            // Map quarterly manager reviews to statuses
             (mgrReviewsResult.data || []).forEach((q: any) => {
               if (q.quarter) {
                 const key = `q${q.quarter}` as keyof typeof quarterlyStatuses;
@@ -167,7 +295,6 @@ export default function Team() {
               }
             });
 
-            // Set overall statuses from the latest quarter
             const latestSelfReview = (selfReviewsResult.data || [])
               .sort((a: any, b: any) => (b.quarter || 0) - (a.quarter || 0))[0];
             const latestMgrReview = (mgrReviewsResult.data || [])
@@ -178,6 +305,11 @@ export default function Team() {
             quarterly_review_status = latestSelfReview?.status || null;
           }
 
+          const isDelegatedToMe = delegatedEmployeesMap[report.id] !== undefined;
+          const delegatedBy = isDelegatedToMe && delegatedEmployeesMap[report.id] 
+            ? delegatedEmployeesMap[report.id].delegation 
+            : null;
+
           return {
             ...report,
             goals_count,
@@ -186,7 +318,11 @@ export default function Team() {
             self_eval_status,
             manager_eval_status,
             quarterly_review_status,
-            ...quarterlyStatuses
+            ...quarterlyStatuses,
+            delegations: delegationsMap[report.id] || {},
+            isDelegatedToMe,
+            delegatedBy,
+            ReportsCount
           };
         })
       );
@@ -205,7 +341,6 @@ export default function Team() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Get dates from quarterly_cycles (preferred)
     let startDate: Date | null = null;
     let endDate: Date | null = null;
     
@@ -218,7 +353,6 @@ export default function Team() {
       startDate = qc.quarterly_manager_review_start_date ? new Date(qc.quarterly_manager_review_start_date) : null;
       endDate = qc.quarterly_manager_review_end_date ? new Date(qc.quarterly_manager_review_end_date) : null;
     } else {
-      // Fallback to deprecated cycle fields
       const startField = `q${quarter}_manager_review_start` as keyof typeof activeCycle;
       const endField = `q${quarter}_manager_review_end` as keyof typeof activeCycle;
       startDate = activeCycle[startField] ? new Date(activeCycle[startField]) : null;
@@ -295,7 +429,6 @@ export default function Team() {
     return { label: 'Evaluate', disabled: false, icon: ChevronRight, variant: 'default' as const };
   };
 
-  // Use counts from API (dashboardCounts) - no local calculation needed
   const pendingApprovals = directReports.filter(r => r.pending_goals > 0);
 
   if (loading) {
@@ -360,6 +493,11 @@ export default function Team() {
               <p className="text-sm text-muted-foreground">
                 {report.department} • {report.grade}
               </p>
+              {report.isDelegatedToMe && report.delegatedBy && (
+                <p className="text-xs text-blue-600 mt-1">
+                  Delegated by {getEmailUsername(report.delegatedBy.manager_email)} (Q{report.delegatedBy.quarter})
+                </p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -417,6 +555,11 @@ export default function Team() {
               <p className="text-sm text-muted-foreground">
                 {report.department} • {report.grade}
               </p>
+              {report.isDelegatedToMe && report.delegatedBy && (
+                <p className="text-xs text-blue-600 mt-1">
+                  Delegated by {getEmailUsername(report.delegatedBy.manager_email)} (Q{report.delegatedBy.quarter})
+                </p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -464,7 +607,7 @@ export default function Team() {
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-5">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Direct Reports</CardTitle>
@@ -472,6 +615,16 @@ export default function Team() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{dashboardCounts?.direct_reports_count ?? directReports.length}</div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Delegated</CardTitle>
+              <UserPlus className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{dashboardCounts?.delegated_count ?? 0}</div>
             </CardContent>
           </Card>
 
@@ -522,7 +675,7 @@ export default function Team() {
 
         <Tabs defaultValue="all" className="space-y-4">
           <TabsList>
-            <TabsTrigger value="all">All Reports ({dashboardCounts?.direct_reports_count ?? directReports.length})</TabsTrigger>
+            <TabsTrigger value="all">All Reports ({directReports.length})</TabsTrigger>
             {/* <TabsTrigger value="approvals">
               Pending Approvals
               {(dashboardCounts?.goals_pending_approval ?? pendingApprovals.length) > 0 && (
@@ -582,7 +735,7 @@ export default function Team() {
                         <div className="flex justify-between text-sm mb-1">
                           <span>Goals</span>
                           <span>
-                            {report.approved_goals}/{report.goals_count} approved
+                            {report.approved_goals}/{report.ReportsCount} approved
                           </span>
                         </div>
                         <Progress 
@@ -592,9 +745,10 @@ export default function Team() {
                       </div>
 
                       <div className="flex flex-wrap gap-2">
+                       
                         {report.pending_goals > 0 && (
                           <Badge variant="destructive">
-                            {report.pending_goals} goals pending approval
+                            {report.ReportsCount} Kpis pending approval
                           </Badge>
                         )}
                         {report.self_eval_status === 'submitted' && report.manager_eval_status !== 'submitted' && report.manager_eval_status !== 'released' && (
@@ -602,6 +756,11 @@ export default function Team() {
                         )}
                         {(report.manager_eval_status === 'submitted' || report.manager_eval_status === 'released') && (
                           <Badge variant="outline">Evaluation completed</Badge>
+                        )}
+                         {report.isDelegatedToMe && report.delegatedBy && (
+                          <Badge variant="outline" className="text-blue-600 border-blue-600">
+                            Delegated by {getEmailUsername(report.delegatedBy.manager_email)} (Q{report.delegatedBy.quarter})
+                          </Badge>
                         )}
                       </div>
 
@@ -619,6 +778,17 @@ export default function Team() {
                           </Button>
                         </Link>
                       </div>
+                      {activeCycleFromContext && currentQuarter && !report.isDelegatedToMe && (
+                        <div className="pt-2 border-t mt-2">
+                          <DelegateButton
+                            reporteeId={report.id}
+                            reporteeName={getDisplayName(report)}
+                            currentDelegation={report.delegations?.[currentQuarter] || null}
+                            quarter={currentQuarter}
+                            onDelegationChange={fetchTeamData}
+                          />
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 ))}

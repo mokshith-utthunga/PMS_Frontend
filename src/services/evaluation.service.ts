@@ -42,6 +42,10 @@ export interface QuarterlyManagerReviewData {
   calculated_overall_rating?: number | null;
   status?: string;
   approved_at?: string;
+  hr_approved_at?: string;
+  released_at?: string;
+  employee_acknowledged_at?: string;
+  employee_rejected_at?: string;
   created_at?: string;
   updated_at?: string;
 }

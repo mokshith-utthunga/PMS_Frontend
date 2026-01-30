@@ -25,7 +25,7 @@ export function GoalsProgressCard({ totalWeight, krasCount }: GoalsProgressCardP
             {totalWeight}% / {TOTAL_WEIGHT}%
           </span>
         </div>
-        <Progress value={totalWeight} className="h-2" />
+        <Progress value={totalWeight} className="h-2 [&>div]:bg-[#00562c]" />
         {krasCount > 0 && !isWeightValid && (
           <p className="text-xs text-muted-foreground mt-2">
             {totalWeight < TOTAL_WEIGHT

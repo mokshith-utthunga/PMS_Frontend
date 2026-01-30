@@ -15,12 +15,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { PageLoader } from '@/loaders';
-import { useGoalsData, useKraOperations, useKpiOperations, useBonusOperations, useTemplateSelection } from '@/hooks';
+import { useGoalsData, useKraOperations, useKpiOperations, useBonusOperations, useTemplateSelection, useCurrentEmployee } from '@/hooks';
 import { useQuarterFromUrl } from '@/hooks/useQuarterFromUrl';
 import { getValidationIssues, hasDraftItems, isValidForSubmission } from '@/utils/goalsValidation';
-import { 
-  getAvailableQuartersForEmployee, 
-  getPreviousQuarters, 
+import {
+  getAvailableQuartersForEmployee,
+  getPreviousQuarters,
   formatQuarterLabel,
   hasQuarterStarted,
   hasQuarterEnded,
@@ -40,52 +40,33 @@ import { KPIForm } from '@/components/goals/KPIForm';
 import { TemplateSelector } from '@/components/goals/TemplateSelector';
 import { BonusKRAForm } from '@/components/goals/BonusKRAForm';
 import { BonusKPIForm } from '@/components/goals/BonusKPIForm';
-import { employeeService, goalsService, cycleService } from '@/services';
+import { employeeService, goalsService } from '@/services';
 import { toasts } from '@/toasts';
 import type { KRA, Goal, BonusKRA, BonusKPI, Employee } from '@/types';
 import type { GoalsQuarterlyCycle } from '@/services/cycle.service';
-import { useQuery } from '@tanstack/react-query';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 import PeriodClose from '@/components/evaluation/PeriodClose';
 
 export default function Goals() {
   const { user, hasAnyRole } = useAuth();
-  const isHR = hasAnyRole(['hr_admin', 'hrbp', 'system_admin','dept_head','manager']);
+  const isHR = hasAnyRole(['hr_admin', 'hrbp', 'system_admin', 'dept_head', 'manager']);
 
   // URL-based quarter handling
   const { quarter, setQuarter, isValidQuarter } = useQuarterFromUrl();
-  
-  // Fetch employee data for join date
-  const [employee, setEmployee] = useState<Employee | null>(null);
-  const [loadingEmployee, setLoadingEmployee] = useState(true);
 
-  useEffect(() => {
-    const fetchEmployee = async () => {
-      try {
-        const result = await employeeService.getMe();
-        if (result.data) {
-          setEmployee(result.data);
-        }
-      } catch (error) {
-        console.error('Error fetching employee:', error);
-      } finally {
-        setLoadingEmployee(false);
-      }
-    };
-    if (user?.id) {
-      fetchEmployee();
-    }
-  }, [user?.id]);
+  // Get current employee from cached hook (fetched once at app initialization)
+  const { employee, isLoading: loadingEmployee } = useCurrentEmployee();
+
+  // Get active cycle data from context (fetched once at app initialization)
+  const { activeCycle: activeCycleFromContext, goalsQuarterlyCycles: goalsQuarterlyCyclesFromContext } = useActiveCycle();
 
   // Fetch all goals data with quarter filter
   const goalsData = useGoalsData(user?.id, quarter || null);
-  const { employeeId, employeeProfile, activeCycle, kras, kpis, bonusKras, bonusKpis, hasLatePermission, loading, refetch } = goalsData;
+  const { employeeId, employeeProfile, kras, kpis, bonusKras, bonusKpis, hasLatePermission, loading, refetch } = goalsData;
 
-  // Fetch goals quarterly cycles to get correct goal submission deadlines
-  const { data: goalsQuarterlyCycles = [] } = useQuery({
-    queryKey: ['goals-quarterly-cycles', activeCycle?.id],
-    queryFn: () => cycleService.getGoalsQuarterlyCycles(activeCycle!.id).then(r => r.data || []),
-    enabled: !!activeCycle?.id
-  });
+  // Use active cycle from context (prefer context over hook data for consistency)
+  const activeCycle = activeCycleFromContext || goalsData.activeCycle;
+  const goalsQuarterlyCycles = (goalsQuarterlyCyclesFromContext || []) as GoalsQuarterlyCycle[];
 
   // Helper to get goal submission start date for a quarter
   const getGoalSubmissionStartDate = (quarter: number): Date | null => {
@@ -143,19 +124,40 @@ export default function Goals() {
     return { canWork: true, reason: 'ok' };
   };
 
-  // Get available quarters based on join date
+  // Get available quarters based on join date - use actual dates from goals_quarterly_cycles
   const availableQuarters = useMemo(() => {
     if (!employee || !activeCycle) return [];
-    return getAvailableQuartersForEmployee(employee, activeCycle);
-  }, [employee, activeCycle]);
+    return getAvailableQuartersForEmployee(employee, activeCycle, goalsQuarterlyCycles);
+  }, [employee, activeCycle, goalsQuarterlyCycles]);
 
-  // Set default quarter if not in URL
+  // Set default quarter if not in URL - find first quarter where goal submission has started
+  // Always prefer Q1, Q2, Q3, Q4 in order (not based on availableQuarters order)
   useEffect(() => {
-    if (!loadingEmployee && !isValidQuarter && availableQuarters.length > 0 && activeCycle) {
-      // Set to first available quarter
-      setQuarter(availableQuarters[0]);
+    if (!loadingEmployee && !isValidQuarter && availableQuarters.length > 0 && activeCycle && goalsQuarterlyCycles.length > 0) {
+      // Iterate through quarters in order (1,2,3,4) to find first available and started quarter
+      for (let q = 1; q <= 4; q++) {
+        if (availableQuarters.includes(q as 1 | 2 | 3 | 4) && hasGoalSubmissionStarted(q)) {
+          setQuarter(q as 1 | 2 | 3 | 4);
+          return;
+        }
+      }
+      // If no quarter has started, find first available quarter in order
+      for (let q = 1; q <= 4; q++) {
+        if (availableQuarters.includes(q as 1 | 2 | 3 | 4)) {
+          setQuarter(q as 1 | 2 | 3 | 4);
+          return;
+        }
+      }
+    } else if (!loadingEmployee && !isValidQuarter && availableQuarters.length > 0 && activeCycle) {
+      // Fallback if goalsQuarterlyCycles not loaded yet - find first available quarter in order
+      for (let q = 1; q <= 4; q++) {
+        if (availableQuarters.includes(q as 1 | 2 | 3 | 4)) {
+          setQuarter(q as 1 | 2 | 3 | 4);
+          return;
+        }
+      }
     }
-  }, [loadingEmployee, isValidQuarter, availableQuarters, activeCycle, setQuarter]);
+  }, [loadingEmployee, isValidQuarter, availableQuarters, activeCycle, goalsQuarterlyCycles, setQuarter, hasGoalSubmissionStarted]);
 
   // Get previous quarters for clone dropdown
   const previousQuarters = useMemo(() => {
@@ -190,7 +192,7 @@ export default function Goals() {
         sourceQuarter,
         quarter
       );
-      
+
       if (result.data) {
         toasts.success(
           'Goals Cloned',
@@ -244,7 +246,7 @@ export default function Goals() {
   // Computed values - use quarterly goal submission deadline for quarterly goals
   const deadlineStatus = useMemo(() => {
     if (!activeCycle || !quarter) return null;
-    
+
     // Get goal submission end date for the current quarter
     const goalEndDate = getGoalSubmissionEndDate(quarter);
     if (!goalEndDate) return null;
@@ -253,7 +255,7 @@ export default function Goals() {
     const deadline = new Date(goalEndDate);
     const isPastDeadline = now > deadline;
     const daysOverdue = Math.max(0, Math.floor((now.getTime() - deadline.getTime()) / (1000 * 60 * 60 * 24)));
-    
+
     // Check if late submission is allowed for this quarter
     const goalsCycle = goalsQuarterlyCycles.find((gqc: GoalsQuarterlyCycle) => gqc.quarter === quarter);
     const allowLate = goalsCycle?.allow_late_goal_submission || activeCycle.allow_late_goal_submission || false;
@@ -278,11 +280,9 @@ export default function Goals() {
     return canWorkOnGoalsForQuarter(quarter);
   }, [quarter, activeCycle, hasLatePermission, goalsQuarterlyCycles]);
 
-  // canSubmit should be true if quarterWorkStatus allows work, or if deadlineStatus allows it
-  // This ensures the button shows even if deadlineStatus is null (no exact deadline date)
+
   const canSubmit = quarterWorkStatus.canWork || (deadlineStatus?.canSubmit ?? false);
 
-  // Use goal submission dates instead of self-review dates for goals
   const quarterHasStarted = useMemo(() => {
     if (!quarter || !activeCycle) return false;
     return hasGoalSubmissionStarted(quarter);
@@ -368,15 +368,15 @@ export default function Goals() {
                   const goalStarted = hasGoalSubmissionStarted(q);
                   const startDate = getGoalSubmissionStartDate(q) || getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
                   const endDate = getGoalSubmissionEndDate(q) || getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
-                  
+
                   if (!goalStarted) {
                     return (
                       <Tooltip key={q}>
                         <TooltipTrigger asChild>
                           <span>
-                            <TabsTrigger 
-                              value={`q${q}`} 
-                              disabled 
+                            <TabsTrigger
+                              value={`q${q}`}
+                              disabled
                               className="opacity-50 cursor-not-allowed"
                             >
                               {formatQuarterLabel(q)}
@@ -395,7 +395,7 @@ export default function Goals() {
                       </Tooltip>
                     );
                   }
-                  
+
                   return (
                     <TabsTrigger key={q} value={`q${q}`}>
                       {formatQuarterLabel(q)}
@@ -410,14 +410,12 @@ export default function Goals() {
                 const qWorkStatus = canWorkOnGoalsForQuarter(q);
                 const startDate = getGoalSubmissionStartDate(q);
                 const endDate = getGoalSubmissionEndDate(q);
-                // Fallback to quarter dates for display if goal dates not available
                 const displayStartDate = startDate || getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
                 const displayEndDate = endDate || getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
-
+               
                 return (
                   <TabsContent key={q} value={`q${q}`} className="space-y-6">
-                    {/* Show message if quarter hasn't started */}
-                    {!qStarted ? (
+                   {!qStarted ? (
                       <Card>
                         <CardContent className="flex flex-col items-center justify-center py-12">
                           <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
@@ -517,7 +515,7 @@ export default function Goals() {
                                 )}
 
                                 {hasDraft && (
-                                  <Button onClick={kraOps.submitForApproval} className="w-full" disabled={!isValid}>
+                                  <Button onClick={kraOps.submitForApproval} className="w-full bg-blue-600 hover:bg-blue-700" disabled={!isValid}>
                                     <Send className="mr-2 h-4 w-4" />
                                     Submit KRAs & KPIs for Approval
                                   </Button>

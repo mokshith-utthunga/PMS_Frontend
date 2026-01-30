@@ -1,7 +1,9 @@
 // Custom hook for Goals page data fetching
 import { useState, useEffect, useCallback } from 'react';
-import { employeeService, cycleService, goalsService } from '@/services';
+import { goalsService } from '@/services';
 import { logError } from '@/errors';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import { useCurrentEmployee } from './useCurrentEmployee';
 import type { KRA, Goal, BonusKRA, BonusKPI, PerformanceCycle } from '@/types';
 
 export interface GoalsData {
@@ -17,10 +19,18 @@ export interface GoalsData {
 }
 
 export function useGoalsData(userId: string | undefined, quarter?: number | null) {
+  // Get active cycle from context (fetched once at app initialization)
+  const { activeCycle: activeCycleFromContext } = useActiveCycle();
+  // Get current employee from cached hook (fetched once at app initialization)
+  const { employee: currentEmployee } = useCurrentEmployee();
+  
   const [data, setData] = useState<GoalsData>({
-    employeeId: null,
-    employeeProfile: null,
-    activeCycle: null,
+    employeeId: currentEmployee?.id || null,
+    employeeProfile: currentEmployee ? {
+      department: currentEmployee.department,
+      grade: currentEmployee.grade,
+    } : null,
+    activeCycle: activeCycleFromContext,
     kras: [],
     kpis: [],
     bonusKras: [],
@@ -29,26 +39,36 @@ export function useGoalsData(userId: string | undefined, quarter?: number | null
     loading: true,
   });
 
+  // Update activeCycle and employee when context data changes
+  useEffect(() => {
+    if (activeCycleFromContext) {
+      setData(prev => ({ ...prev, activeCycle: activeCycleFromContext }));
+    }
+    if (currentEmployee) {
+      setData(prev => ({
+        ...prev,
+        employeeId: currentEmployee.id,
+        employeeProfile: {
+          department: currentEmployee.department,
+          grade: currentEmployee.grade,
+        },
+      }));
+    }
+  }, [activeCycleFromContext, currentEmployee]);
+
   const fetchData = useCallback(async () => {
-    if (!userId) return;
+    if (!userId || !currentEmployee) return;
 
     try {
-      // Get current employee
-      const empResult = await employeeService.getMe();
-      if (!empResult.data) {
-        setData(prev => ({ ...prev, loading: false }));
-        return;
-      }
-
-      const employeeId = empResult.data.id;
+      const employeeId = currentEmployee.id;
       const employeeProfile = {
-        department: empResult.data.department,
-        grade: empResult.data.grade,
+        department: currentEmployee.department,
+        grade: currentEmployee.grade,
       };
 
-      // Get active cycle
-      const cycleResult = await cycleService.getActive();
-      if (!cycleResult.data) {
+      // Use active cycle from context (already fetched at app initialization)
+      const activeCycle = activeCycleFromContext;
+      if (!activeCycle) {
         setData(prev => ({
           ...prev,
           employeeId,
@@ -58,7 +78,7 @@ export function useGoalsData(userId: string | undefined, quarter?: number | null
         return;
       }
 
-      const cycleId = cycleResult.data.id;
+      const cycleId = activeCycle.id;
 
       // Fetch all data in parallel with quarter filter
       const [krasResult, kpisResult, bonusKrasResult, latePermResult] = await Promise.all([
@@ -85,7 +105,7 @@ export function useGoalsData(userId: string | undefined, quarter?: number | null
       setData({
         employeeId,
         employeeProfile,
-        activeCycle: cycleResult.data,
+        activeCycle: activeCycle,
         kras,
         kpis,
         bonusKras,
@@ -97,7 +117,7 @@ export function useGoalsData(userId: string | undefined, quarter?: number | null
       logError(error, 'useGoalsData');
       setData(prev => ({ ...prev, loading: false }));
     }
-  }, [userId, quarter]);
+  }, [userId, quarter, activeCycleFromContext, currentEmployee]);
 
   useEffect(() => {
     fetchData();

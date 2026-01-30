@@ -43,6 +43,14 @@ export default {
           DEFAULT: "hsl(var(--popover))",
           foreground: "hsl(var(--popover-foreground))",
         },
+        submitButton: {
+          primary: "hsl(var(--submit-button))",
+          foreground: "hsl(var(--submit-button-foreground))",
+        },
+        status: {
+          success: "hsl(var(--status-success))",
+          "success-foreground": "hsl(var(--status-success-foreground))",
+        },
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",

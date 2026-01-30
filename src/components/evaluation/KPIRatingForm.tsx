@@ -73,6 +73,12 @@ export function KPIRatingForm({
           {kpi.description && (
             <p className="text-sm text-muted-foreground mt-1">{kpi.description}</p>
           )}
+          {kpi.metric_type && (
+            <p className="text-sm mt-1">
+              <span className="text-muted-foreground">Metric Type: </span>
+              {kpi.metric_type}
+            </p>
+          )}
           {kpi.target_value && (
             <p className="text-sm mt-1">
               <span className="text-muted-foreground">Target: </span>
@@ -106,7 +112,7 @@ export function KPIRatingForm({
             disabled={!canEdit}
             label="Achievement Progress"
             variant="employee"
-            calibration={kpi.calibration}
+            metricType={kpi.metric_type || null}
           />
         </div>
       )}

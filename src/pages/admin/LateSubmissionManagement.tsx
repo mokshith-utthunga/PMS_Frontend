@@ -204,7 +204,7 @@ export default function LateSubmissionManagement() {
   // Auto-select current active quarter and tab if not in URL (but not for year-end)
   useEffect(() => {
     let needsUpdate = false;
-    const newParams = new URLSearchParams(searchParams);
+      const newParams = new URLSearchParams(searchParams);
     
     if (!urlQuarter && activeCycle && !isYearEnd) {
       newParams.set('quarter', currentActiveQuarter.toString());
@@ -497,7 +497,7 @@ export default function LateSubmissionManagement() {
 
         {/* Quarter Tabs */}
         <Tabs value={isYearEnd ? 'year-end' : `q${effectiveSelectedQuarter}`} onValueChange={(value) => {
-          const newParams = new URLSearchParams(searchParams);
+            const newParams = new URLSearchParams(searchParams);
           if (value === 'year-end') {
             newParams.set('quarter', 'year-end');
             newParams.delete('tab'); // Year-end doesn't have goals/evaluations tabs
@@ -507,7 +507,7 @@ export default function LateSubmissionManagement() {
             if (!isQuarterAccessible(q)) {
               return;
             }
-            newParams.set('quarter', q.toString());
+              newParams.set('quarter', q.toString());
             // Ensure tab is set when switching to quarterly view
             if (!newParams.get('tab')) {
               newParams.set('tab', submissionType);

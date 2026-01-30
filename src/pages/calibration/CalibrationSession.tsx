@@ -12,6 +12,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { calibrationService, settingsService, employeeService } from '@/services';
 import { useToast } from '@/hooks/use-toast';
+import type { CalibrationEntry as BaseCalibrationEntry } from '@/types';
+import type { QuotaRuleData } from '@/services/calibration.service';
 import { 
   ArrowLeft, 
   Loader2, 
@@ -24,15 +26,13 @@ import {
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
-interface CalibrationEntry {
-  id: string;
-  employee_id: string;
+interface CalibrationEntry extends BaseCalibrationEntry {
   original_rating: number | null;
-  calibrated_rating: number | null;
-  final_rating: number | null;
-  is_exception: boolean;
-  exception_reason: string | null;
-  exception_status: string | null;
+  calibrated_rating?: number | null;
+  final_rating?: number | null;
+  is_exception?: boolean;
+  exception_reason?: string | null;
+  exception_status?: string | null;
   employee?: {
     emp_id: string;
     first_name: string;
@@ -42,10 +42,8 @@ interface CalibrationEntry {
   };
 }
 
-interface QuotaRule {
-  rating_value: number;
-  percentage: number;
-  max_count: number | null;
+interface QuotaRule extends QuotaRuleData {
+  max_count?: number | null;
 }
 
 interface RatingScale {
@@ -92,19 +90,36 @@ export default function CalibrationSession() {
 
       // Get quota rules
       const quotasResult = await calibrationService.quotaRules.getByGroup(groupId);
-      setQuotaRules(quotasResult.data || []);
+      const quotaRulesWithMaxCount: QuotaRule[] = (quotasResult.data || []).map(q => ({
+        ...q,
+        max_count: null
+      }));
+      setQuotaRules(quotaRulesWithMaxCount);
 
       // Get calibration entries with employee data
       const entriesResult = await calibrationService.entries.getByGroup(groupId);
 
       // Fetch employee details for each entry
-      const entriesWithEmployees = await Promise.all(
+      const entriesWithEmployees: CalibrationEntry[] = await Promise.all(
         (entriesResult.data || []).map(async (entry) => {
           const empResult = await employeeService.getById(entry.employee_id);
+          const emp = empResult.data;
 
           return {
             ...entry,
-            employee: empResult.data
+            original_rating: entry.original_rating ?? null,
+            calibrated_rating: entry.calibrated_rating ?? null,
+            final_rating: undefined,
+            is_exception: false,
+            exception_reason: null,
+            exception_status: null,
+            employee: emp ? {
+              emp_id: emp.emp_id || '',
+              first_name: emp.first_name || '',
+              last_name: emp.last_name || '',
+              department: emp.department || '',
+              grade: emp.grade || ''
+            } : undefined
           };
         })
       );
@@ -163,10 +178,8 @@ export default function CalibrationSession() {
 
     try {
       await calibrationService.entries.update(selectedEntry.id, { 
-        is_exception: true,
-        exception_reason: exceptionReason,
-        exception_status: 'pending'
-      });
+        justification: exceptionReason
+      } as Partial<BaseCalibrationEntry>);
 
       setEntries(prev => 
         prev.map(e => 
@@ -235,11 +248,11 @@ export default function CalibrationSession() {
 
     setSaving(true);
     try {
-      // Set final ratings
+      // Set final ratings (using calibrated_rating as the final value)
       for (const entry of entries) {
         await calibrationService.entries.update(entry.id, { 
-          final_rating: entry.calibrated_rating || entry.original_rating 
-        });
+          calibrated_rating: entry.calibrated_rating || entry.original_rating 
+        } as Partial<BaseCalibrationEntry>);
       }
 
       // Update group status

@@ -78,7 +78,7 @@ export function TeamMemberKRACard({
                 {totalKPIWeight}% / {TOTAL_WEIGHT}%
               </span>
             </div>
-            <Progress value={totalKPIWeight} className="h-2" />
+            <Progress value={totalKPIWeight} className="h-2 [&>div]:bg-[#00562c]" />
           </div>
 
           <div className="space-y-2">

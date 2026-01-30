@@ -50,7 +50,6 @@ export function OverallAssessmentTab({
 }: OverallAssessmentTabProps) {
   return (
     <div className="space-y-4">
-      {/* Calculated Rating Card - Now the primary rating display */}
       <Card className="border-2 border-primary/20 bg-primary/5">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -115,7 +114,6 @@ export function OverallAssessmentTab({
         </CardContent>
       </Card>
 
-      {/* Overall Comments */}
       <Card>
         <CardHeader>
           <CardTitle>Overall Comments</CardTitle>

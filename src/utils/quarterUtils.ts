@@ -11,7 +11,6 @@ function getQuarterlyCycleData(
   quarter: number,
   quarterlyCycles?: QuarterlyCycle[]
 ): { start: string | null; end: string | null } {
-  // First, try to get dates from quarterlyCycles array (preferred - from quarterly_cycles table)
   if (quarterlyCycles && quarterlyCycles.length > 0) {
     const qc = quarterlyCycles.find(qc => {
       const qcQuarter = typeof qc.quarter === 'string' ? parseInt(qc.quarter) : qc.quarter;
