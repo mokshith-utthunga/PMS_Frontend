@@ -138,6 +138,14 @@ export default function HRReview() {
   const [rejectionSelfReview, setRejectionSelfReview] = useState<any>(null);
   const [rejectionGoalRatings, setRejectionGoalRatings] = useState<any[]>([]);
 
+  // Normalized ratings state
+  const [normalizedRatings, setNormalizedRatings] = useState<any[]>([]);
+  const [normalizedRatingsLoading, setNormalizedRatingsLoading] = useState(false);
+  const [selectedQuarter, setSelectedQuarter] = useState<number>(1);
+  const [normalizing, setNormalizing] = useState(false);
+  const [editingRating, setEditingRating] = useState<string | null>(null);
+  const [editedRatingValue, setEditedRatingValue] = useState<number>(0);
+
   const isHR = hasAnyRole(['hr_admin', 'hrbp', 'system_admin']);
   const isBUHead = hasAnyRole(['dept_head']);
 
@@ -190,6 +198,113 @@ export default function HRReview() {
       setLoading(false);
     }
   }, [toast]);
+
+  const fetchNormalizedRatings = useCallback(async (quarter?: number, status?: string) => {
+    if (!activeCycle) return;
+    
+    try {
+      setNormalizedRatingsLoading(true);
+      const result = await evaluationService.normalization.getRatings(
+        quarter || selectedQuarter,
+        activeCycle.id,
+        status
+      );
+      setNormalizedRatings(result.data || []);
+    } catch (error: any) {
+      console.error('Error fetching normalized ratings:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to load normalized ratings',
+        variant: 'destructive',
+      });
+    } finally {
+      setNormalizedRatingsLoading(false);
+    }
+  }, [activeCycle, selectedQuarter, toast]);
+
+  const handleNormalize = useCallback(async () => {
+    if (!activeCycle) return;
+    
+    setNormalizing(true);
+    try {
+      const result = await evaluationService.normalization.normalize(selectedQuarter, activeCycle.id);
+      toast({
+        title: 'Success',
+        description: result.data.message || `Normalized ${result.data.processed} ratings`,
+      });
+      await fetchNormalizedRatings(selectedQuarter);
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to normalize ratings',
+        variant: 'destructive',
+      });
+    } finally {
+      setNormalizing(false);
+    }
+  }, [activeCycle, selectedQuarter, toast, fetchNormalizedRatings]);
+
+  const handleSendToManager = useCallback(async (employeeIds: string[]) => {
+    if (!activeCycle) return;
+    
+    setSaving('bulk');
+    try {
+      await evaluationService.normalization.sendToManager(employeeIds, selectedQuarter, activeCycle.id);
+      toast({
+        title: 'Success',
+        description: `Sent ${employeeIds.length} rating(s) to manager(s)`,
+      });
+      await fetchNormalizedRatings(selectedQuarter);
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to send to manager',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(null);
+    }
+  }, [activeCycle, selectedQuarter, toast, fetchNormalizedRatings]);
+
+  const handlePublish = useCallback(async (employeeIds: string[]) => {
+    if (!activeCycle) return;
+    
+    setSaving('bulk');
+    try {
+      await evaluationService.normalization.publish(employeeIds, selectedQuarter, activeCycle.id);
+      toast({
+        title: 'Success',
+        description: `Published ${employeeIds.length} rating(s)`,
+      });
+      await fetchNormalizedRatings(selectedQuarter);
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to publish ratings',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(null);
+    }
+  }, [activeCycle, selectedQuarter, toast, fetchNormalizedRatings]);
+
+  const handleUpdateRating = useCallback(async (id: string, newValue: number) => {
+    try {
+      await evaluationService.normalization.updateRating(id, newValue);
+      toast({
+        title: 'Success',
+        description: 'Rating updated successfully',
+      });
+      setEditingRating(null);
+      await fetchNormalizedRatings(selectedQuarter);
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to update rating',
+        variant: 'destructive',
+      });
+    }
+  }, [selectedQuarter, toast, fetchNormalizedRatings]);
 
   const fetchReviewDetails = useCallback(async (review: PendingReview) => {
     try {
@@ -485,6 +600,16 @@ export default function HRReview() {
             <TabsTrigger value="rejections">
               Rejections ({ratingRejections.filter(r => r.status === 'pending').length})
             </TabsTrigger>
+            {isHR && (
+              <>
+                <TabsTrigger value="hr-review-rating" onClick={() => fetchNormalizedRatings(selectedQuarter)}>
+                  HR Review Rating
+                </TabsTrigger>
+                <TabsTrigger value="manager-status" onClick={() => fetchNormalizedRatings(selectedQuarter)}>
+                  Manager Status
+                </TabsTrigger>
+              </>
+            )}
           </TabsList>
 
           <TabsContent value="reviews" className="space-y-4">
@@ -735,6 +860,298 @@ export default function HRReview() {
               </div>
             )}
           </TabsContent>
+
+          {/* HR Review Rating Tab */}
+          {isHR && (
+            <TabsContent value="hr-review-rating" className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <Label>Quarter:</Label>
+                  <select
+                    value={selectedQuarter}
+                    onChange={(e) => {
+                      const q = parseInt(e.target.value);
+                      setSelectedQuarter(q);
+                      fetchNormalizedRatings(q);
+                    }}
+                    className="px-3 py-2 border rounded-md"
+                  >
+                    <option value={1}>Q1</option>
+                    <option value={2}>Q2</option>
+                    <option value={3}>Q3</option>
+                    <option value={4}>Q4</option>
+                  </select>
+                </div>
+                <Button
+                  onClick={handleNormalize}
+                  disabled={normalizing || !activeCycle}
+                >
+                  {normalizing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  <Calculator className="mr-2 h-4 w-4" />
+                  Normalize
+                </Button>
+              </div>
+
+              {normalizedRatingsLoading ? (
+                <div className="flex items-center justify-center h-64">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {normalizedRatings.filter(r => r.status === 'DRAFT' || r.status === 'REJECTED').length === 0 ? (
+                    <Card>
+                      <CardContent className="flex flex-col items-center justify-center py-12">
+                        <CheckCircle className="h-12 w-12 text-muted-foreground mb-4" />
+                        <h3 className="font-semibold text-lg">No ratings to review</h3>
+                        <p className="text-muted-foreground">
+                          Normalize ratings first or all ratings have been processed.
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <div className="grid gap-4">
+                      {normalizedRatings
+                        .filter(r => r.status === 'DRAFT' || r.status === 'REJECTED')
+                        .map((rating) => (
+                          <Card key={rating.id}>
+                            <CardHeader>
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <CardTitle className="flex items-center gap-2">
+                                    <User className="h-5 w-5" />
+                                    {rating.employee_name}
+                                    <Badge variant="outline">{rating.employee_code}</Badge>
+                                    <Badge variant={rating.status === 'REJECTED' ? 'destructive' : 'secondary'}>
+                                      {rating.status}
+                                    </Badge>
+                                  </CardTitle>
+                                  <CardDescription>
+                                    Grade: {rating.grade} • Manager: {rating.manager_name}
+                                  </CardDescription>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-sm text-muted-foreground">Raw: {formatRating(rating.raw_rating)}</div>
+                                  <div className="text-2xl font-bold text-primary">
+                                    {editingRating === rating.id ? (
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        max="5"
+                                        step="0.01"
+                                        value={editedRatingValue}
+                                        onChange={(e) => setEditedRatingValue(parseFloat(e.target.value))}
+                                        className="w-20 px-2 py-1 border rounded"
+                                      />
+                                    ) : (
+                                      formatRating(rating.final_normalized_rating)
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">Normalized</div>
+                                </div>
+                              </div>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="flex gap-2">
+                                {editingRating === rating.id ? (
+                                  <>
+                                    <Button
+                                      onClick={() => handleUpdateRating(rating.id, editedRatingValue)}
+                                      size="sm"
+                                    >
+                                      Save
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      onClick={() => setEditingRating(null)}
+                                      size="sm"
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </>
+                                ) : (
+                                  <>
+                                    {rating.status === 'REJECTED' && (
+                                      <Button
+                                        variant="outline"
+                                        onClick={() => {
+                                          setEditingRating(rating.id);
+                                          setEditedRatingValue(rating.final_normalized_rating);
+                                        }}
+                                        size="sm"
+                                      >
+                                        Edit Rating
+                                      </Button>
+                                    )}
+                                    <Button
+                                      onClick={() => handleSendToManager([rating.employee_id])}
+                                      disabled={saving === rating.id}
+                                      size="sm"
+                                    >
+                                      {saving === rating.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                      Send to Manager
+                                    </Button>
+                                  </>
+                                )}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </TabsContent>
+          )}
+
+          {/* Manager Status Tab */}
+          {isHR && (
+            <TabsContent value="manager-status" className="space-y-4">
+              <div className="flex items-center gap-4">
+                <Label>Quarter:</Label>
+                <select
+                  value={selectedQuarter}
+                  onChange={(e) => {
+                    const q = parseInt(e.target.value);
+                    setSelectedQuarter(q);
+                    fetchNormalizedRatings(q);
+                  }}
+                  className="px-3 py-2 border rounded-md"
+                >
+                  <option value={1}>Q1</option>
+                  <option value={2}>Q2</option>
+                  <option value={3}>Q3</option>
+                  <option value={4}>Q4</option>
+                </select>
+              </div>
+
+              {normalizedRatingsLoading ? (
+                <div className="flex items-center justify-center h-64">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {normalizedRatings.filter(r => ['ACCEPTED', 'REJECTED', 'PUBLISHED'].includes(r.status)).length === 0 ? (
+                    <Card>
+                      <CardContent className="flex flex-col items-center justify-center py-12">
+                        <AlertCircle className="h-12 w-12 text-muted-foreground mb-4" />
+                        <h3 className="font-semibold text-lg">No ratings in review</h3>
+                        <p className="text-muted-foreground">
+                          No ratings have been sent to managers yet.
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <div className="grid gap-4">
+                      {normalizedRatings
+                        .filter(r => ['ACCEPTED', 'REJECTED', 'PUBLISHED'].includes(r.status))
+                        .map((rating) => (
+                          <Card key={rating.id}>
+                            <CardHeader>
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <CardTitle className="flex items-center gap-2">
+                                    <User className="h-5 w-5" />
+                                    {rating.employee_name}
+                                    <Badge variant="outline">{rating.employee_code}</Badge>
+                                    <Badge
+                                      variant={
+                                        rating.status === 'PUBLISHED' ? 'default' :
+                                        rating.status === 'ACCEPTED' ? 'secondary' :
+                                        'destructive'
+                                      }
+                                    >
+                                      {rating.status}
+                                    </Badge>
+                                  </CardTitle>
+                                  <CardDescription>
+                                    Grade: {rating.grade} • Manager: {rating.manager_name}
+                                  </CardDescription>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-sm text-muted-foreground">Raw: {formatRating(rating.raw_rating)}</div>
+                                  <div className="text-2xl font-bold text-primary">
+                                    {editingRating === rating.id ? (
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        max="5"
+                                        step="0.01"
+                                        value={editedRatingValue}
+                                        onChange={(e) => setEditedRatingValue(parseFloat(e.target.value))}
+                                        className="w-20 px-2 py-1 border rounded"
+                                      />
+                                    ) : (
+                                      formatRating(rating.final_normalized_rating)
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">Normalized</div>
+                                </div>
+                              </div>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="flex gap-2">
+                                {rating.status === 'ACCEPTED' && (
+                                  <Button
+                                    onClick={() => handlePublish([rating.employee_id])}
+                                    disabled={saving === rating.id}
+                                    size="sm"
+                                  >
+                                    {saving === rating.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                    Publish
+                                  </Button>
+                                )}
+                                {rating.status === 'REJECTED' && (
+                                  <>
+                                    {editingRating === rating.id ? (
+                                      <>
+                                        <Button
+                                          onClick={() => handleUpdateRating(rating.id, editedRatingValue)}
+                                          size="sm"
+                                        >
+                                          Save
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          onClick={() => setEditingRating(null)}
+                                          size="sm"
+                                        >
+                                          Cancel
+                                        </Button>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Button
+                                          variant="outline"
+                                          onClick={() => {
+                                            setEditingRating(rating.id);
+                                            setEditedRatingValue(rating.final_normalized_rating);
+                                          }}
+                                          size="sm"
+                                        >
+                                          Edit Rating
+                                        </Button>
+                                        <Button
+                                          onClick={() => handleSendToManager([rating.employee_id])}
+                                          disabled={saving === rating.id}
+                                          size="sm"
+                                        >
+                                          {saving === rating.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                          Save & Resend
+                                        </Button>
+                                      </>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </TabsContent>
+          )}
         </Tabs>
       </div>
 

@@ -115,45 +115,8 @@ export default function CycleForm() {
     // Don't reset hasFetchedTeams - teams are fetched once per component mount
   }, [cycleId]);
 
-  // Fetch teams once on component mount
-  useEffect(() => {
-    fetchTeams();
-    // fetchTeams is memoized with useCallback and has no dependencies, so it's stable
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Fetch teams once on component mount - will be called after fetchTeams is defined
 
-  // Fetch cycle data when editing
-  useEffect(() => {
-    // Prevent multiple initial loads
-    if (isInitialLoad.current && isEditMode && cycleId) {
-      return;
-    }
-    
-    // Prevent running during state updates to avoid infinite loops
-    if (isUpdatingState.current) {
-      return;
-    }
-    
-    if (isEditMode && cycleId) {
-      isInitialLoad.current = true;
-      isUpdatingState.current = true;
-      Promise.all([
-        fetchCycle(),
-        fetchGoalsQuarterlyCycles(),
-        fetchQuarterlyCycles()
-      ]).finally(() => {
-        // Clear the flag after a short delay to ensure all state updates are complete
-        setTimeout(() => {
-          isUpdatingState.current = false;
-        }, 100);
-      });
-    }
-    // fetchCycle, fetchGoalsQuarterlyCycles, and fetchQuarterlyCycles are memoized and depend on cycleId
-    // which is already in the dependency array, so we don't need to include them
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cycleId, isEditMode]);
-
-  // Helper function to format date for HTML date input (YYYY-MM-DD)
   const formatDateForInput = (dateStr: string | null | undefined): string => {
     if (!dateStr) return '';
     try {
@@ -167,84 +130,69 @@ export default function CycleForm() {
 
   const fetchCycle = useCallback(async () => {
     if (!cycleId) return;
-    // Prevent multiple simultaneous calls
-    if (hasFetchedCycle.current === cycleId) {
-      return;
-    }
+    // Allow re-fetching on refresh - don't block if already fetched
+    // The ref check is handled in the useEffect
     hasFetchedCycle.current = cycleId;
     setIsLoading(true);
     try {
       const result = await cycleService.getById(cycleId);
 
+      console.log(result.data);
+
       if (result.data) {
-        // Use type assertion to handle API response with additional fields
         const data = result.data as PerformanceCycle & {
           description?: string;
-          q1_self_review_start?: string | null;
-          q1_self_review_end?: string | null;
-          q1_manager_review_start?: string | null;
-          q1_manager_review_end?: string | null;
-          q2_self_review_start?: string | null;
-          q2_self_review_end?: string | null;
-          q2_manager_review_start?: string | null;
-          q2_manager_review_end?: string | null;
-          q3_self_review_start?: string | null;
-          q3_self_review_end?: string | null;
-          q3_manager_review_start?: string | null;
-          q3_manager_review_end?: string | null;
-          q4_self_review_start?: string | null;
-          q4_self_review_end?: string | null;
-          q4_manager_review_start?: string | null;
-          q4_manager_review_end?: string | null;
           applicable_departments?: string[] | null;
           applicable_business_units?: string[] | null;
         };
-        
-        // Only update formData if values actually changed to prevent infinite loops
+
         setFormData(prev => {
           const newFormData = {
             name: data.name || '',
             description: data.description || '',
             year: data.year || new Date().getFullYear(),
-            goal_submission_start: '', // Deprecated - using quarterly goals now
-            goal_submission_end: '', // Deprecated - using quarterly goals now
-            goal_approval_end: '', // Deprecated - using quarterly goals now
-            manager_evaluation_start: formatDateForInput(data.manager_evaluation_start),
-            manager_evaluation_end: formatDateForInput(data.manager_evaluation_end),
+            goal_submission_start: '',
+            goal_submission_end: '',
+            goal_approval_end: '',
+            // manager_evaluation_start/end are loaded from Q4's quarterly_cycles via fetchQuarterlyCycles
+            // Don't overwrite if already set by fetchQuarterlyCycles
+            manager_evaluation_start: prev.manager_evaluation_start || formatDateForInput(data.manager_evaluation_start) || '',
+            manager_evaluation_end: prev.manager_evaluation_end || formatDateForInput(data.manager_evaluation_end) || '',
             calibration_start: formatDateForInput(data.calibration_start),
             calibration_end: formatDateForInput(data.calibration_end),
             release_date: formatDateForInput(data.release_date),
-            allow_late_goal_submission: false, // Deprecated - using quarterly goals now
-            // Q1 Quarterly Review (dates loaded from quarterly_cycles table via fetchQuarterlyCycles)
+            allow_late_goal_submission: false,
+            // Quarterly dates are loaded from quarterly_cycles table via fetchQuarterlyCycles
+            // Don't overwrite if already set by fetchQuarterlyCycles
             q1_quarter_start_date: prev.q1_quarter_start_date || '',
             q1_quarter_end_date: prev.q1_quarter_end_date || '',
-            q1_self_review_start: formatDateForInput(data.q1_self_review_start),
-            q1_self_review_end: formatDateForInput(data.q1_self_review_end),
-            q1_manager_review_start: formatDateForInput(data.q1_manager_review_start),
-            q1_manager_review_end: formatDateForInput(data.q1_manager_review_end),
+            q1_self_review_start: prev.q1_self_review_start || '',
+            q1_self_review_end: prev.q1_self_review_end || '',
+            q1_manager_review_start: prev.q1_manager_review_start || '',
+            q1_manager_review_end: prev.q1_manager_review_end || '',
             // Q2 Quarterly Review
             q2_quarter_start_date: prev.q2_quarter_start_date || '',
             q2_quarter_end_date: prev.q2_quarter_end_date || '',
-            q2_self_review_start: formatDateForInput(data.q2_self_review_start),
-            q2_self_review_end: formatDateForInput(data.q2_self_review_end),
-            q2_manager_review_start: formatDateForInput(data.q2_manager_review_start),
-            q2_manager_review_end: formatDateForInput(data.q2_manager_review_end),
+            q2_self_review_start: prev.q2_self_review_start || '',
+            q2_self_review_end: prev.q2_self_review_end || '',
+            q2_manager_review_start: prev.q2_manager_review_start || '',
+            q2_manager_review_end: prev.q2_manager_review_end || '',
             // Q3 Quarterly Review
             q3_quarter_start_date: prev.q3_quarter_start_date || '',
             q3_quarter_end_date: prev.q3_quarter_end_date || '',
-            q3_self_review_start: formatDateForInput(data.q3_self_review_start),
-            q3_self_review_end: formatDateForInput(data.q3_self_review_end),
-            q3_manager_review_start: formatDateForInput(data.q3_manager_review_start),
-            q3_manager_review_end: formatDateForInput(data.q3_manager_review_end),
+            q3_self_review_start: prev.q3_self_review_start || '',
+            q3_self_review_end: prev.q3_self_review_end || '',
+            q3_manager_review_start: prev.q3_manager_review_start || '',
+            q3_manager_review_end: prev.q3_manager_review_end || '',
             // Q4 Quarterly Review
             q4_quarter_start_date: prev.q4_quarter_start_date || '',
             q4_quarter_end_date: prev.q4_quarter_end_date || '',
-            q4_self_review_start: formatDateForInput(data.q4_self_review_start),
-            q4_self_review_end: formatDateForInput(data.q4_self_review_end),
-            q4_manager_review_start: formatDateForInput(data.q4_manager_review_start),
-            q4_manager_review_end: formatDateForInput(data.q4_manager_review_end),
+            q4_self_review_start: prev.q4_self_review_start || '',
+            q4_self_review_end: prev.q4_self_review_end || '',
+            q4_manager_review_start: prev.q4_manager_review_start || '',
+            q4_manager_review_end: prev.q4_manager_review_end || '',
           };
-          
+
           // Check if any values actually changed
           let hasChanges = false;
           for (const key in newFormData) {
@@ -255,11 +203,11 @@ export default function CycleForm() {
               break;
             }
           }
-          
+
           if (!hasChanges) {
             return prev; // Return same object reference to prevent re-render
           }
-          
+
           return newFormData;
         });
 
@@ -274,26 +222,7 @@ export default function CycleForm() {
           }
         }
 
-        // Only update openQuarters if values actually changed
-        setOpenQuarters(prev => {
-          const quarters = { q1: false, q2: false, q3: false, q4: false };
-          if (data.q1_self_review_start) quarters.q1 = true;
-          if (data.q2_self_review_start) quarters.q2 = true;
-          if (data.q3_self_review_start) quarters.q3 = true;
-          if (data.q4_self_review_start) quarters.q4 = true;
-          
-          // Check if values changed
-          if (
-            quarters.q1 === prev.q1 &&
-            quarters.q2 === prev.q2 &&
-            quarters.q3 === prev.q3 &&
-            quarters.q4 === prev.q4
-          ) {
-            return prev; // Return same object reference to prevent re-render
-          }
-          
-          return quarters;
-        });
+        // Don't update openQuarters here - let fetchQuarterlyCycles handle it
       }
     } catch (error) {
       console.error('Error fetching cycle:', error);
@@ -309,113 +238,114 @@ export default function CycleForm() {
 
   const fetchQuarterlyCycles = useCallback(async () => {
     if (!cycleId) return;
-    // Prevent multiple simultaneous calls - only check ref
-    if (hasFetchedQuarterlyCycles.current === cycleId) {
-      return;
-    }
+    // Allow re-fetching on refresh - the ref is reset in useEffect
     hasFetchedQuarterlyCycles.current = cycleId;
     setIsLoadingQuarterlyCycles(true);
     try {
       const result = await cycleService.getQuarterlyCycles(cycleId);
+      console.log('quarterly cycles', result.data);
       if (result.data && result.data.length > 0) {
         const quarterlyData: Record<string, string> = {};
         const quartersOpen: Record<string, boolean> = { q1: false, q2: false, q3: false, q4: false };
         let yearEndMgrStart = '';
         let yearEndMgrEnd = '';
-        
+
         result.data.forEach((item: any) => {
           const quarterKey = `q${item.quarter}`;
-          
-          // Load quarter date range for validation
-          quarterlyData[`${quarterKey}_quarter_start_date`] = formatDateForInput(item.quarter_start_date);
-          quarterlyData[`${quarterKey}_quarter_end_date`] = formatDateForInput(item.quarter_end_date);
-          
-          // Load review dates
-          quarterlyData[`${quarterKey}_self_review_start`] = formatDateForInput(item.self_review_start_date);
-          quarterlyData[`${quarterKey}_self_review_end`] = formatDateForInput(item.self_review_end_date);
-          
-          // Always set quarterly manager review dates for all quarters (including Q4)
-          quarterlyData[`${quarterKey}_manager_review_start`] = formatDateForInput(item.quarterly_manager_review_start_date);
-          quarterlyData[`${quarterKey}_manager_review_end`] = formatDateForInput(item.quarterly_manager_review_end_date);
-          
+
+          // Load quarter date range for validation (only if values exist)
+          if (item.quarter_start_date) {
+            quarterlyData[`${quarterKey}_quarter_start_date`] = formatDateForInput(item.quarter_start_date);
+          }
+          if (item.quarter_end_date) {
+            quarterlyData[`${quarterKey}_quarter_end_date`] = formatDateForInput(item.quarter_end_date);
+          }
+
+          // Load review dates (always set, format if value exists)
+          quarterlyData[`${quarterKey}_self_review_start`] = item.self_review_start_date
+            ? formatDateForInput(item.self_review_start_date)
+            : '';
+          quarterlyData[`${quarterKey}_self_review_end`] = item.self_review_end_date
+            ? formatDateForInput(item.self_review_end_date)
+            : '';
+
+          // Load quarterly manager review dates (always set, format if value exists)
+          // Backend returns manager_review_start_date and manager_review_end_date directly
+          quarterlyData[`${quarterKey}_manager_review_start`] = item.manager_review_start_date
+            ? formatDateForInput(item.manager_review_start_date)
+            : '';
+          quarterlyData[`${quarterKey}_manager_review_end`] = item.manager_review_end_date
+            ? formatDateForInput(item.manager_review_end_date)
+            : '';
+
           // For Q4, ALSO use manager review dates for year-end manager evaluation
           // (Year-end evaluations can use Q4's manager review dates)
           if (item.quarter === 4) {
-            if (item.quarterly_manager_review_start_date) {
-              yearEndMgrStart = formatDateForInput(item.quarterly_manager_review_start_date);
+            // Set year-end dates from Q4's quarterly manager review dates (only if they exist)
+            if (item.manager_review_start_date) {
+              yearEndMgrStart = formatDateForInput(item.manager_review_start_date);
             }
-            if (item.quarterly_manager_review_end_date) {
-              yearEndMgrEnd = formatDateForInput(item.quarterly_manager_review_end_date);
+            if (item.manager_review_end_date) {
+              yearEndMgrEnd = formatDateForInput(item.manager_review_end_date);
             }
           }
-          
+
           // Open the quarter if it has any data
-          if (item.quarter_start_date || item.self_review_start_date || item.quarterly_manager_review_start_date) {
+          if (item.quarter_start_date || item.self_review_start_date || item.manager_review_start_date) {
             quartersOpen[quarterKey] = true;
           }
         });
-        
-        // Update formData with quarterly cycles data and year-end manager evaluation
-        // Only update if values actually changed to prevent infinite loops
+
+
         setFormData(prev => {
           let hasChanges = false;
-          
-          // Check if quarterly data changed
+          const updatedData: any = { ...prev };
+
           for (const key in quarterlyData) {
-            const newValue = quarterlyData[key] || '';
+            const newValue = quarterlyData[key];
             const oldValue = (prev[key as keyof typeof prev] as string) || '';
             if (newValue !== oldValue) {
-              hasChanges = true;
-              break;
-            }
-          }
-          
-          // Check if year-end manager evaluation changed
-          if (!hasChanges) {
-            const newYearEndStart = yearEndMgrStart || '';
-            const oldYearEndStart = prev.manager_evaluation_start || '';
-            const newYearEndEnd = yearEndMgrEnd || '';
-            const oldYearEndEnd = prev.manager_evaluation_end || '';
-            
-            if (newYearEndStart !== oldYearEndStart || newYearEndEnd !== oldYearEndEnd) {
+              updatedData[key] = newValue;
               hasChanges = true;
             }
           }
-          
-          if (!hasChanges) {
-            return prev; // Return same object reference to prevent re-render
+
+          if (yearEndMgrStart && yearEndMgrStart !== prev.manager_evaluation_start) {
+            updatedData.manager_evaluation_start = yearEndMgrStart;
+            hasChanges = true;
           }
-          
-          return {
-            ...prev,
-            ...quarterlyData,
-            manager_evaluation_start: yearEndMgrStart || prev.manager_evaluation_start,
-            manager_evaluation_end: yearEndMgrEnd || prev.manager_evaluation_end,
-          };
+          if (yearEndMgrEnd && yearEndMgrEnd !== prev.manager_evaluation_end) {
+            updatedData.manager_evaluation_end = yearEndMgrEnd;
+            hasChanges = true;
+          }
+
+          if (!hasChanges) {
+            return prev;
+          }
+
+          return updatedData;
         });
-        
-        // Only update openQuarters if values actually changed
+
+
         setOpenQuarters(prev => {
-          // Check if values changed
+
           if (
             quartersOpen.q1 === prev.q1 &&
             quartersOpen.q2 === prev.q2 &&
             quartersOpen.q3 === prev.q3 &&
             quartersOpen.q4 === prev.q4
           ) {
-            return prev; // Return same object reference to prevent re-render
+            return prev;
           }
-          
+
           return quartersOpen;
         });
       }
     } catch (error) {
       console.error('Error fetching quarterly cycles:', error);
-      // Reset flag on error so we can retry if needed
       if (hasFetchedQuarterlyCycles.current === cycleId) {
         hasFetchedQuarterlyCycles.current = null;
       }
-      // Don't show error toast - it's okay if no quarterly cycles exist yet
     } finally {
       setIsLoadingQuarterlyCycles(false);
     }
@@ -423,34 +353,47 @@ export default function CycleForm() {
 
   const fetchGoalsQuarterlyCycles = useCallback(async () => {
     if (!cycleId) return;
-    // Prevent multiple simultaneous calls
-    if (hasFetchedGoalsQuarterlyCycles.current === cycleId) {
-      return;
-    }
+    // Allow re-fetching on refresh - the ref is reset in useEffect
     hasFetchedGoalsQuarterlyCycles.current = cycleId;
     try {
       const result = await cycleService.getGoalsQuarterlyCycles(cycleId);
       if (result.data && result.data.length > 0) {
         const goalsData: Record<number, any> = { 1: {}, 2: {}, 3: {}, 4: {} };
         const quartersOpen: Record<string, boolean> = { q1: false, q2: false, q3: false, q4: false };
-        
+
         result.data.forEach((cycle: any) => {
-          goalsData[cycle.quarter] = {
-            quarterly_start_date: cycle.quarterly_start_date || '',
-            quarterly_end_date: cycle.quarterly_end_date || '',
-            goal_submission_start_date: cycle.goal_submission_start_date || '',
-            goal_submission_end_date: cycle.goal_submission_end_date || '',
-            manager_review_start_date: cycle.goals_manager_review_start_date || '',
-            manager_review_end_date: cycle.goals_manager_review_end_date || '',
+          const quarterData: any = {
             allow_late_goal_submission: cycle.allow_late_goal_submission || false,
           };
+
+          if (cycle.quarterly_start_date) {
+            quarterData.quarterly_start_date = formatDateForInput(cycle.quarterly_start_date);
+          }
+          if (cycle.quarterly_end_date) {
+            quarterData.quarterly_end_date = formatDateForInput(cycle.quarterly_end_date);
+          }
+          if (cycle.goal_submission_start_date) {
+            quarterData.goal_submission_start_date = formatDateForInput(cycle.goal_submission_start_date);
+          }
+          if (cycle.goal_submission_end_date) {
+            quarterData.goal_submission_end_date = formatDateForInput(cycle.goal_submission_end_date);
+          }
+
+          quarterData.manager_review_start_date = cycle.manager_review_start_date
+            ? formatDateForInput(cycle.manager_review_start_date)
+            : '';
+          quarterData.manager_review_end_date = cycle.manager_review_end_date
+            ? formatDateForInput(cycle.manager_review_end_date)
+            : '';
+
+          goalsData[cycle.quarter] = quarterData;
+
           if (cycle.goal_submission_start_date) {
             quartersOpen[`q${cycle.quarter}`] = true;
           }
         });
-        
+
         setGoalsQuarterlyData(goalsData);
-        // Merge with existing openQuarters - open quarters that have goals data
         setOpenQuarters(prev => ({
           ...prev,
           ...quartersOpen
@@ -458,12 +401,30 @@ export default function CycleForm() {
       }
     } catch (error) {
       console.error('Error fetching goals quarterly cycles:', error);
-      // Don't show error toast - it's okay if no goals cycles exist yet
     }
   }, [cycleId]);
 
+  // Fetch cycle data when editing - placed after function definitions
+  useEffect(() => {
+    if (!isEditMode || !cycleId) return;
+
+    // Reset fetch flags to allow re-fetching on refresh
+    hasFetchedCycle.current = null;
+    hasFetchedQuarterlyCycles.current = null;
+    hasFetchedGoalsQuarterlyCycles.current = null;
+    isInitialLoad.current = false;
+
+    // Fetch all data in parallel
+    Promise.all([
+      fetchCycle(),
+      fetchQuarterlyCycles(), // This loads quarterly dates from quarterly_cycles table
+      fetchGoalsQuarterlyCycles() // This loads goals dates from goals_quarterly_cycles table
+    ]).catch(error => {
+      console.error('Error fetching cycle data:', error);
+    });
+  }, [cycleId, isEditMode, fetchCycle, fetchQuarterlyCycles, fetchGoalsQuarterlyCycles]);
+
   const fetchTeams = useCallback(async () => {
-    // Prevent multiple calls
     if (hasFetchedTeams.current) {
       return;
     }
@@ -473,15 +434,19 @@ export default function CycleForm() {
         settingsService.departments.getAll(),
         settingsService.businessUnits.getAll(),
       ]);
-      
+
       if (deptRes.data) setDepartments(deptRes.data.map(d => d.name));
       if (buRes.data) setBusinessUnits(buRes.data.map(b => b.name));
     } catch (error) {
       console.error('Error fetching teams:', error);
-      // Reset flag on error so we can retry
       hasFetchedTeams.current = false;
     }
   }, []);
+
+  // Fetch teams once on component mount
+  useEffect(() => {
+    fetchTeams();
+  }, [fetchTeams]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -490,13 +455,12 @@ export default function CycleForm() {
         ...prev,
         [name]: value
       };
-      
-      // Validate quarterly reviews if a relevant field changed
+
       if (name.match(/^q[1-4]_(quarter_start_date|quarter_end_date|self_review_start|self_review_end|manager_review_start|manager_review_end)$/)) {
         const errors = validateAllQuarterlyReviews(newData);
         setQuarterlyReviewsValidationErrors(errors);
       }
-      
+
       return newData;
     });
   };
@@ -505,7 +469,6 @@ export default function CycleForm() {
     setOpenQuarters(prev => ({ ...prev, [quarter]: !prev[quarter] }));
   };
 
-  // Validation helper: Check if a date is within a range
   const isDateInRange = (dateStr: string, startStr: string, endStr: string): boolean => {
     if (!dateStr || !startStr || !endStr) return true; // Skip validation if any date is missing
     const date = new Date(dateStr);
@@ -514,13 +477,11 @@ export default function CycleForm() {
     return date >= start && date <= end;
   };
 
-  // Validate goals quarterly data for a specific quarter
-  // Quarter dates come from quarterly_cycles (via formData qX_quarter_start_date/qX_quarter_end_date)
+
   const validateGoalsQuarterlyDates = (quarter: number, data: any): Record<string, string> => {
     const errors: Record<string, string> = {};
     const quarterKey = `q${quarter}` as 'q1' | 'q2' | 'q3' | 'q4';
-    
-    // Get quarter dates from quarterly reviews (quarterly_cycles table)
+
     const quarterStart = formData[`${quarterKey}_quarter_start_date` as keyof typeof formData] as string || data.quarterly_start_date;
     const quarterEnd = formData[`${quarterKey}_quarter_end_date` as keyof typeof formData] as string || data.quarterly_end_date;
 
@@ -542,8 +503,7 @@ export default function CycleForm() {
     return errors;
   };
 
-  // Validate quarterly reviews data for a specific quarter
-  // Only validates that all dates are within Quarter Start Date and Quarter End Date
+
   const validateQuarterlyReviewsDates = (quarter: 'q1' | 'q2' | 'q3' | 'q4', data: typeof formData): Record<string, string> => {
     const errors: Record<string, string> = {};
     const quarterStart = data[`${quarter}_quarter_start_date` as keyof typeof data] as string;
@@ -568,16 +528,16 @@ export default function CycleForm() {
     return errors;
   };
 
-  // Validate all quarterly reviews and update errors state
+
   const validateAllQuarterlyReviews = (data: typeof formData): Record<string, string> => {
     const allErrors: Record<string, string> = {};
     const quarters: Array<'q1' | 'q2' | 'q3' | 'q4'> = ['q1', 'q2', 'q3', 'q4'];
-    
+
     quarters.forEach(quarter => {
       const quarterErrors = validateQuarterlyReviewsDates(quarter, data);
       Object.assign(allErrors, quarterErrors);
     });
-    
+
     return allErrors;
   };
 
@@ -590,34 +550,29 @@ export default function CycleForm() {
           [field]: value,
         },
       };
-      
-      // Validate the updated data
+
       const errors = validateGoalsQuarterlyDates(quarter, newData[quarter]);
       setGoalsValidationErrors(prevErrors => ({
         ...prevErrors,
         [quarter]: errors,
       }));
-      
+
       return newData;
     });
   };
 
   const toggleDepartment = useCallback((dept: string) => {
-    // Prevent updates during state updates to avoid infinite loops
     if (isUpdatingState.current) {
       return;
     }
     hasUserModifiedDepartments.current = true;
-    // Set flag to prevent other updates
     isUpdatingState.current = true;
     setSelectedDepartments(prev => {
       const newValue = prev.includes(dept) ? prev.filter(d => d !== dept) : [...prev, dept];
-      // Only update if value actually changed
       if (newValue.length === prev.length && newValue.every((val, idx) => val === prev[idx])) {
         isUpdatingState.current = false;
         return prev;
       }
-      // Clear flag after state update
       setTimeout(() => {
         isUpdatingState.current = false;
       }, 0);
@@ -626,21 +581,17 @@ export default function CycleForm() {
   }, []);
 
   const toggleBusinessUnit = useCallback((bu: string) => {
-    // Prevent updates during state updates to avoid infinite loops
     if (isUpdatingState.current) {
       return;
     }
     hasUserModifiedBusinessUnits.current = true;
-    // Set flag to prevent other updates
     isUpdatingState.current = true;
     setSelectedBusinessUnits(prev => {
       const newValue = prev.includes(bu) ? prev.filter(b => b !== bu) : [...prev, bu];
-      // Only update if value actually changed
       if (newValue.length === prev.length && newValue.every((val, idx) => val === prev[idx])) {
         isUpdatingState.current = false;
         return prev;
       }
-      // Clear flag after state update
       setTimeout(() => {
         isUpdatingState.current = false;
       }, 0);
@@ -650,11 +601,10 @@ export default function CycleForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validate all goals quarterly data before submission
+
     let hasValidationErrors = false;
     const allGoalsErrors: Record<number, Record<string, string>> = { 1: {}, 2: {}, 3: {}, 4: {} };
-    
+
     for (let quarter = 1; quarter <= 4; quarter++) {
       const quarterData = goalsQuarterlyData[quarter];
       if (quarterData && Object.keys(quarterData).length > 0) {
@@ -665,17 +615,16 @@ export default function CycleForm() {
         }
       }
     }
-    
+
     setGoalsValidationErrors(allGoalsErrors);
-    
-    // Validate all quarterly reviews data before submission
+
     const quarterlyReviewsErrors = validateAllQuarterlyReviews(formData);
     setQuarterlyReviewsValidationErrors(quarterlyReviewsErrors);
-    
+
     if (Object.keys(quarterlyReviewsErrors).length > 0) {
       hasValidationErrors = true;
     }
-    
+
     if (hasValidationErrors) {
       toast({
         title: 'Validation Error',
@@ -684,7 +633,7 @@ export default function CycleForm() {
       });
       return;
     }
-    
+
     setIsSubmitting(true);
 
     try {
@@ -692,14 +641,12 @@ export default function CycleForm() {
         name: formData.name,
         description: formData.description,
         year: Number(formData.year),
-        // Annual goal fields removed - using quarterly goals_quarterly_cycles instead
-        // manager_evaluation_start/end removed - using quarterly_cycles table instead
+
         calibration_start: formData.calibration_start,
         calibration_end: formData.calibration_end,
         release_date: formData.release_date,
         applicable_departments: applyToAll ? null : (selectedDepartments.length > 0 ? selectedDepartments : null),
         applicable_business_units: applyToAll ? null : (selectedBusinessUnits.length > 0 ? selectedBusinessUnits : null),
-        // allow_late_goal_submission removed - using quarterly goals_quarterly_cycles instead
       };
 
       if (!isEditMode) {
@@ -709,13 +656,10 @@ export default function CycleForm() {
 
       if (isEditMode && cycleId) {
         await cycleService.update(cycleId, submitData);
-        
-        // Save year-end manager evaluation dates to quarterly_cycles
-        // Store them in Q4's quarterly_cycles entry (year-end evaluations happen after Q4)
+
         const yearEndMgrStart = formData.manager_evaluation_start;
         const yearEndMgrEnd = formData.manager_evaluation_end;
-        
-        // Save quarterly cycles (evaluations)
+
         for (let quarter = 1; quarter <= 4; quarter++) {
           const quarterKey = `q${quarter}` as 'q1' | 'q2' | 'q3' | 'q4';
           const quarterStart = formData[`${quarterKey}_quarter_start_date` as keyof typeof formData];
@@ -724,40 +668,31 @@ export default function CycleForm() {
           const selfEnd = formData[`${quarterKey}_self_review_end` as keyof typeof formData];
           const mgrStart = formData[`${quarterKey}_manager_review_start` as keyof typeof formData];
           const mgrEnd = formData[`${quarterKey}_manager_review_end` as keyof typeof formData];
-          
+
           try {
             const quarterlyData: any = {};
-            
-            // Save quarter date range (for validation purposes)
+
             if (quarterStart) quarterlyData.quarter_start_date = quarterStart;
             if (quarterEnd) quarterlyData.quarter_end_date = quarterEnd;
-            
-            // For Q4, handle quarterly review dates
-            // Year-end manager evaluation dates can override Q4's manager review dates
+
             if (quarter === 4) {
-              // Save Q4 quarterly review dates (self and manager)
               if (selfStart) quarterlyData.self_review_start_date = selfStart;
               if (selfEnd) quarterlyData.self_review_end_date = selfEnd;
-              
-              // Use year-end manager evaluation dates if provided, otherwise use Q4 quarterly manager dates
+
               if (yearEndMgrStart || yearEndMgrEnd) {
-                // Year-end manager evaluation dates take precedence
                 quarterlyData.manager_review_start_date = yearEndMgrStart || mgrStart;
                 quarterlyData.manager_review_end_date = yearEndMgrEnd || mgrEnd;
               } else {
-                // Use Q4 quarterly manager review dates
                 if (mgrStart) quarterlyData.manager_review_start_date = mgrStart;
                 if (mgrEnd) quarterlyData.manager_review_end_date = mgrEnd;
               }
             } else {
-              // For Q1-Q3, save quarterly data normally
               if (selfStart) quarterlyData.self_review_start_date = selfStart;
               if (selfEnd) quarterlyData.self_review_end_date = selfEnd;
               if (mgrStart) quarterlyData.manager_review_start_date = mgrStart;
               if (mgrEnd) quarterlyData.manager_review_end_date = mgrEnd;
             }
-            
-            // Only save if at least one field is filled
+
             if (Object.keys(quarterlyData).length > 0) {
               await cycleService.updateQuarterlyCycle(cycleId, quarter, quarterlyData);
             }
@@ -770,12 +705,10 @@ export default function CycleForm() {
             });
           }
         }
-        
-        // Save goals quarterly cycles
+
         for (let quarter = 1; quarter <= 4; quarter++) {
           const quarterData = goalsQuarterlyData[quarter];
           if (quarterData && Object.keys(quarterData).length > 0) {
-            // Only save if at least one field is filled
             const hasData = Object.values(quarterData).some(v => v !== '' && v !== false);
             if (hasData) {
               try {
@@ -793,8 +726,7 @@ export default function CycleForm() {
         }
       } else {
         const createdCycle = await cycleService.create(submitData);
-        
-        // Save goals quarterly cycles for new cycle
+
         if (createdCycle.data?.id) {
           for (let quarter = 1; quarter <= 4; quarter++) {
             const quarterData = goalsQuarterlyData[quarter];
@@ -829,24 +761,22 @@ export default function CycleForm() {
     }
   };
 
-  // Unified Quarterly Settings Section - combines Goals and Reviews
   const QuarterlySettingsSection = ({ quarter, label, quarterNum }: { quarter: 'q1' | 'q2' | 'q3' | 'q4'; label: string; quarterNum: number }) => {
     const goalsData = goalsQuarterlyData[quarterNum] || {};
     const goalsErrors = goalsValidationErrors[quarterNum] || {};
-    
-    // Review validation errors
+
     const selfStartError = quarterlyReviewsValidationErrors[`${quarter}_self_review_start`];
     const selfEndError = quarterlyReviewsValidationErrors[`${quarter}_self_review_end`];
     const evalMgrStartError = quarterlyReviewsValidationErrors[`${quarter}_manager_review_start`];
     const evalMgrEndError = quarterlyReviewsValidationErrors[`${quarter}_manager_review_end`];
-    
+
     const hasGoalsErrors = Object.keys(goalsErrors).length > 0;
     const hasReviewErrors = selfStartError || selfEndError || evalMgrStartError || evalMgrEndError;
     const hasErrors = hasGoalsErrors || hasReviewErrors;
-    
+
     const quarterStartDate = formData[`${quarter}_quarter_start_date` as keyof typeof formData] as string;
     const quarterEndDate = formData[`${quarter}_quarter_end_date` as keyof typeof formData] as string;
-    
+
     return (
       <Collapsible open={openQuarters[quarter]} onOpenChange={() => toggleQuarter(quarter)}>
         <Card className={cn("mt-4", hasErrors && "border-destructive")}>
@@ -1098,7 +1028,6 @@ export default function CycleForm() {
                     name="year"
                     type="number"
                     min="2020"
-                    max="2030"
                     value={formData.year}
                     onChange={handleChange}
                     required
@@ -1260,7 +1189,7 @@ export default function CycleForm() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-        
+
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="manager_evaluation_start">Start Date</Label>

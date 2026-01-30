@@ -28,6 +28,7 @@ import {
   Calculator,
   ClipboardCheck,
   CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DualAchievementSlider, parseNumericTarget } from '@/components/evaluation/AchievementSlider';
@@ -178,6 +179,10 @@ export default function ManagerEvaluation() {
   const [evaluationMode, setEvaluationMode] = useState<'quarterly' | 'year-end'>('quarterly');
   const [selectedQuarter, setSelectedQuarter] = useState<Quarter>(1);
   const [evaluationTab, setEvaluationTab] = useState<string>('goals');
+  
+  // HR Review Rating state
+  const [hrReviewRatings, setHrReviewRatings] = useState<any[]>([]);
+  const [hrReviewLoading, setHrReviewLoading] = useState(false);
   
   // Determine current quarter from cycle
   const currentQuarter = useMemo(() => {
@@ -994,6 +999,47 @@ export default function ManagerEvaluation() {
     setSearchParams({ quarter: quarter.toString() });
   };
 
+  const fetchHrReviewRatings = useCallback(async () => {
+    if (!activeCycle || !managerId || !selectedQuarter) return;
+    
+    setHrReviewLoading(true);
+    try {
+      const result = await evaluationService.normalization.getManagerRatings(
+        managerId,
+        selectedQuarter,
+        activeCycle.id
+      );
+      setHrReviewRatings(result.data || []);
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to load HR review ratings',
+        variant: 'destructive',
+      });
+    } finally {
+      setHrReviewLoading(false);
+    }
+  }, [activeCycle, managerId, selectedQuarter, toast]);
+
+  const handleManagerReview = useCallback(async (employeeId: string, action: 'ACCEPT' | 'REJECT') => {
+    if (!activeCycle || !selectedQuarter) return;
+    
+    try {
+      await evaluationService.normalization.managerReview(employeeId, selectedQuarter, activeCycle.id, action);
+      toast({
+        title: 'Success',
+        description: `Rating ${action === 'ACCEPT' ? 'accepted' : 'rejected'}`,
+      });
+      await fetchHrReviewRatings();
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || `Failed to ${action.toLowerCase()} rating`,
+        variant: 'destructive',
+      });
+    }
+  }, [activeCycle, selectedQuarter, toast, fetchHrReviewRatings]);
+
   const canEvaluate = evaluationMode === 'quarterly'
     ? quarterPeriodStatus.timing === 'current' && relevantSelfEval?.status === 'submitted'
     : true;
@@ -1016,6 +1062,19 @@ export default function ManagerEvaluation() {
         <TabsList>
           <TabsTrigger value="goals">KRA/KPI Ratings ({quarterKpis.length})</TabsTrigger>
           <TabsTrigger value="overall">Overall Assessment</TabsTrigger>
+          <TabsTrigger 
+            value="hr-review-rating"
+            onClick={() => {
+              if (activeCycle && managerId && selectedQuarter) {
+                fetchHrReviewRatings();
+              }
+            }}
+          >
+            HR Review Rating
+            {hrReviewRatings.length > 0 && (
+              <Badge variant="secondary" className="ml-2">{hrReviewRatings.length}</Badge>
+            )}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="goals" className="space-y-6">
@@ -1450,6 +1509,79 @@ export default function ManagerEvaluation() {
                   <Send className="mr-2 h-4 w-4" />
                   Submit
                 </Button>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="hr-review-rating" className="space-y-4">
+            {hrReviewLoading ? (
+              <div className="flex items-center justify-center h-64">
+                <Loader2 className="h-8 w-8 animate-spin" />
+              </div>
+            ) : hrReviewRatings.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <CheckCircle2 className="h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="font-semibold text-lg">No HR review ratings</h3>
+                  <p className="text-muted-foreground">
+                    No normalized ratings have been sent to you for review.
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>
+                    HR has normalized ratings for your team members. Please review and accept or reject each rating.
+                  </AlertDescription>
+                </Alert>
+                {hrReviewRatings.map((rating) => (
+                  <Card key={rating.id}>
+                    <CardHeader>
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <CardTitle className="flex items-center gap-2">
+                            <User className="h-5 w-5" />
+                            {rating.employee_name}
+                            <Badge variant="outline">{rating.employee_code}</Badge>
+                          </CardTitle>
+                          <CardDescription className="mt-2">
+                            Grade: {rating.grade} • Q{rating.quarter}
+                          </CardDescription>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm text-muted-foreground">Raw Rating</div>
+                          <div className="text-xl font-semibold">{formatRating(rating.raw_rating)}</div>
+                          <div className="text-sm text-muted-foreground mt-2">HR Normalized</div>
+                          <div className="text-2xl font-bold text-primary">
+                            {formatRating(rating.final_normalized_rating)}
+                          </div>
+                        </div>
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => handleManagerReview(rating.employee_id, 'ACCEPT')}
+                          variant="default"
+                          className="flex-1"
+                        >
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                          Accept
+                        </Button>
+                        <Button
+                          onClick={() => handleManagerReview(rating.employee_id, 'REJECT')}
+                          variant="destructive"
+                          className="flex-1"
+                        >
+                          <XCircle className="mr-2 h-4 w-4" />
+                          Reject
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
             )}
           </TabsContent>

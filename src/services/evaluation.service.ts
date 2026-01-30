@@ -239,6 +239,52 @@ export const evaluationService = {
     },
   },
 
+  // ========== Normalized Ratings Workflow ==========
+  normalization: {
+    normalize: (quarter: number, cycleId: string) =>
+      api.post<{ data: { processed: number; skipped: number; message: string } }>(
+        `/api/evaluations/hr/normalize?quarter=${quarter}&cycle_id=${cycleId}`
+      ),
+
+    getRatings: (quarter: number, cycleId: string, status?: string) => {
+      let url = `/api/evaluations/hr/normalized-ratings?quarter=${quarter}&cycle_id=${cycleId}`;
+      if (status) url += `&status=${status}`;
+      return api.get<{ data: any[] }>(url);
+    },
+
+    sendToManager: (employeeIds: string[], quarter: number, cycleId: string) =>
+      api.post<{ data: any[]; count: number }>('/api/evaluations/hr/send-to-manager', {
+        employeeIds,
+        quarter,
+        cycleId,
+      }),
+
+    managerReview: (employeeId: string, quarter: number, cycleId: string, action: 'ACCEPT' | 'REJECT') =>
+      api.post<{ data: any }>('/api/evaluations/manager/review', {
+        employeeId,
+        quarter,
+        cycleId,
+        action,
+      }),
+
+    getManagerRatings: (managerId: string, quarter: number, cycleId: string) =>
+      api.get<{ data: any[] }>(
+        `/api/evaluations/manager/normalized-ratings?manager_id=${managerId}&quarter=${quarter}&cycle_id=${cycleId}`
+      ),
+
+    publish: (employeeIds: string[], quarter: number, cycleId: string) =>
+      api.post<{ data: any[]; count: number }>('/api/evaluations/hr/publish', {
+        employeeIds,
+        quarter,
+        cycleId,
+      }),
+
+    updateRating: (id: string, finalNormalizedRating: number) =>
+      api.put<{ data: any }>(`/api/evaluations/hr/normalized-rating/${id}`, {
+        final_normalized_rating: finalNormalizedRating,
+      }),
+  },
+
   // ========== Year-End Evaluation ==========
   yearEndEvaluation: {
     get: (employeeId: string, cycleId: string) =>
