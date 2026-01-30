@@ -748,7 +748,7 @@ export default function Team() {
                        
                         {report.pending_goals > 0 && (
                           <Badge variant="destructive">
-                            {report.ReportsCount} Kpis pending approval
+                            {report.ReportsCount} goals pending approval
                           </Badge>
                         )}
                         {report.self_eval_status === 'submitted' && report.manager_eval_status !== 'submitted' && report.manager_eval_status !== 'released' && (

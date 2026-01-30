@@ -61,8 +61,8 @@ export function TeamMemberHeader({
       </div>
       {submittedCount > 0 && (
         <Button onClick={onApproveAll} disabled={processing}>
-          <CheckCircle className="mr-2 h-4 w-4" />
-          Approve All ({submittedCount})
+          <CheckCircle className=" h-4 w-4" />
+          Approve All 
         </Button>
       )}
     </div>

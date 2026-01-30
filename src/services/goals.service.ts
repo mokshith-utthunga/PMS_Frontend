@@ -105,6 +105,9 @@ export const goalsService = {
 
     delete: (id: string) => 
       api.delete(`/api/kras/${id}`),
+
+    revoke: (id: string) => 
+      api.post<{ message: string }>(`/api/kras/${id}/revoke`),
   },
 
   // ========== KPI/Goals Operations ==========
@@ -133,6 +136,9 @@ export const goalsService = {
 
     delete: (id: string) => 
       api.delete(`/api/goals/${id}`),
+
+    revoke: (id: string) => 
+      api.post<{ message: string }>(`/api/goals/${id}/revoke`),
 
     // Pending approvals for managers
     getPendingApprovals: (cycleId: string) => 

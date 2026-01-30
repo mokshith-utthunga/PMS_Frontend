@@ -6,12 +6,14 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Upload, Users, ArrowLeft, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Upload, Users, ArrowLeft, Filter, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { PageLoader } from '@/loaders';
 import { STATUS_COLORS, DEFAULT_PAGE_SIZE } from '@/utils/constants';
 import { useEmployeeList } from '@/hooks/useEmployeeList';
 
 export default function EmployeeList() {
+  const navigate = useNavigate();
   const {
     employees, departments, totalCount, loading, filters, totalPages,
     setSearch, setDepartment, setStatus, nextPage, prevPage,
@@ -104,6 +106,7 @@ export default function EmployeeList() {
                         <TableHead>Grade</TableHead>
                         <TableHead>Location</TableHead>
                         <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -119,6 +122,17 @@ export default function EmployeeList() {
                             <Badge variant={STATUS_COLORS[emp.status] || 'secondary'}>
                               {emp.status.replace('_', ' ')}
                             </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => navigate(`/admin/employee/${emp.id}`)}
+                              aria-label={`View employee ${emp.full_name || emp.emp_code}`}
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              View Employee
+                            </Button>
                           </TableCell>
                         </TableRow>
                       ))}

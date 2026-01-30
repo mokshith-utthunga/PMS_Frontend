@@ -84,7 +84,7 @@ export function AchievementSlider({
             type="number"
             min={0}
             max={maxValue}
-            step={0.01}
+            // step={0.01}
             value={numericAchievedValue}
             onChange={(e) => {
               const value = parseFloat(e.target.value) || 0;
@@ -219,8 +219,12 @@ export function DualAchievementSlider({
     ? managerAchieved 
     : (typeof managerAchieved === 'string' ? parseFloat(managerAchieved) || 0 : 0);
   
-  const employeePercentage = targetValue > 0 ? Math.round((numericEmployeeAchieved / targetValue) * 100) : 0;
-  const managerPercentage = targetValue > 0 ? Math.round((numericManagerAchieved / targetValue) * 100) : 0;
+  const employeePercentage = targetValue > 0 && !isNaN(numericEmployeeAchieved) 
+    ? Math.round((numericEmployeeAchieved / targetValue) * 100) 
+    : 0;
+  const managerPercentage = targetValue > 0 && !isNaN(numericManagerAchieved) 
+    ? Math.round((numericManagerAchieved / targetValue) * 100) 
+    : 0;
   const difference = managerPercentage - employeePercentage;
   // Check if metricType is "number" (case-insensitive)
   const isNumberType = typeof metricType === 'string' && metricType.toLowerCase() === 'number';
@@ -322,7 +326,7 @@ export function DualAchievementSlider({
               type="number"
               min={0}
               max={maxValue}
-              step={0.01}
+              // step={0.01}
               value={numericEmployeeAchieved}
               onChange={(e) => {
                 if (canEditEmployee && onEmployeeChange) {
@@ -374,7 +378,7 @@ export function DualAchievementSlider({
               </>
             ) : (
               <>
-                {managerAchieved.toFixed(1)}%
+                {typeof managerPercentage === 'number' ? managerPercentage.toFixed(1) : '0.0'}%
                 {isManagerOverAchieved && " 🎯"}
               </>
             )}
@@ -386,7 +390,7 @@ export function DualAchievementSlider({
               type="number"
               min={0}
               max={maxValue}
-              step={0.01}
+              // step={0.01}
               value={numericManagerAchieved}
               onChange={(e) => {
                 const value = parseFloat(e.target.value) || 0;

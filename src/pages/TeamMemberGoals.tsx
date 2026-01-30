@@ -19,10 +19,19 @@ import { TeamMemberHeader } from '@/components/goals/TeamMemberHeader';
 import { TeamMemberKRACard } from '@/components/goals/TeamMemberKRACard';
 import { TeamMemberBonusSection } from '@/components/goals/TeamMemberBonusSection';
 import { ReturnDialog } from '@/components/goals/ReturnDialog';
+import { RevokeDialog } from '@/components/goals/RevokeDialog';
+import { goalsService } from '@/services';
+import { useToast } from '@/hooks/use-toast';
 
 type ReturnItemType = 'kra' | 'kpi' | 'bonus_kra' | 'bonus_kpi';
 
 interface ReturnDialogState {
+  open: boolean;
+  type: ReturnItemType | null;
+  id: string | null;
+}
+
+interface RevokeDialogState {
   open: boolean;
   type: ReturnItemType | null;
   id: string | null;
@@ -118,8 +127,17 @@ export default function TeamMemberGoals() {
   const goalsData = useTeamMemberGoals(employeeId, shouldFetchData ? quarter : null);
   const { employee, kras, kpis, bonusKras, bonusKpis, loading, refetch } = goalsData;
 
+  const { toast } = useToast();
+  
   // Return dialog state
   const [returnDialog, setReturnDialog] = useState<ReturnDialogState>({
+    open: false,
+    type: null,
+    id: null,
+  });
+
+  // Revoke dialog state
+  const [revokeDialog, setRevokeDialog] = useState<RevokeDialogState>({
     open: false,
     type: null,
     id: null,
@@ -159,6 +177,52 @@ export default function TeamMemberGoals() {
   const handleReturn = async (comments: string) => {
     if (!returnDialog.type || !returnDialog.id) return false;
     return approval.returnItem(returnDialog.type, returnDialog.id, comments);
+  };
+
+  const handleOpenRevokeDialog = (type: ReturnItemType, id: string) => {
+    setRevokeDialog({ open: true, type, id });
+  };
+
+  const handleCloseRevokeDialog = () => {
+    setRevokeDialog({ open: false, type: null, id: null });
+  };
+
+  const handleRevoke = async () => {
+    if (!revokeDialog.type || !revokeDialog.id) return;
+
+    try {
+      if (revokeDialog.type === 'kra') {
+        await goalsService.kras.revoke(revokeDialog.id);
+        toast({
+          title: 'Success',
+          description: 'Approved KRA revoked and deleted successfully',
+        });
+      } else if (revokeDialog.type === 'kpi') {
+        await goalsService.kpis.revoke(revokeDialog.id);
+        toast({
+          title: 'Success',
+          description: 'Approved KPI revoked and deleted successfully',
+        });
+      } else {
+        // For bonus KRAs and KPIs, use the regular delete endpoint
+        // (bonus items don't have revoke endpoints, but we can add them if needed)
+        toast({
+          title: 'Error',
+          description: 'Revoke not supported for bonus items',
+          variant: 'destructive',
+        });
+        return;
+      }
+      
+      await refetch();
+      handleCloseRevokeDialog();
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to revoke approved goal',
+        variant: 'destructive',
+      });
+    }
   };
 
   // Loading state
@@ -321,6 +385,7 @@ export default function TeamMemberGoals() {
                       processing={approval.processing}
                       onApprove={approval.approveKRA}
                       onReturn={handleOpenReturnDialog}
+                      onRevoke={handleOpenRevokeDialog}
                     />
                   ))}
                 </div>
@@ -349,6 +414,15 @@ export default function TeamMemberGoals() {
           processing={approval.processing}
           onClose={handleCloseReturnDialog}
           onSubmit={handleReturn}
+        />
+
+        {/* Revoke Dialog */}
+        <RevokeDialog
+          open={revokeDialog.open}
+          type={revokeDialog.type}
+          processing={approval.processing}
+          onClose={handleCloseRevokeDialog}
+          onConfirm={handleRevoke}
         />
       </div>
     </MainLayout>

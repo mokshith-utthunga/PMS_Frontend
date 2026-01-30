@@ -18,6 +18,8 @@ export function getGoalDeadlineStatus(
 
   const now = new Date();
   const deadline = new Date(cycle.goal_submission_end);
+  // Set deadline to end of day (23:59:59.999) so the entire deadline day is included
+  deadline.setHours(23, 59, 59, 999);
   const isPastDeadline = now > deadline;
   const daysOverdue = differenceInDays(now, deadline);
   const canSubmit = !isPastDeadline || cycle.allow_late_goal_submission || hasLatePermission;

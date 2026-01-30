@@ -60,7 +60,61 @@ export default function CycleForm() {
   const hasUserModifiedBusinessUnits = useRef(false);
   const isUpdatingState = useRef(false);
 
-  const [formData, setFormData] = useState({
+  // Define quarter key types for type-safe access
+  type QuarterKey = 'q1' | 'q2' | 'q3' | 'q4';
+  type QuarterField = 
+    | 'quarter_start_date'
+    | 'quarter_end_date'
+    | 'self_review_start'
+    | 'self_review_end'
+    | 'manager_review_start'
+    | 'manager_review_end';
+
+  // Define form data type with explicit quarterly fields
+  type FormData = {
+    name: string;
+    description: string;
+    year: number;
+    goal_submission_start: string;
+    goal_submission_end: string;
+    goal_approval_end: string;
+    manager_evaluation_start: string;
+    manager_evaluation_end: string;
+    calibration_start: string;
+    calibration_end: string;
+    release_date: string;
+    allow_late_goal_submission: boolean;
+    // Q1 Quarterly Review
+    q1_quarter_start_date: string;
+    q1_quarter_end_date: string;
+    q1_self_review_start: string;
+    q1_self_review_end: string;
+    q1_manager_review_start: string;
+    q1_manager_review_end: string;
+    // Q2 Quarterly Review
+    q2_quarter_start_date: string;
+    q2_quarter_end_date: string;
+    q2_self_review_start: string;
+    q2_self_review_end: string;
+    q2_manager_review_start: string;
+    q2_manager_review_end: string;
+    // Q3 Quarterly Review
+    q3_quarter_start_date: string;
+    q3_quarter_end_date: string;
+    q3_self_review_start: string;
+    q3_self_review_end: string;
+    q3_manager_review_start: string;
+    q3_manager_review_end: string;
+    // Q4 Quarterly Review
+    q4_quarter_start_date: string;
+    q4_quarter_end_date: string;
+    q4_self_review_start: string;
+    q4_self_review_end: string;
+    q4_manager_review_start: string;
+    q4_manager_review_end: string;
+  };
+
+  const [formData, setFormData] = useState<FormData>({
     name: '',
     description: '',
     year: new Date().getFullYear(),
@@ -102,6 +156,13 @@ export default function CycleForm() {
     q4_manager_review_start: '',
     q4_manager_review_end: '',
   });
+
+  // Helper function to safely get quarterly form data values with type safety
+  const getQuarterlyValue = (quarter: QuarterKey, field: QuarterField): string => {
+    const key = `${quarter}_${field}` as keyof FormData;
+    const value = formData[key];
+    return typeof value === 'string' ? value : '';
+  };
 
   // Reset fetch flags when cycleId changes
   useEffect(() => {
@@ -451,7 +512,7 @@ export default function CycleForm() {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => {
-      const newData = {
+      const newData: FormData = {
         ...prev,
         [name]: value
       };
@@ -464,6 +525,9 @@ export default function CycleForm() {
       return newData;
     });
   };
+
+  // Note: Removed handleDateChange - quarterly dates now use handleChange like other date inputs
+  // This ensures consistent behavior with calibration/release/year-end dates that work correctly
 
   const toggleQuarter = (quarter: string) => {
     setOpenQuarters(prev => ({ ...prev, [quarter]: !prev[quarter] }));
@@ -482,8 +546,8 @@ export default function CycleForm() {
     const errors: Record<string, string> = {};
     const quarterKey = `q${quarter}` as 'q1' | 'q2' | 'q3' | 'q4';
 
-    const quarterStart = formData[`${quarterKey}_quarter_start_date` as keyof typeof formData] as string || data.quarterly_start_date;
-    const quarterEnd = formData[`${quarterKey}_quarter_end_date` as keyof typeof formData] as string || data.quarterly_end_date;
+    const quarterStart = getQuarterlyValue(quarterKey as QuarterKey, 'quarter_start_date') || data.quarterly_start_date;
+    const quarterEnd = getQuarterlyValue(quarterKey as QuarterKey, 'quarter_end_date') || data.quarterly_end_date;
 
     if (!quarterStart || !quarterEnd) return errors; // Skip validation if quarter dates are not set
 
@@ -504,10 +568,10 @@ export default function CycleForm() {
   };
 
 
-  const validateQuarterlyReviewsDates = (quarter: 'q1' | 'q2' | 'q3' | 'q4', data: typeof formData): Record<string, string> => {
+  const validateQuarterlyReviewsDates = (quarter: 'q1' | 'q2' | 'q3' | 'q4', data: FormData): Record<string, string> => {
     const errors: Record<string, string> = {};
-    const quarterStart = data[`${quarter}_quarter_start_date` as keyof typeof data] as string;
-    const quarterEnd = data[`${quarter}_quarter_end_date` as keyof typeof data] as string;
+    const quarterStart = data[`${quarter}_quarter_start_date`] as string || '';
+    const quarterEnd = data[`${quarter}_quarter_end_date`] as string || '';
 
     if (!quarterStart || !quarterEnd) return errors; // Skip validation if quarter dates are not set
 
@@ -519,7 +583,7 @@ export default function CycleForm() {
     ];
 
     fieldsToValidate.forEach(({ field, label }) => {
-      const value = data[field as keyof typeof data] as string;
+      const value = (data[field] as string) || '';
       if (value && !isDateInRange(value, quarterStart, quarterEnd)) {
         errors[field] = `${label} must be between ${quarterStart} and ${quarterEnd}`;
       }
@@ -529,7 +593,7 @@ export default function CycleForm() {
   };
 
 
-  const validateAllQuarterlyReviews = (data: typeof formData): Record<string, string> => {
+  const validateAllQuarterlyReviews = (data: FormData): Record<string, string> => {
     const allErrors: Record<string, string> = {};
     const quarters: Array<'q1' | 'q2' | 'q3' | 'q4'> = ['q1', 'q2', 'q3', 'q4'];
 
@@ -655,72 +719,101 @@ export default function CycleForm() {
       }
 
       if (isEditMode && cycleId) {
-        await cycleService.update(cycleId, submitData);
+        console.log('Updating cycle with data:', submitData);
+        const updateResult = await cycleService.update(cycleId, submitData);
+        console.log('Cycle update result:', updateResult);
 
         const yearEndMgrStart = formData.manager_evaluation_start;
         const yearEndMgrEnd = formData.manager_evaluation_end;
 
         for (let quarter = 1; quarter <= 4; quarter++) {
           const quarterKey = `q${quarter}` as 'q1' | 'q2' | 'q3' | 'q4';
-          const quarterStart = formData[`${quarterKey}_quarter_start_date` as keyof typeof formData];
-          const quarterEnd = formData[`${quarterKey}_quarter_end_date` as keyof typeof formData];
-          const selfStart = formData[`${quarterKey}_self_review_start` as keyof typeof formData];
-          const selfEnd = formData[`${quarterKey}_self_review_end` as keyof typeof formData];
-          const mgrStart = formData[`${quarterKey}_manager_review_start` as keyof typeof formData];
-          const mgrEnd = formData[`${quarterKey}_manager_review_end` as keyof typeof formData];
+          const quarterStart = getQuarterlyValue(quarterKey as QuarterKey, 'quarter_start_date');
+          const quarterEnd = getQuarterlyValue(quarterKey as QuarterKey, 'quarter_end_date');
+          const selfStart = getQuarterlyValue(quarterKey as QuarterKey, 'self_review_start');
+          const selfEnd = getQuarterlyValue(quarterKey as QuarterKey, 'self_review_end');
+          const mgrStart = getQuarterlyValue(quarterKey as QuarterKey, 'manager_review_start');
+          const mgrEnd = getQuarterlyValue(quarterKey as QuarterKey, 'manager_review_end');
 
           try {
             const quarterlyData: any = {};
 
-            if (quarterStart) quarterlyData.quarter_start_date = quarterStart;
-            if (quarterEnd) quarterlyData.quarter_end_date = quarterEnd;
+            // Always include quarter dates if they exist (even if empty string, backend will handle defaults)
+            if (quarterStart && quarterStart.trim()) quarterlyData.quarter_start_date = quarterStart;
+            if (quarterEnd && quarterEnd.trim()) quarterlyData.quarter_end_date = quarterEnd;
 
             if (quarter === 4) {
-              if (selfStart) quarterlyData.self_review_start_date = selfStart;
-              if (selfEnd) quarterlyData.self_review_end_date = selfEnd;
+              // Q4: self review dates (nullable)
+              if (selfStart && selfStart.trim()) quarterlyData.self_review_start_date = selfStart;
+              if (selfEnd && selfEnd.trim()) quarterlyData.self_review_end_date = selfEnd;
 
-              if (yearEndMgrStart || yearEndMgrEnd) {
-                quarterlyData.manager_review_start_date = yearEndMgrStart || mgrStart;
-                quarterlyData.manager_review_end_date = yearEndMgrEnd || mgrEnd;
-              } else {
-                if (mgrStart) quarterlyData.manager_review_start_date = mgrStart;
-                if (mgrEnd) quarterlyData.manager_review_end_date = mgrEnd;
+              // Q4: manager review dates (use year-end if provided, otherwise quarterly)
+              if (yearEndMgrStart && yearEndMgrStart.trim()) {
+                quarterlyData.manager_review_start_date = yearEndMgrStart;
+              } else if (mgrStart && mgrStart.trim()) {
+                quarterlyData.manager_review_start_date = mgrStart;
+              }
+              
+              if (yearEndMgrEnd && yearEndMgrEnd.trim()) {
+                quarterlyData.manager_review_end_date = yearEndMgrEnd;
+              } else if (mgrEnd && mgrEnd.trim()) {
+                quarterlyData.manager_review_end_date = mgrEnd;
               }
             } else {
-              if (selfStart) quarterlyData.self_review_start_date = selfStart;
-              if (selfEnd) quarterlyData.self_review_end_date = selfEnd;
-              if (mgrStart) quarterlyData.manager_review_start_date = mgrStart;
-              if (mgrEnd) quarterlyData.manager_review_end_date = mgrEnd;
+              // Q1-Q3: self review dates (nullable)
+              if (selfStart && selfStart.trim()) quarterlyData.self_review_start_date = selfStart;
+              if (selfEnd && selfEnd.trim()) quarterlyData.self_review_end_date = selfEnd;
+              
+              // Q1-Q3: manager review dates (required)
+              if (mgrStart && mgrStart.trim()) quarterlyData.manager_review_start_date = mgrStart;
+              if (mgrEnd && mgrEnd.trim()) quarterlyData.manager_review_end_date = mgrEnd;
             }
 
+            // Save if we have at least one field to update
             if (Object.keys(quarterlyData).length > 0) {
+              console.log(`Saving Q${quarter} quarterly cycle:`, quarterlyData);
               await cycleService.updateQuarterlyCycle(cycleId, quarter, quarterlyData);
+            } else {
+              console.log(`Skipping Q${quarter} - no data to save`);
             }
           } catch (error: any) {
             console.error(`Error saving Q${quarter} evaluations:`, error);
             toast({
-              title: 'Warning',
-              description: `Failed to save Q${quarter} evaluation settings: ${error.message}`,
+              title: 'Error',
+              description: `Failed to save Q${quarter} evaluation settings: ${error.message || error}`,
               variant: 'destructive'
             });
+            // Don't return - continue saving other quarters
           }
         }
 
         for (let quarter = 1; quarter <= 4; quarter++) {
           const quarterData = goalsQuarterlyData[quarter];
           if (quarterData && Object.keys(quarterData).length > 0) {
-            const hasData = Object.values(quarterData).some(v => v !== '' && v !== false);
-            if (hasData) {
+            // Filter out empty strings and false values, but keep valid data
+            const filteredData: any = {};
+            Object.keys(quarterData).forEach(key => {
+              const value = quarterData[key];
+              if (value !== '' && value !== false && value !== null && value !== undefined) {
+                filteredData[key] = value;
+              }
+            });
+            
+            if (Object.keys(filteredData).length > 0) {
               try {
-                await cycleService.updateGoalsQuarterlyCycle(cycleId, quarter, quarterData);
+                console.log(`Saving Q${quarter} goals quarterly cycle:`, filteredData);
+                await cycleService.updateGoalsQuarterlyCycle(cycleId, quarter, filteredData);
               } catch (error: any) {
                 console.error(`Error saving Q${quarter} goals:`, error);
                 toast({
-                  title: 'Warning',
-                  description: `Failed to save Q${quarter} goals settings: ${error.message}`,
+                  title: 'Error',
+                  description: `Failed to save Q${quarter} goals settings: ${error.message || error}`,
                   variant: 'destructive'
                 });
+                // Don't return - continue saving other quarters
               }
+            } else {
+              console.log(`Skipping Q${quarter} goals - no valid data to save`);
             }
           }
         }
@@ -744,11 +837,16 @@ export default function CycleForm() {
         }
       }
 
+      console.log('All updates completed successfully');
       toast({
         title: isEditMode ? 'Cycle Updated' : 'Cycle Created',
         description: `The performance cycle has been ${isEditMode ? 'updated' : 'created'} successfully.`
       });
-      navigate('/admin/cycles');
+      
+      // Small delay before navigation to ensure toast is visible
+      setTimeout(() => {
+        navigate('/admin/cycles');
+      }, 500);
     } catch (error: any) {
       console.error('Error saving cycle:', error);
       toast({
@@ -774,8 +872,8 @@ export default function CycleForm() {
     const hasReviewErrors = selfStartError || selfEndError || evalMgrStartError || evalMgrEndError;
     const hasErrors = hasGoalsErrors || hasReviewErrors;
 
-    const quarterStartDate = formData[`${quarter}_quarter_start_date` as keyof typeof formData] as string;
-    const quarterEndDate = formData[`${quarter}_quarter_end_date` as keyof typeof formData] as string;
+    const quarterStartDate = getQuarterlyValue(quarter as QuarterKey, 'quarter_start_date');
+    const quarterEndDate = getQuarterlyValue(quarter as QuarterKey, 'quarter_end_date');
 
     return (
       <Collapsible open={openQuarters[quarter]} onOpenChange={() => toggleQuarter(quarter)}>
@@ -805,7 +903,7 @@ export default function CycleForm() {
                       id={`${quarter}_quarter_start_date`}
                       name={`${quarter}_quarter_start_date`}
                       type="date"
-                      value={String(formData[`${quarter}_quarter_start_date` as keyof typeof formData] || '')}
+                      value={getQuarterlyValue(quarter as QuarterKey, 'quarter_start_date')}
                       onChange={handleChange}
                     />
                   </div>
@@ -815,7 +913,7 @@ export default function CycleForm() {
                       id={`${quarter}_quarter_end_date`}
                       name={`${quarter}_quarter_end_date`}
                       type="date"
-                      value={String(formData[`${quarter}_quarter_end_date` as keyof typeof formData] || '')}
+                      value={getQuarterlyValue(quarter as QuarterKey, 'quarter_end_date')}
                       onChange={handleChange}
                     />
                   </div>
@@ -907,7 +1005,7 @@ export default function CycleForm() {
                       id={`${quarter}_self_review_start`}
                       name={`${quarter}_self_review_start`}
                       type="date"
-                      value={String(formData[`${quarter}_self_review_start` as keyof typeof formData] || '')}
+                      value={getQuarterlyValue(quarter as QuarterKey, 'self_review_start')}
                       onChange={handleChange}
                       className={cn(selfStartError && "border-destructive")}
                     />
@@ -921,7 +1019,7 @@ export default function CycleForm() {
                       id={`${quarter}_self_review_end`}
                       name={`${quarter}_self_review_end`}
                       type="date"
-                      value={String(formData[`${quarter}_self_review_end` as keyof typeof formData] || '')}
+                      value={getQuarterlyValue(quarter as QuarterKey, 'self_review_end')}
                       onChange={handleChange}
                       className={cn(selfEndError && "border-destructive")}
                     />
@@ -942,7 +1040,7 @@ export default function CycleForm() {
                       id={`${quarter}_manager_review_start`}
                       name={`${quarter}_manager_review_start`}
                       type="date"
-                      value={String(formData[`${quarter}_manager_review_start` as keyof typeof formData] || '')}
+                      value={getQuarterlyValue(quarter as QuarterKey, 'manager_review_start')}
                       onChange={handleChange}
                       className={cn(evalMgrStartError && "border-destructive")}
                     />
@@ -956,7 +1054,7 @@ export default function CycleForm() {
                       id={`${quarter}_manager_review_end`}
                       name={`${quarter}_manager_review_end`}
                       type="date"
-                      value={String(formData[`${quarter}_manager_review_end` as keyof typeof formData] || '')}
+                      value={getQuarterlyValue(quarter as QuarterKey, 'manager_review_end')}
                       onChange={handleChange}
                       className={cn(evalMgrEndError && "border-destructive")}
                     />
@@ -1047,7 +1145,7 @@ export default function CycleForm() {
               </div>
             </CardContent>
           </Card>
-
+{/* 
           <Card className="mt-6">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1165,7 +1263,7 @@ export default function CycleForm() {
                 </div>
               )}
             </CardContent>
-          </Card>
+          </Card> */}
 
           <div className="mt-6">
             <h2 className="text-lg font-semibold mb-2">Quarterly Settings</h2>
@@ -1217,7 +1315,7 @@ export default function CycleForm() {
             </CardContent>
           </Card>
 
-          <Card className="mt-6">
+          {/* <Card className="mt-6">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Calendar className="h-5 w-5" />
@@ -1262,7 +1360,7 @@ export default function CycleForm() {
                 </div>
               </div>
             </CardContent>
-          </Card>
+          </Card> */}
 
           <div className="mt-6 flex gap-4">
             <Button type="submit" disabled={isSubmitting}>

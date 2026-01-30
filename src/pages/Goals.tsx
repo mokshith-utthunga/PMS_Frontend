@@ -253,6 +253,8 @@ export default function Goals() {
 
     const now = new Date();
     const deadline = new Date(goalEndDate);
+    // Set deadline to end of day (23:59:59.999) so the entire deadline day is included
+    deadline.setHours(23, 59, 59, 999);
     const isPastDeadline = now > deadline;
     const daysOverdue = Math.max(0, Math.floor((now.getTime() - deadline.getTime()) / (1000 * 60 * 60 * 24)));
 

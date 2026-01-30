@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { ChevronDown, ChevronRight, CheckCircle, XCircle } from 'lucide-react';
+import { ChevronDown, ChevronRight, CheckCircle, XCircle, Trash2 } from 'lucide-react';
 import { STATUS_COLORS, METRIC_TYPE_LABELS, TOTAL_WEIGHT } from '@/utils/constants';
 import type { KRA, Goal } from '@/types';
 
@@ -13,7 +13,8 @@ interface TeamMemberKRACardProps {
   kpis: Goal[];
   processing: boolean;
   onApprove: (kraId: string) => void;
-  onReturn: (type: 'kra', id: string) => void;
+  onReturn: (type: 'kra' | 'kpi', id: string) => void;
+  onRevoke?: (type: 'kra' | 'kpi', id: string) => void;
 }
 
 export function TeamMemberKRACard({
@@ -22,6 +23,7 @@ export function TeamMemberKRACard({
   processing,
   onApprove,
   onReturn,
+  onRevoke,
 }: TeamMemberKRACardProps) {
   const [expanded, setExpanded] = useState(true);
   const totalKPIWeight = kpis.reduce((sum, k) => sum + Number(k.weight || 0), 0);
@@ -63,6 +65,19 @@ export function TeamMemberKRACard({
               >
                 <XCircle className="mr-1 h-4 w-4" />
                 Return
+              </Button>
+            </div>
+          )}
+          {kra.status === 'approved' && onRevoke && (
+            <div className="flex gap-2 ml-2">
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => onRevoke('kra', kra.id)}
+                disabled={processing}
+              >
+                <Trash2 className="mr-1 h-4 w-4" />
+                Revoke
               </Button>
             </div>
           )}
@@ -182,6 +197,21 @@ export function TeamMemberKRACard({
                               </div>
                             ))}
                           </div>
+                        </div>
+                      )}
+                      
+                      {/* Revoke button for approved KPIs */}
+                      {kpi.status === 'approved' && onRevoke && (
+                        <div className="flex-shrink-0 ml-4">
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onClick={() => onRevoke('kpi', kpi.id)}
+                            disabled={processing}
+                          >
+                            <Trash2 className="mr-1 h-3 w-3" />
+                            Revoke
+                          </Button>
                         </div>
                       )}
                     </div>

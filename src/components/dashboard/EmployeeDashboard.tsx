@@ -42,6 +42,8 @@ export function EmployeeDashboard({
     
     const now = new Date();
     const goalDeadline = new Date(activeCycle.goal_submission_end);
+    // Set deadline to end of day (23:59:59.999) so the entire deadline day is included
+    goalDeadline.setHours(23, 59, 59, 999);
     const daysUntilDeadline = differenceInDays(goalDeadline, now);
     
     if (goalsSubmitted) {
@@ -72,6 +74,8 @@ export function EmployeeDashboard({
     
     const now = new Date();
     const goalDeadline = new Date(activeCycle.goal_submission_end);
+    // Set deadline to end of day (23:59:59.999) so the entire deadline day is included
+    goalDeadline.setHours(23, 59, 59, 999);
     const daysUntilDeadline = differenceInDays(goalDeadline, now);
     
     if (goalsSubmitted) {

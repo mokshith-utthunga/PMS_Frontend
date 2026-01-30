@@ -106,8 +106,8 @@ export default function HRReview() {
   const { hasAnyRole } = useAuth();
   const { toast } = useToast();
   
-  // Get active cycle from context (fetched once at app initialization)
-  const { activeCycle: activeCycleFromContext } = useActiveCycle();
+  // Get active cycle and quarterly cycles from context (fetched once at app initialization)
+  const { activeCycle: activeCycleFromContext, quarterlyCycles } = useActiveCycle();
   
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
@@ -200,15 +200,23 @@ export default function HRReview() {
   }, [toast]);
 
   const fetchNormalizedRatings = useCallback(async (quarter?: number, status?: string) => {
-    if (!activeCycle) return;
+    if (!activeCycle) {
+      console.log('No active cycle, skipping fetchNormalizedRatings');
+      return;
+    }
     
     try {
       setNormalizedRatingsLoading(true);
+      const quarterToFetch = quarter || selectedQuarter;
+      console.log(`Fetching normalized ratings for Q${quarterToFetch}, cycle: ${activeCycle.id}, status: ${status || 'all'}`);
+      
       const result = await evaluationService.normalization.getRatings(
-        quarter || selectedQuarter,
+        quarterToFetch,
         activeCycle.id,
         status
       );
+      
+      console.log('Fetched normalized ratings:', result.data);
       setNormalizedRatings(result.data || []);
     } catch (error: any) {
       console.error('Error fetching normalized ratings:', error);
@@ -222,18 +230,35 @@ export default function HRReview() {
     }
   }, [activeCycle, selectedQuarter, toast]);
 
-  const handleNormalize = useCallback(async () => {
-    if (!activeCycle) return;
+  const handleNormalize = useCallback(async (quarter: number) => {
+    if (!activeCycle) {
+      toast({
+        title: 'Error',
+        description: 'No active cycle found',
+        variant: 'destructive',
+      });
+      return;
+    }
     
     setNormalizing(true);
     try {
-      const result = await evaluationService.normalization.normalize(selectedQuarter, activeCycle.id);
+      console.log(`Normalizing ratings for Q${quarter}, cycle: ${activeCycle.id}`);
+      const result = await evaluationService.normalization.normalize(quarter, activeCycle.id);
+      console.log('Normalization result:', result);
+      
       toast({
         title: 'Success',
-        description: result.data.message || `Normalized ${result.data.processed} ratings`,
+        description: result.data?.message || `Normalized ${result.data?.processed || 0} ratings for Q${quarter}`,
       });
-      await fetchNormalizedRatings(selectedQuarter);
+      
+      // Refresh normalized ratings for the HR Review Rating tab
+      console.log('Fetching normalized ratings for Q' + quarter);
+      await fetchNormalizedRatings(quarter);
+      
+      // Refresh pending reviews to reflect any changes
+      await fetchData();
     } catch (error: any) {
+      console.error('Normalization error:', error);
       toast({
         title: 'Error',
         description: error.message || 'Failed to normalize ratings',
@@ -242,7 +267,7 @@ export default function HRReview() {
     } finally {
       setNormalizing(false);
     }
-  }, [activeCycle, selectedQuarter, toast, fetchNormalizedRatings]);
+  }, [activeCycle, toast, fetchNormalizedRatings, fetchData]);
 
   const handleSendToManager = useCallback(async (employeeIds: string[]) => {
     if (!activeCycle) return;
@@ -602,10 +627,26 @@ export default function HRReview() {
             </TabsTrigger>
             {isHR && (
               <>
-                <TabsTrigger value="hr-review-rating" onClick={() => fetchNormalizedRatings(selectedQuarter)}>
+                <TabsTrigger 
+                  value="hr-review-rating" 
+                  onClick={() => {
+                    // Fetch normalized ratings when tab is clicked
+                    if (activeCycle) {
+                      fetchNormalizedRatings(selectedQuarter);
+                    }
+                  }}
+                >
                   HR Review Rating
                 </TabsTrigger>
-                <TabsTrigger value="manager-status" onClick={() => fetchNormalizedRatings(selectedQuarter)}>
+                <TabsTrigger 
+                  value="manager-status" 
+                  onClick={() => {
+                    // Fetch normalized ratings when tab is clicked
+                    if (activeCycle) {
+                      fetchNormalizedRatings(selectedQuarter);
+                    }
+                  }}
+                >
                   Manager Status
                 </TabsTrigger>
               </>
@@ -624,58 +665,110 @@ export default function HRReview() {
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid gap-4">
-                {pendingReviews.map((review) => (
-                  <Card key={review.id} className="hover:shadow-md transition-shadow">
-                    <CardHeader>
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <CardTitle className="flex items-center gap-2">
-                            <User className="h-5 w-5" />
-                            {review.employee_name}
-                            <Badge variant="outline">{review.employee_code}</Badge>
-                          </CardTitle>
-                          <CardDescription className="mt-2">
-                            <div className="flex items-center gap-4">
-                              <span>Q{review.quarter} • {review.cycle_name}</span>
-                              <span>Manager: {review.manager_name}</span>
+              <div className="space-y-6">
+                {/* Group reviews by quarter and add Normalize button for each quarter */}
+                {[1, 2, 3, 4].map((quarter) => {
+                  const quarterReviews = pendingReviews.filter(r => r.quarter === quarter);
+                  if (quarterReviews.length === 0) return null;
+                  
+                  return (
+                    <div key={quarter} className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <h3 className="text-lg font-semibold">Q{quarter} Reviews ({quarterReviews.length})</h3>
+                        </div>
+                        {isHR && (() => {
+                          // Check if manager review end date has passed for this quarter
+                          // quarterlyCycles is already cached in ActiveCycleContext (from localStorage)
+                          // so this will work even when data is loaded from cache
+                          const quarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === quarter);
+                          const managerReviewEndDate = quarterlyCycle?.quarterly_manager_review_end_date;
+                          const canNormalize = managerReviewEndDate 
+                            ? new Date() >= new Date(managerReviewEndDate)
+                            : false;
+                          
+                          return (
+                            <div className="flex items-center gap-2">
+                              {canNormalize ? (
+                                <Button
+                                  onClick={() => handleNormalize(quarter)}
+                                  disabled={normalizing || !activeCycle}
+                                  variant="outline"
+                                >
+                                  {normalizing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                  <Calculator className="mr-2 h-4 w-4" />
+                                  Normalize Q{quarter}
+                                </Button>
+                              ) : (
+                                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                  <Clock className="h-4 w-4" />
+                                  <span>
+                                    Normalize available after {managerReviewEndDate 
+                                      ? new Date(managerReviewEndDate).toLocaleDateString()
+                                      : 'manager review end date'}
+                                  </span>
+                                </div>
+                              )}
                             </div>
-                          </CardDescription>
-                        </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-bold text-primary">
-                            {review.calculated_overall_rating 
-                              ? formatRating(review.calculated_overall_rating)
-                              : '-'}
-                          </div>
-                          <div className="text-xs text-muted-foreground">Overall Rating</div>
-                        </div>
+                          );
+                        })()}
                       </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={() => openReviewDialog(review)}
-                          variant="outline"
-                          className="flex-1"
-                        >
-                          View Details
-                        </Button>
-                        <Button
-                          onClick={() => {
-                            setSelectedReview(review);
-                            setShowApproveDialog(true);
-                          }}
-                          disabled={saving === review.id}
-                        >
-                          {saving === review.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                          <CheckCircle className="mr-2 h-4 w-4" />
-                          Approve
-                        </Button>
+                      <div className="grid gap-4">
+                        {quarterReviews.map((review) => (
+                          <Card key={review.id} className="hover:shadow-md transition-shadow">
+                            <CardHeader>
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <CardTitle className="flex items-center gap-2">
+                                    <User className="h-5 w-5" />
+                                    {review.employee_name}
+                                    <Badge variant="outline">{review.employee_code}</Badge>
+                                  </CardTitle>
+                                  <CardDescription className="mt-2">
+                                    <div className="flex items-center gap-4">
+                                      <span>Q{review.quarter} • {review.cycle_name}</span>
+                                      <span>Manager: {review.manager_name}</span>
+                                    </div>
+                                  </CardDescription>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-2xl font-bold text-primary">
+                                    {review.calculated_overall_rating 
+                                      ? formatRating(review.calculated_overall_rating)
+                                      : '-'}
+                                  </div>
+                                  <div className="text-xs text-muted-foreground">Overall Rating</div>
+                                </div>
+                              </div>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="flex gap-2">
+                                <Button
+                                  onClick={() => openReviewDialog(review)}
+                                  variant="outline"
+                                  className="flex-1"
+                                >
+                                  View Details
+                                </Button>
+                                <Button
+                                  onClick={() => {
+                                    setSelectedReview(review);
+                                    setShowApproveDialog(true);
+                                  }}
+                                  disabled={saving === review.id}
+                                >
+                                  {saving === review.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                  <CheckCircle className="mr-2 h-4 w-4" />
+                                  Approve
+                                </Button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
                       </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </TabsContent>
@@ -864,33 +957,60 @@ export default function HRReview() {
           {/* HR Review Rating Tab */}
           {isHR && (
             <TabsContent value="hr-review-rating" className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <Label>Quarter:</Label>
-                  <select
-                    value={selectedQuarter}
-                    onChange={(e) => {
-                      const q = parseInt(e.target.value);
-                      setSelectedQuarter(q);
-                      fetchNormalizedRatings(q);
-                    }}
-                    className="px-3 py-2 border rounded-md"
-                  >
-                    <option value={1}>Q1</option>
-                    <option value={2}>Q2</option>
-                    <option value={3}>Q3</option>
-                    <option value={4}>Q4</option>
-                  </select>
-                </div>
-                <Button
-                  onClick={handleNormalize}
-                  disabled={normalizing || !activeCycle}
+              <div className="flex items-center gap-4">
+                <Label>Quarter:</Label>
+                <select
+                  value={selectedQuarter}
+                  onChange={(e) => {
+                    const q = parseInt(e.target.value);
+                    setSelectedQuarter(q);
+                    fetchNormalizedRatings(q);
+                  }}
+                  className="px-3 py-2 border rounded-md"
                 >
-                  {normalizing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  <Calculator className="mr-2 h-4 w-4" />
-                  Normalize
-                </Button>
+                  <option value={1}>Q1</option>
+                  <option value={2}>Q2</option>
+                  <option value={3}>Q3</option>
+                  <option value={4}>Q4</option>
+                </select>
+                <p className="text-sm text-muted-foreground">
+                  Normalized ratings will appear here after clicking "Normalize Q{selectedQuarter}" in the Quarterly tab
+                </p>
               </div>
+
+              {/* Explanation Card */}
+              <Card className="bg-blue-50 border-blue-200">
+                <CardContent className="pt-6">
+                  <div className="space-y-2">
+                    <h4 className="font-semibold text-sm flex items-center gap-2">
+                      <Calculator className="h-4 w-4" />
+                      How Normalization Works
+                    </h4>
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p>
+                        <strong>Box-Cox Transform:</strong> Moves the distribution closer to a bell curve (normal distribution) when sufficient data is available, reducing manager bias.
+                      </p>
+                      <p>
+                        <strong>Min-Max Scaling:</strong> Scales transformed values to [1, 5] range while preserving relative differences.
+                      </p>
+                      <p>
+                        <strong>Winsorization:</strong> Clips extreme outliers (P5/P95) to prevent one extreme rating from distorting the whole team/grade.
+                      </p>
+                      <p>
+                        <strong>Two-Level Normalization:</strong>
+                      </p>
+                      <ul className="list-disc list-inside ml-2 space-y-1">
+                        <li><strong>Manager Level:</strong> Normalizes within each manager's team (requires ≥3 employees for full normalization)</li>
+                        <li><strong>Grade Level:</strong> Normalizes within each grade/band (requires ≥3 employees for full normalization)</li>
+                        <li><strong>Final Rating:</strong> Weighted average of manager-level and grade-level (configurable weights, default 50/50)</li>
+                      </ul>
+                      <p className="mt-2 text-orange-600">
+                        <strong>Note:</strong> Groups with &lt;3 employees use global scaling fallback. Changes are capped at ±2.0 from raw rating for fairness.
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
 
               {normalizedRatingsLoading ? (
                 <div className="flex items-center justify-center h-64">
@@ -898,13 +1018,26 @@ export default function HRReview() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {normalizedRatings.filter(r => r.status === 'DRAFT' || r.status === 'REJECTED').length === 0 ? (
+                  {normalizedRatings.length === 0 ? (
+                    <Card>
+                      <CardContent className="flex flex-col items-center justify-center py-12">
+                        <Calculator className="h-12 w-12 text-muted-foreground mb-4" />
+                        <h3 className="font-semibold text-lg">No normalized ratings found</h3>
+                        <p className="text-muted-foreground text-center">
+                          Click "Normalize Q{selectedQuarter}" in the Quarterly tab to generate normalized ratings.
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-2 text-center max-w-md">
+                          Note: Normalization requires at least 2 employees per manager or grade. Single employees will use raw ratings.
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ) : normalizedRatings.filter(r => r.status === 'DRAFT' || r.status === 'REJECTED').length === 0 ? (
                     <Card>
                       <CardContent className="flex flex-col items-center justify-center py-12">
                         <CheckCircle className="h-12 w-12 text-muted-foreground mb-4" />
                         <h3 className="font-semibold text-lg">No ratings to review</h3>
                         <p className="text-muted-foreground">
-                          Normalize ratings first or all ratings have been processed.
+                          All normalized ratings have been processed (sent to manager or published).
                         </p>
                       </CardContent>
                     </Card>
@@ -930,23 +1063,51 @@ export default function HRReview() {
                                   </CardDescription>
                                 </div>
                                 <div className="text-right">
-                                  <div className="text-sm text-muted-foreground">Raw: {formatRating(rating.raw_rating)}</div>
-                                  <div className="text-2xl font-bold text-primary">
-                                    {editingRating === rating.id ? (
-                                      <input
-                                        type="number"
-                                        min="1"
-                                        max="5"
-                                        step="0.01"
-                                        value={editedRatingValue}
-                                        onChange={(e) => setEditedRatingValue(parseFloat(e.target.value))}
-                                        className="w-20 px-2 py-1 border rounded"
-                                      />
-                                    ) : (
-                                      formatRating(rating.final_normalized_rating)
+                                  <div className="space-y-2">
+                                    <div>
+                                      <div className="text-xs text-muted-foreground mb-1">Raw Rating</div>
+                                      <div className="text-lg font-semibold">{formatRating(rating.raw_rating)}</div>
+                                    </div>
+                                    <div className="pt-2 border-t">
+                                      <div className="text-xs text-muted-foreground mb-1">Normalized Rating</div>
+                                      <div className="text-2xl font-bold text-primary">
+                                        {editingRating === rating.id ? (
+                                          <input
+                                            type="number"
+                                            min="1"
+                                            max="5"
+                                            step="0.01"
+                                            value={editedRatingValue}
+                                            onChange={(e) => setEditedRatingValue(parseFloat(e.target.value))}
+                                            className="w-20 px-2 py-1 border rounded"
+                                          />
+                                        ) : (
+                                          formatRating(rating.final_normalized_rating)
+                                        )}
+                                      </div>
+                                      {rating.final_normalized_rating && rating.raw_rating && (
+                                        <div className="text-xs mt-1">
+                                          {Math.abs(parseFloat(rating.final_normalized_rating) - parseFloat(rating.raw_rating)) < 0.01 ? (
+                                            <span className="text-muted-foreground">No change</span>
+                                          ) : parseFloat(rating.final_normalized_rating) > parseFloat(rating.raw_rating) ? (
+                                            <span className="text-green-600">
+                                              ↑ +{(parseFloat(rating.final_normalized_rating) - parseFloat(rating.raw_rating)).toFixed(2)}
+                                            </span>
+                                          ) : (
+                                            <span className="text-red-600">
+                                              ↓ {(parseFloat(rating.final_normalized_rating) - parseFloat(rating.raw_rating)).toFixed(2)}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {rating.boxcox_manager_level_rating !== null && rating.boxcox_grade_level_rating !== null && (
+                                      <div className="pt-2 border-t text-xs text-muted-foreground space-y-1">
+                                        <div>Manager Level: {formatRating(rating.boxcox_manager_level_rating)}</div>
+                                        <div>Grade Level: {formatRating(rating.boxcox_grade_level_rating)}</div>
+                                      </div>
                                     )}
                                   </div>
-                                  <div className="text-xs text-muted-foreground">Normalized</div>
                                 </div>
                               </div>
                             </CardHeader>
@@ -1068,23 +1229,75 @@ export default function HRReview() {
                                   </CardDescription>
                                 </div>
                                 <div className="text-right">
-                                  <div className="text-sm text-muted-foreground">Raw: {formatRating(rating.raw_rating)}</div>
-                                  <div className="text-2xl font-bold text-primary">
-                                    {editingRating === rating.id ? (
-                                      <input
-                                        type="number"
-                                        min="1"
-                                        max="5"
-                                        step="0.01"
-                                        value={editedRatingValue}
-                                        onChange={(e) => setEditedRatingValue(parseFloat(e.target.value))}
-                                        className="w-20 px-2 py-1 border rounded"
-                                      />
-                                    ) : (
-                                      formatRating(rating.final_normalized_rating)
-                                    )}
+                                  <div className="space-y-2">
+                                    <div>
+                                      <div className="text-xs text-muted-foreground mb-1">Raw Rating</div>
+                                      <div className="text-lg font-semibold">{formatRating(rating.raw_rating)}</div>
+                                    </div>
+                                    <div className="pt-2 border-t">
+                                      <div className="text-xs text-muted-foreground mb-1">Normalized Rating</div>
+                                      <div className="text-2xl font-bold text-primary">
+                                        {editingRating === rating.id ? (
+                                          <input
+                                            type="number"
+                                            min="1"
+                                            max="5"
+                                            step="0.01"
+                                            value={editedRatingValue}
+                                            onChange={(e) => setEditedRatingValue(parseFloat(e.target.value))}
+                                            className="w-20 px-2 py-1 border rounded"
+                                          />
+                                        ) : (
+                                          formatRating(rating.final_normalized_rating)
+                                        )}
+                                      </div>
+                                      {rating.final_normalized_rating && rating.raw_rating && (
+                                        <div className="text-xs mt-1">
+                                          {Math.abs(parseFloat(rating.final_normalized_rating) - parseFloat(rating.raw_rating)) < 0.01 ? (
+                                            <span className="text-muted-foreground">No change</span>
+                                          ) : parseFloat(rating.final_normalized_rating) > parseFloat(rating.raw_rating) ? (
+                                            <span className="text-green-600">
+                                              ↑ +{(parseFloat(rating.final_normalized_rating) - parseFloat(rating.raw_rating)).toFixed(2)}
+                                            </span>
+                                          ) : (
+                                            <span className="text-red-600">
+                                              ↓ {(parseFloat(rating.final_normalized_rating) - parseFloat(rating.raw_rating)).toFixed(2)}
+                                            </span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="pt-2 border-t text-xs text-muted-foreground space-y-1">
+                                      <div className="font-semibold mb-1">Intermediate Ratings:</div>
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                          <div>Manager Level:</div>
+                                          <div className="font-medium">{formatRating(rating.boxcox_manager_level_rating)}</div>
+                                          {rating.manager_lambda !== null && (
+                                            <div className="text-[10px]">λ={parseFloat(rating.manager_lambda).toFixed(2)}</div>
+                                          )}
+                                          {rating.manager_group_size !== null && (
+                                            <div className="text-[10px]">n={rating.manager_group_size}</div>
+                                          )}
+                                        </div>
+                                        <div>
+                                          <div>Grade Level:</div>
+                                          <div className="font-medium">{formatRating(rating.boxcox_grade_level_rating)}</div>
+                                          {rating.grade_lambda !== null && (
+                                            <div className="text-[10px]">λ={parseFloat(rating.grade_lambda).toFixed(2)}</div>
+                                          )}
+                                          {rating.grade_group_size !== null && (
+                                            <div className="text-[10px]">n={rating.grade_group_size}</div>
+                                          )}
+                                        </div>
+                                      </div>
+                                      {rating.manager_weight && rating.grade_weight && (
+                                        <div className="mt-1 text-[10px]">
+                                          Weights: {Math.round(parseFloat(rating.manager_weight) * 100)}% Manager / {Math.round(parseFloat(rating.grade_weight) * 100)}% Grade
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div className="text-xs text-muted-foreground">Normalized</div>
                                 </div>
                               </div>
                             </CardHeader>

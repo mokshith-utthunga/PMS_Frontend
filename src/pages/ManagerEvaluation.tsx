@@ -51,28 +51,58 @@ import type { QuarterlyCycle } from '@/services/cycle.service';
 import type { Employee } from '@/types';
 
 // Helper function to get initials from employee name
-const getEmployeeInitials = (employee: Employee): string => {
-  if (employee.full_name) {
-    const parts = employee.full_name.trim().split(/\s+/);
-    if (parts.length >= 2) {
-      return `${parts[0][0]}${parts[parts.length - 1][0]}`;
+const getEmployeeInitials = (employee: Employee | null | undefined): string => {
+  try {
+    if (!employee || !employee.full_name || typeof employee.full_name !== 'string') {
+      return '??';
     }
-    return parts[0][0] || '';
+    const trimmed = employee.full_name.trim();
+    if (!trimmed) {
+      return '??';
+    }
+    const parts = trimmed.split(/\s+/);
+    if (parts.length >= 2 && parts[0] && parts[parts.length - 1]) {
+      return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+    }
+    if (parts[0] && parts[0][0]) {
+      return parts[0][0].toUpperCase();
+    }
+    return '??';
+  } catch (error) {
+    console.error('Error in getEmployeeInitials:', error);
+    return '??';
   }
-  return '??';
 };
 
 // Helper function to get display name
-const getEmployeeDisplayName = (employee: Employee): string => {
-  return employee.full_name || 'Unknown';
+const getEmployeeDisplayName = (employee: Employee | null | undefined): string => {
+  try {
+    if (!employee || !employee.full_name || typeof employee.full_name !== 'string') {
+      return 'Unknown';
+    }
+    return employee.full_name.trim() || 'Unknown';
+  } catch (error) {
+    console.error('Error in getEmployeeDisplayName:', error);
+    return 'Unknown';
+  }
 };
 
 // Helper function to get first name only (for messages)
-const getEmployeeFirstName = (employee: Employee): string => {
-  if (employee.full_name) {
-    return employee.full_name.trim().split(/\s+/)[0];
+const getEmployeeFirstName = (employee: Employee | null | undefined): string => {
+  try {
+    if (!employee || !employee.full_name || typeof employee.full_name !== 'string') {
+      return 'Unknown';
+    }
+    const trimmed = employee.full_name.trim();
+    if (!trimmed) {
+      return 'Unknown';
+    }
+    const parts = trimmed.split(/\s+/);
+    return parts[0] || 'Unknown';
+  } catch (error) {
+    console.error('Error in getEmployeeFirstName:', error);
+    return 'Unknown';
   }
-  return 'Unknown';
 };
 
 interface KRADisplay {
@@ -139,7 +169,7 @@ export default function ManagerEvaluation() {
   const { toast } = useToast();
 
   // Get active cycle data from context (fetched once at app initialization)
-  const { activeCycle: activeCycleFromContext, quarterlyCycles: quarterlyCyclesFromContext } = useActiveCycle();
+  const { activeCycle: activeCycleFromContext, quarterlyCycles: quarterlyCyclesFromContext, isLoading: isLoadingActiveCycle } = useActiveCycle();
   // Get current employee from cached hook (fetched once at app initialization)
   const { employee: currentEmployee } = useCurrentEmployee();
   
@@ -147,7 +177,10 @@ export default function ManagerEvaluation() {
   const [saving, setSaving] = useState(false);
   const [managerId, setManagerId] = useState<string | null>(currentEmployee?.id || null);
   const [employee, setEmployee] = useState<Employee | null>(null);
-  const [activeCycle, setActiveCycle] = useState<PerformanceCycle | null>(activeCycleFromContext);
+  const [activeCycle, setActiveCycle] = useState<PerformanceCycle | null>(() => {
+    // Safely initialize with null if activeCycleFromContext is not available
+    return activeCycleFromContext && activeCycleFromContext.id ? activeCycleFromContext : null;
+  });
   const [quarterlyCycles, setQuarterlyCycles] = useState<QuarterlyCycle[]>((quarterlyCyclesFromContext || []) as QuarterlyCycle[]);
   const [kras, setKras] = useState<KRADisplay[]>([]);
   const [kpis, setKpis] = useState<KPIDisplay[]>([]);
@@ -186,6 +219,7 @@ export default function ManagerEvaluation() {
   
   // Determine current quarter from cycle
   const currentQuarter = useMemo(() => {
+    if (!activeCycle) return 1; // Default to Q1 if no active cycle
     return getCurrentQuarter(activeCycle, quarterlyCycles);
   }, [activeCycle, quarterlyCycles]);
 
@@ -202,16 +236,6 @@ export default function ManagerEvaluation() {
     }
   }, [activeCycle, initialQuarter, currentQuarter]);
 
-  useEffect(() => {
-    fetchData();
-  }, [user, employeeId]);
-
-  useEffect(() => {
-    if (kras.length > 0) {
-      setExpandedKRAs(new Set(kras.map((k) => k.id)));
-    }
-  }, [kras]);
-
   // Update managerId when employee data changes
   useEffect(() => {
     if (currentEmployee) {
@@ -219,7 +243,7 @@ export default function ManagerEvaluation() {
     }
   }, [currentEmployee]);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     if (!user || !employeeId || !currentEmployee) return;
 
     try {
@@ -243,20 +267,17 @@ export default function ManagerEvaluation() {
       // Check if user is direct manager
       const isDirectManager = managerCode === managerEmpCode;
       
-      // If not direct manager, check for delegation (for current quarter if in quarterly mode)
+      // If not direct manager, check for delegation (check all quarters for authorization)
       let isDelegate = false;
-      if (!isDirectManager && activeCycleFromContext) {
+      if (!isDirectManager && activeCycleFromContext?.id) {
         try {
-          const quarter = evaluationMode === 'quarterly' ? selectedQuarter : null;
-          if (quarter) {
-            const delegationsResult = await delegationService.get({
-              delegate_id: currentEmployee.id,
-              reportee_id: employeeId,
-              cycle_id: activeCycleFromContext.id,
-              quarter,
-            });
-            isDelegate = (delegationsResult.data || []).length > 0;
-          }
+          // Check delegations without quarter filter to see if user is authorized at all
+          const delegationsResult = await delegationService.get({
+            delegate_id: currentEmployee.id,
+            reportee_id: employeeId,
+            cycle_id: activeCycleFromContext.id,
+          });
+          isDelegate = (delegationsResult.data || []).length > 0;
         } catch (error) {
           console.error('Error checking delegation:', error);
         }
@@ -292,7 +313,8 @@ export default function ManagerEvaluation() {
       setRatingScales(scales);
 
       // Fetch approved KRAs for this employee - include quarter
-      const krasResult = await goalsService.kras.getByEmployee(employeeId, activeCycleFromContext.id, 'approved');
+      // activeCycleFromContext is already checked above, so it's safe to use .id
+      const krasResult = await goalsService.kras.getByEmployee(employeeId, activeCycleFromContext!.id, 'approved');
       const mappedKras = (krasResult.data || []).map((kra: any) => ({
         id: kra.id,
         title: kra.title,
@@ -303,7 +325,8 @@ export default function ManagerEvaluation() {
       setKras(mappedKras);
 
       // Fetch approved KPIs (goals with kra_id) - include calibration and quarter
-      const kpisResult = await goalsService.kpis.getByEmployee(employeeId, activeCycleFromContext.id, 'approved');
+      // activeCycleFromContext is already checked above, so it's safe to use .id
+      const kpisResult = await goalsService.kpis.getByEmployee(employeeId, activeCycleFromContext!.id, 'approved');
       const filteredKpis = (kpisResult.data || [])
         .filter((kpi: any) => kpi.kra_id)
         .map((kpi: any) => ({
@@ -320,7 +343,8 @@ export default function ManagerEvaluation() {
       setKpis(filteredKpis);
 
       // Fetch quarterly self reviews (from quarterly_self_reviews table)
-      const allQuarterlySelfResult = await evaluationService.selfReviews.get(employeeId, activeCycleFromContext.id);
+      // activeCycleFromContext is already checked above, so it's safe to use .id
+      const allQuarterlySelfResult = await evaluationService.selfReviews.get(employeeId, activeCycleFromContext!.id);
       console.log('allQuarterlySelfResult',allQuarterlySelfResult)
 
       const qSelfEvalsMap: Record<number, QuarterlySelfEval> = {};
@@ -377,7 +401,8 @@ export default function ManagerEvaluation() {
       }
 
       // Fetch or create quarterly manager review (instead of manager_evaluations)
-      const mgrReviewsResult = await evaluationService.managerReviews.get(employeeId, activeCycleFromContext.id);
+      // activeCycleFromContext is already checked above, so it's safe to use .id
+      const mgrReviewsResult = await evaluationService.managerReviews.get(employeeId, activeCycleFromContext!.id);
       
       // Create a map of manager reviews by quarter
       const mgrReviewsByQuarter: Record<number, any> = {};
@@ -462,7 +487,8 @@ export default function ManagerEvaluation() {
 
       // Always fetch year-end evaluation data (outside of quarterly review block)
       try {
-        const yearEndResult = await evaluationService.yearEndEvaluation.get(employeeId, activeCycleFromContext.id);
+        // activeCycleFromContext is already checked above, so it's safe to use .id
+        const yearEndResult = await evaluationService.yearEndEvaluation.get(employeeId, activeCycleFromContext!.id);
         if (yearEndResult.data) {
           setYearEndManagerEvaluation(yearEndResult.data);
           // Populate year-end specific form fields
@@ -503,10 +529,11 @@ export default function ManagerEvaluation() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, employeeId, currentEmployee, activeCycleFromContext, quarterlyCyclesFromContext, navigate, toast]);
 
-  const getKPIsForKRA = (kraId: string) => quarterKpis.filter((kpi) => kpi.kra_id === kraId);
-  
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   // Auto-calculate ratings from achievement values using calibration
   useEffect(() => {
@@ -583,6 +610,11 @@ export default function ManagerEvaluation() {
   }, [kpis, selectedQuarter, evaluationMode]);
 
   console.log('quarterKpis',quarterKpis)
+
+  // Helper function to get KPIs for a specific KRA (defined after quarterKpis)
+  const getKPIsForKRA = useCallback((kraId: string) => {
+    return quarterKpis.filter((kpi) => kpi.kra_id === kraId);
+  }, [quarterKpis]);
 
   // Calculate KPI ratings using calibration rules (filtered by quarter)
   const calculatedKPIRatings = useMemo(() => {
@@ -916,7 +948,49 @@ export default function ManagerEvaluation() {
     return scale ? `${value} - ${scale.name}` : value.toString();
   };
 
-  if (loading) {
+  const fetchHrReviewRatings = useCallback(async () => {
+    if (!activeCycle || !managerId || !selectedQuarter) return;
+    
+    setHrReviewLoading(true);
+    try {
+      const result = await evaluationService.normalization.getManagerRatings(
+        managerId,
+        selectedQuarter,
+        activeCycle.id
+      );
+      setHrReviewRatings(result.data || []);
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to load HR review ratings',
+        variant: 'destructive',
+      });
+    } finally {
+      setHrReviewLoading(false);
+    }
+  }, [activeCycle, managerId, selectedQuarter, toast]);
+
+  const handleManagerReview = useCallback(async (employeeId: string, action: 'ACCEPT' | 'REJECT') => {
+    if (!activeCycle || !selectedQuarter) return;
+    
+    try {
+      await evaluationService.normalization.managerReview(employeeId, selectedQuarter, activeCycle.id, action);
+      toast({
+        title: 'Success',
+        description: `Rating ${action === 'ACCEPT' ? 'accepted' : 'rejected'}`,
+      });
+      await fetchHrReviewRatings();
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || `Failed to ${action.toLowerCase()} rating`,
+        variant: 'destructive',
+      });
+    }
+  }, [activeCycle, selectedQuarter, toast, fetchHrReviewRatings]);
+
+  // Show loading state while fetching or if active cycle is still loading
+  if (loading || isLoadingActiveCycle) {
     return (
       <MainLayout>
         <div className="flex items-center justify-center h-64">
@@ -937,7 +1011,7 @@ export default function ManagerEvaluation() {
     );
   }
 
-  if (!activeCycle) {
+  if (!activeCycle || !activeCycle.id) {
     return (
       <MainLayout>
         <Alert>
@@ -981,8 +1055,13 @@ export default function ManagerEvaluation() {
     ? quarterlyGoalSelfRatings[quarterNumber] || {}
     : goalSelfRatings;
 
-  const quarterPeriodStatus = getQuarterManagerReviewStatus(activeCycle, selectedQuarter, quarterlyCycles);
-  const yearEndPeriodStatus = getYearEndManagerEvalStatus(activeCycle);
+  // These are computed after null checks, but add safety checks just in case
+  const quarterPeriodStatus = activeCycle 
+    ? getQuarterManagerReviewStatus(activeCycle, selectedQuarter, quarterlyCycles)
+    : { timing: 'future' as const, startDate: null, endDate: null, message: 'No active performance cycle.' };
+  const yearEndPeriodStatus = activeCycle 
+    ? getYearEndManagerEvalStatus(activeCycle)
+    : { timing: 'future' as const, startDate: null, endDate: null, message: 'No active performance cycle.' };
   
   const handleEvaluationTabChange = (tab: 'quarterly' | 'year-end', quarter?: Quarter) => {
     setEvaluationMode(tab);
@@ -998,47 +1077,6 @@ export default function ManagerEvaluation() {
     setSelectedQuarter(quarter);
     setSearchParams({ quarter: quarter.toString() });
   };
-
-  const fetchHrReviewRatings = useCallback(async () => {
-    if (!activeCycle || !managerId || !selectedQuarter) return;
-    
-    setHrReviewLoading(true);
-    try {
-      const result = await evaluationService.normalization.getManagerRatings(
-        managerId,
-        selectedQuarter,
-        activeCycle.id
-      );
-      setHrReviewRatings(result.data || []);
-    } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to load HR review ratings',
-        variant: 'destructive',
-      });
-    } finally {
-      setHrReviewLoading(false);
-    }
-  }, [activeCycle, managerId, selectedQuarter, toast]);
-
-  const handleManagerReview = useCallback(async (employeeId: string, action: 'ACCEPT' | 'REJECT') => {
-    if (!activeCycle || !selectedQuarter) return;
-    
-    try {
-      await evaluationService.normalization.managerReview(employeeId, selectedQuarter, activeCycle.id, action);
-      toast({
-        title: 'Success',
-        description: `Rating ${action === 'ACCEPT' ? 'accepted' : 'rejected'}`,
-      });
-      await fetchHrReviewRatings();
-    } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.message || `Failed to ${action.toLowerCase()} rating`,
-        variant: 'destructive',
-      });
-    }
-  }, [activeCycle, selectedQuarter, toast, fetchHrReviewRatings]);
 
   const canEvaluate = evaluationMode === 'quarterly'
     ? quarterPeriodStatus.timing === 'current' && relevantSelfEval?.status === 'submitted'
@@ -1270,12 +1308,10 @@ export default function ManagerEvaluation() {
                             <div className="space-y-2">
                               <Label>Rating *</Label>
                               {(() => {
-                                // Check if progress bar has been used
                                 const currentRating = goalManagerRatings[kpi.id];
                                 const numericTarget = parseNumericTarget(kpi.target_value);
                                 
                                 if (numericTarget === null) {
-                                  // No progress bar for this KPI, allow manual rating
                                   return (
                               <RadioGroup
                                 value={goalManagerRatings[kpi.id]?.rating?.toString() || ''}
@@ -1306,9 +1342,7 @@ export default function ManagerEvaluation() {
                                 const employeeAchieved = relevantGoalSelfRatings[kpi.id]?.achieved_value ?? 0;
                                 const managerAchieved = currentRating?.manager_achieved_value ?? employeeAchieved;
                                 
-                                // Progress bar has been used if:
-                                // 1. progress_percentage is explicitly set, OR
-                                // 2. manager_achieved_value is set and differs from employee's value
+                              
                                 const hasProgressBarValue = 
                                   (currentRating?.progress_percentage !== null && 
                                    currentRating?.progress_percentage !== undefined) ||
@@ -1818,11 +1852,11 @@ export default function ManagerEvaluation() {
                 <CardTitle className="text-2xl">
                   {getEmployeeDisplayName(employee)}
                 </CardTitle>
-                <CardDescription>{employee.email}</CardDescription>
+                <CardDescription>{employee?.email || 'No email'}</CardDescription>
                 <div className="flex gap-2 mt-2">
-                  <Badge variant="outline">{employee.department}</Badge>
-                  <Badge variant="secondary">{employee.grade}</Badge>
-                  <Badge>{employee.emp_id}</Badge>
+                  <Badge variant="outline">{employee?.department || 'No department'}</Badge>
+                  <Badge variant="secondary">{employee?.grade || 'No grade'}</Badge>
+                  <Badge>{employee?.emp_id || 'No ID'}</Badge>
                 </div>
               </div>
             </div>

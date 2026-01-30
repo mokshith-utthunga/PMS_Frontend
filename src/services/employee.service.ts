@@ -76,4 +76,36 @@ export const employeeService = {
     removeRole: (userId: string, role: AppRole) => 
       api.delete(`/api/employees/users/${userId}/roles/${role}`),
   },
+
+  // ========== Admin Override ==========
+  admin: {
+    // Get employee quarterly review bundle
+    getQuarterlyReview: (employeeId: string, cycleId: string, quarter: number) =>
+      api.get<{
+        data: {
+          kras: any[];
+          kpis: any[];
+          selfReview: any | null;
+          goalSelfRatings: any[];
+          managerReview: any | null;
+          managerKpiFeedback: any[];
+        };
+      }>(`/api/employees/${employeeId}/quarterly-review?cycle_id=${cycleId}&quarter=${quarter}`),
+
+    // Get quarters with admin overrides
+    getAdminOverrideQuarters: (employeeId: string, cycleId: string) =>
+      api.get<{ data: number[] }>(`/api/employees/${employeeId}/admin-override-quarters?cycle_id=${cycleId}`),
+
+    // Admin override goal
+    overrideGoal: (employeeId: string, goalId: string, data: any) =>
+      api.put<{ data: any }>(`/api/employees/${employeeId}/goals/${goalId}/admin-override`, data),
+
+    // Admin override self review
+    overrideSelfReview: (employeeId: string, data: any) =>
+      api.put<{ data: any }>(`/api/employees/${employeeId}/self-review/admin-override`, data),
+
+    // Admin override manager review
+    overrideManagerReview: (employeeId: string, data: any) =>
+      api.put<{ data: any }>(`/api/employees/${employeeId}/manager-review/admin-override`, data),
+  },
 };

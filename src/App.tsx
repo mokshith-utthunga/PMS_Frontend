@@ -17,6 +17,7 @@ import Reports from "./pages/Reports";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import EmployeeList from "./pages/admin/EmployeeList";
 import EmployeeImport from "./pages/admin/EmployeeImport";
+import AdminEmployeeView from "./pages/admin/AdminEmployeeView";
 import CycleList from "./pages/admin/CycleList";
 import CycleForm from "./pages/admin/CycleForm";
 import RoleManagement from "./pages/admin/RoleManagement";
@@ -91,6 +92,7 @@ const App = () => (
             <Route path="/admin" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><AdminDashboard /></ProtectedRoute>} />
             <Route path="/admin/employees" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><EmployeeList /></ProtectedRoute>} />
             <Route path="/admin/employees/import" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><EmployeeImport /></ProtectedRoute>} />
+            <Route path="/admin/employee/:id" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><AdminEmployeeView /></ProtectedRoute>} />
             <Route path="/admin/cycles" element={<ProtectedRoute requiredRoles={['hr_admin']}><CycleList /></ProtectedRoute>} />
             <Route path="/admin/cycles/new" element={<ProtectedRoute requiredRoles={['hr_admin']}><CycleForm /></ProtectedRoute>} />
             <Route path="/admin/cycles/:cycleId/edit" element={<ProtectedRoute requiredRoles={['hr_admin']}><CycleForm /></ProtectedRoute>} />
