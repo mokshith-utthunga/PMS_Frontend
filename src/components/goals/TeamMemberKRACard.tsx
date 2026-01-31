@@ -68,7 +68,7 @@ export function TeamMemberKRACard({
               </Button>
             </div>
           )}
-          {kra.status === 'approved' && onRevoke && (
+          /* {kra.status === 'approved' && onRevoke && (
             <div className="flex gap-2 ml-2">
               <Button
                 size="sm"
@@ -80,7 +80,7 @@ export function TeamMemberKRACard({
                 Revoke
               </Button>
             </div>
-          )}
+          )} */
         </div>
       </CardHeader>
 
@@ -201,7 +201,7 @@ export function TeamMemberKRACard({
                       )}
                       
                       {/* Revoke button for approved KPIs */}
-                      {kpi.status === 'approved' && onRevoke && (
+                      /* {kpi.status === 'approved' && onRevoke && (
                         <div className="flex-shrink-0 ml-4">
                           <Button
                             size="sm"
@@ -213,7 +213,7 @@ export function TeamMemberKRACard({
                             Revoke
                           </Button>
                         </div>
-                      )}
+                      )} */
                     </div>
                   </div>
                 );
