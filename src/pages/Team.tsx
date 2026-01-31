@@ -735,7 +735,7 @@ export default function Team() {
                         <div className="flex justify-between text-sm mb-1">
                           <span>Goals</span>
                           <span>
-                            {report.approved_goals}/{report.ReportsCount} approved
+                           {report.approved_goals}/{report.goals_count} approved
                           </span>
                         </div>
                         <Progress 
@@ -748,7 +748,7 @@ export default function Team() {
                        
                         {report.pending_goals > 0 && (
                           <Badge variant="destructive">
-                            {report.ReportsCount} goals pending approval
+                             {report.pending_goals} kpis pending approval
                           </Badge>
                         )}
                         {report.self_eval_status === 'submitted' && report.manager_eval_status !== 'submitted' && report.manager_eval_status !== 'released' && (
