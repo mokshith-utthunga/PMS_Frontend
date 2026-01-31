@@ -262,8 +262,17 @@ export function DualAchievementSlider({
     onEmployeeChange?.(newValue);
   };
   
-  // Calculate max value for number input (allow overachievement up to maxPercentage)
-  const maxValue = Math.round((maxPercentage / 100) * targetValue);
+
+  let maxValue: number;
+  if (isNumberType && calibration && calibration.length > 0) {
+    const highestThreshold = Math.max(...calibration.map(r => r.threshold));
+    maxValue = Math.max(
+      Math.ceil(highestThreshold + 2),
+      Math.ceil(targetValue * 1.5)
+    );
+  } else {
+    maxValue = Math.round((maxPercentage / 100) * targetValue);
+  }
 
   const getRatingLabel = (rating: number) => {
     switch (rating) {
