@@ -12,6 +12,7 @@ import {
   Target,
   Clock,
   FileCheck,
+  ArrowRightLeft,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -41,6 +42,7 @@ const navigation = [
   { name: 'Reports', href: '/reports', icon: BarChart3, roles: ['hr_admin', 'hrbp', 'dept_head'] },
   { name: 'HR Review', href: '/admin/review', icon: FileCheck, roles: ['hr_admin', 'hrbp', 'system_admin', 'dept_head'] },
   { name: 'Late Submissions', href: '/admin/late-submissions', icon: Clock, roles: ['hr_admin', 'system_admin'] },
+  { name: 'Transitions', href: '/admin/transitions', icon: ArrowRightLeft, roles: ['hr_admin', 'system_admin'] },
   { name: 'Admin', href: '/admin', icon: Settings, roles: ['hr_admin', 'system_admin'] },
 ];
 
