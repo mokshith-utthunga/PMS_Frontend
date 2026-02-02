@@ -12,6 +12,7 @@ export { templateService } from './template.service';
 export { statsService } from './stats.service';
 export { permissionsService } from './permissions.service';
 export { delegationService } from './delegation.service';
+export { transitionService } from './transition.service';
 
 // Re-export types
 export type { EmployeeFilters, UserWithRoles } from './employee.service';
@@ -40,3 +41,10 @@ export type { User, Session, AuthResponse, UserRole } from './auth.service';
 export type { LateSubmissionPermission } from './permissions.service';
 export type { BusinessUnit } from './settings.service';
 export type { Delegation, CreateDelegationData, DelegationFilters } from './delegation.service';
+export type { 
+  EmployeeQuarterTransition,
+  CreateTransitionData,
+  UpdateTransitionStatusData,
+  TransitionType,
+  PeriodType,
+} from './transition.service';

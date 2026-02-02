@@ -5,9 +5,11 @@ import { logError } from '@/errors';
 import { parseNumericTarget } from '@/components/evaluation/AchievementSlider';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 import { useCurrentEmployee } from './useCurrentEmployee';
+import { useTransition } from './useTransition';
 import type { KRA, Goal, PerformanceCycle, RatingScale } from '@/types';
 import type { QuarterlySelfReviewData, GoalSelfRatingData } from '@/services/evaluation.service';
 import type { QuarterlyCycle } from '@/services/cycle.service';
+import type { PeriodType } from '@/services/transition.service';
 
 export interface KpiRating {
   goal_id: string;
@@ -90,6 +92,7 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
       const quarterlyCycles = (quarterlyCyclesFromContext || []) as QuarterlyCycle[];
 
       // Fetch base data in parallel - get scales, self reviews, and quarter-specific goals
+      // Note: For backward compatibility, we fetch all reviews (including period-specific ones)
       const [scalesResult, selfReviewsResult] = await Promise.all([
         settingsService.ratingScales.getDefault(),
         evaluationService.selfReviews.get(employeeId, cycleId),

@@ -7,10 +7,11 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { AlertCircle, Target, Lock } from 'lucide-react';
+import { AlertCircle, Target, Lock, ArrowRight } from 'lucide-react';
 import { PageLoader } from '@/loaders';
-import { useTeamMemberGoals, useGoalApproval } from '@/hooks';
+import { useTeamMemberGoals, useGoalApproval, useTransition } from '@/hooks';
 import { useQuarterFromUrl } from '@/hooks/useQuarterFromUrl';
+import { getPeriodLabel, getPeriodBadgeVariant, formatPeriodDateRange } from '@/utils/periodHelpers';
 import { formatQuarterLabel, getQuarterStartDateFromCycle, getQuarterEndDateFromCycle, formatDateShort, type CycleWithQuarterDates } from '@/utils/quarterHelpers';
 import { TOTAL_WEIGHT } from '@/utils/constants';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
@@ -123,9 +124,46 @@ export default function TeamMemberGoals() {
   // Only fetch data if quarter has started
   const shouldFetchData = quarter ? hasGoalSubmissionStarted(quarter) : false;
   
+  // Fetch transition data for the current quarter
+  const { transition, loading: transitionLoading } = useTransition({
+    employeeId,
+    cycleId: activeCycle?.id,
+    quarter: shouldFetchData ? quarter : null,
+    enabled: shouldFetchData && !!employeeId && !!activeCycle,
+  });
+  
   // Fetch team member goals data with quarter filter (only if quarter has started)
   const goalsData = useTeamMemberGoals(employeeId, shouldFetchData ? quarter : null);
   const { employee, kras, kpis, bonusKras, bonusKpis, loading, refetch } = goalsData;
+  
+  // Separate goals by period type
+  const preTransitionGoals = useMemo(() => {
+    if (!transition) return { kras: [], kpis: [] };
+    return {
+      kras: kras.filter(k => k.period_type === 'pre_transition' && k.transition_id === transition.id),
+      kpis: kpis.filter(k => k.period_type === 'pre_transition' && k.transition_id === transition.id),
+    };
+  }, [kras, kpis, transition]);
+  
+  const postTransitionGoals = useMemo(() => {
+    if (!transition) return { kras: [], kpis: [] };
+    return {
+      kras: kras.filter(k => k.period_type === 'post_transition' && k.transition_id === transition.id),
+      kpis: kpis.filter(k => k.period_type === 'post_transition' && k.transition_id === transition.id),
+    };
+  }, [kras, kpis, transition]);
+  
+  const fullQuarterGoals = useMemo(() => {
+    if (transition) return { kras: [], kpis: [] };
+    return {
+      kras: kras.filter(k => !k.period_type || k.period_type === 'full_quarter'),
+      kpis: kpis.filter(k => !k.period_type || k.period_type === 'full_quarter'),
+    };
+  }, [kras, kpis, transition]);
+  
+  // Determine which goals to display
+  const displayKras = transition ? [...preTransitionGoals.kras, ...postTransitionGoals.kras] : fullQuarterGoals.kras;
+  const displayKpis = transition ? [...preTransitionGoals.kpis, ...postTransitionGoals.kpis] : fullQuarterGoals.kpis;
 
   const { toast } = useToast();
   
@@ -226,7 +264,7 @@ export default function TeamMemberGoals() {
   };
 
   // Loading state
-  if (loading || isLoadingCycle) {
+  if (loading || isLoadingCycle || transitionLoading) {
     return (
       <MainLayout>
         <PageLoader />
@@ -342,63 +380,167 @@ export default function TeamMemberGoals() {
                   </Card>
                 ) : (
                   <>
+                    {/* Transition Alert */}
+                    {transition && (
+                      <Alert>
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <span className="font-semibold">Mid-Quarter Transition Detected</span>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                Transition Date: {formatDateShort(new Date(transition.transition_date))} • 
+                                Type: {transition.transition_type}
+                              </p>
+                            </div>
+                            <Badge variant={getPeriodBadgeVariant('pre_transition')}>
+                              {getPeriodLabel('pre_transition')}
+                            </Badge>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
                     {/* Weight Summary */}
                     <Card>
-                <CardContent className="pt-6">
-                  <div className="flex items-center justify-between mb-2">
-                    <div>
-                      <span className="text-sm font-medium">Total KRA Weight: </span>
-                      <span className={`font-bold ${totalKRAWeight === TOTAL_WEIGHT ? 'text-primary' : 'text-destructive'}`}>
-                        {totalKRAWeight}%
-                      </span>
-                    </div>
-                    <div className="flex gap-4 text-sm">
-                      {/* <span>
-                        Submitted: <Badge variant="default">{kras.filter(k => k.status === 'submitted').length} KRAs</Badge>
-                      </span> */}
-                      <span>
-                        Approved: <Badge variant="outline">{kras.filter(k => k.status === 'approved').length} KRAs</Badge>
-                      </span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+                      <CardContent className="pt-6">
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <span className="text-sm font-medium">Total KRA Weight: </span>
+                            <span className={`font-bold ${totalKRAWeight === TOTAL_WEIGHT ? 'text-primary' : 'text-destructive'}`}>
+                              {totalKRAWeight}%
+                            </span>
+                          </div>
+                          <div className="flex gap-4 text-sm">
+                            <span>
+                              Approved: <Badge variant="outline">{displayKras.filter(k => k.status === 'approved').length} KRAs</Badge>
+                            </span>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
 
-              {/* KRAs List */}
-              {kras.length === 0 ? (
-                <Card>
-                  <CardContent className="flex flex-col items-center justify-center py-12">
-                    <Target className="h-12 w-12 text-muted-foreground mb-4" />
-                    <h3 className="font-semibold text-lg">No KRAs submitted</h3>
-                    <p className="text-muted-foreground">
-                      This employee hasn't submitted any KRAs for {formatQuarterLabel(q)}
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="space-y-4">
-                  {kras.map(kra => (
-                    <TeamMemberKRACard
-                      key={kra.id}
-                      kra={kra}
-                      kpis={approval.getKPIsForKRA(kra.id)}
+                    {/* Goals Display - Separated by Period if Transition Exists */}
+                    {transition ? (
+                      <div className="space-y-6">
+                        {/* Pre-Transition Period */}
+                        {preTransitionGoals.kras.length > 0 && (
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={getPeriodBadgeVariant('pre_transition')}>
+                                {getPeriodLabel('pre_transition')}
+                              </Badge>
+                              {transition.pre_period_start_date && transition.pre_period_end_date && (
+                                <span className="text-sm text-muted-foreground">
+                                  {formatPeriodDateRange(transition.pre_period_start_date, transition.pre_period_end_date)}
+                                </span>
+                              )}
+                              <Lock className="h-4 w-4 text-muted-foreground ml-auto" />
+                              <span className="text-sm text-muted-foreground">Locked</span>
+                            </div>
+                            {preTransitionGoals.kras.map(kra => (
+                              <TeamMemberKRACard
+                                key={kra.id}
+                                kra={kra}
+                                kpis={approval.getKPIsForKRA(kra.id)}
+                                processing={approval.processing}
+                                onApprove={approval.approveKRA}
+                                onReturn={handleOpenReturnDialog}
+                                onRevoke={handleOpenRevokeDialog}
+                              />
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Transition Separator */}
+                        {preTransitionGoals.kras.length > 0 && postTransitionGoals.kras.length > 0 && (
+                          <div className="flex items-center gap-2 py-2">
+                            <div className="flex-1 border-t"></div>
+                            <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                            <Badge variant="outline">{formatDateShort(new Date(transition.transition_date))}</Badge>
+                            <div className="flex-1 border-t"></div>
+                          </div>
+                        )}
+
+                        {/* Post-Transition Period */}
+                        {postTransitionGoals.kras.length > 0 && (
+                          <div className="space-y-4">
+                            <div className="flex items-center gap-2">
+                              <Badge variant={getPeriodBadgeVariant('post_transition')}>
+                                {getPeriodLabel('post_transition')}
+                              </Badge>
+                              {transition.post_period_start_date && transition.post_period_end_date && (
+                                <span className="text-sm text-muted-foreground">
+                                  {formatPeriodDateRange(transition.post_period_start_date, transition.post_period_end_date)}
+                                </span>
+                              )}
+                            </div>
+                            {postTransitionGoals.kras.map(kra => (
+                              <TeamMemberKRACard
+                                key={kra.id}
+                                kra={kra}
+                                kpis={approval.getKPIsForKRA(kra.id)}
+                                processing={approval.processing}
+                                onApprove={approval.approveKRA}
+                                onReturn={handleOpenReturnDialog}
+                                onRevoke={handleOpenRevokeDialog}
+                              />
+                            ))}
+                          </div>
+                        )}
+
+                        {/* No Goals Message for Transition */}
+                        {preTransitionGoals.kras.length === 0 && postTransitionGoals.kras.length === 0 && (
+                          <Card>
+                            <CardContent className="flex flex-col items-center justify-center py-12">
+                              <Target className="h-12 w-12 text-muted-foreground mb-4" />
+                              <h3 className="font-semibold text-lg">No KRAs submitted</h3>
+                              <p className="text-muted-foreground">
+                                This employee hasn't submitted any KRAs for {formatQuarterLabel(q)}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        )}
+                      </div>
+                    ) : (
+                      /* Full Quarter Goals (No Transition) */
+                      <>
+                        {displayKras.length === 0 ? (
+                          <Card>
+                            <CardContent className="flex flex-col items-center justify-center py-12">
+                              <Target className="h-12 w-12 text-muted-foreground mb-4" />
+                              <h3 className="font-semibold text-lg">No KRAs submitted</h3>
+                              <p className="text-muted-foreground">
+                                This employee hasn't submitted any KRAs for {formatQuarterLabel(q)}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        ) : (
+                          <div className="space-y-4">
+                            {displayKras.map(kra => (
+                              <TeamMemberKRACard
+                                key={kra.id}
+                                kra={kra}
+                                kpis={approval.getKPIsForKRA(kra.id)}
+                                processing={approval.processing}
+                                onApprove={approval.approveKRA}
+                                onReturn={handleOpenReturnDialog}
+                                onRevoke={handleOpenRevokeDialog}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {/* Bonus KRAs Section */}
+                    <TeamMemberBonusSection
+                      bonusKras={bonusKras}
+                      getBonusKPIsForKRA={approval.getBonusKPIsForKRA}
                       processing={approval.processing}
-                      onApprove={approval.approveKRA}
+                      onApprove={approval.approveBonusKRA}
                       onReturn={handleOpenReturnDialog}
-                      onRevoke={handleOpenRevokeDialog}
                     />
-                  ))}
-                </div>
-              )}
-
-              {/* Bonus KRAs Section */}
-              <TeamMemberBonusSection
-                bonusKras={bonusKras}
-                getBonusKPIsForKRA={approval.getBonusKPIsForKRA}
-                processing={approval.processing}
-                onApprove={approval.approveBonusKRA}
-                onReturn={handleOpenReturnDialog}
-              />
                   </>
                 )}
               </TabsContent>

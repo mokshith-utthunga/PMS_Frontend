@@ -72,11 +72,11 @@ export function OverallAssessmentTab({
               <span className="text-4xl font-bold text-primary block">
                 {formatRating(calculatedRating)}
               </span>
-              {calculatedRating !== null && (
+              {/* {calculatedRating !== null && (
                 <Badge className={`mt-2 ${getRatingColor(calculatedRating)}`}>
                   {getRatingLabel(calculatedRating)}
                 </Badge>
-              )}
+              )} */}
             </div>
           </div>
           

@@ -4,12 +4,14 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import MainLayout from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Save, Send, Target, AlertCircle, ChevronRight, Calendar, AlertTriangle } from 'lucide-react';
+import { Save, Send, Target, AlertCircle, ChevronRight, Calendar, AlertTriangle, ArrowRight } from 'lucide-react';
 import { PageLoader } from '@/loaders';
 import { useAuth } from '@/contexts/AuthContext';
-import { useEvaluationsData, useEvaluationOperations, type KpiRating } from '@/hooks';
+import { useEvaluationsData, useEvaluationOperations, useTransition, type KpiRating } from '@/hooks';
+import { getPeriodLabel, getPeriodBadgeVariant, formatPeriodDateRange } from '@/utils/periodHelpers';
 import { useQuarterFromUrl } from '@/hooks/useQuarterFromUrl';
 import { isQuarterOpen, getQuarterTiming, formatQuarterDates } from '@/utils/quarterUtils';
 import { 
@@ -49,6 +51,14 @@ export default function Evaluations() {
     quarterKras, quarterKpis,
     latePermissions,
   } = evalData;
+  
+  // Fetch transition data for the selected quarter
+  const { transition, loading: transitionLoading } = useTransition({
+    employeeId: employeeId || undefined,
+    cycleId: activeCycle?.id,
+    quarter: parseInt(selectedQuarter),
+    enabled: !!employeeId && !!activeCycle && !!selectedQuarter,
+  });
   
   // Sync selectedQuarter with URL quarter
   useEffect(() => {
@@ -263,6 +273,34 @@ export default function Evaluations() {
     const qHasLatePermission = latePermissions[quarterNum] || false;
     const qEnded = hasQuarterEnded(activeCycle as CycleWithQuarterDates, quarterNum, quarterlyCycles);
     const qEndDate = getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, quarterNum, quarterlyCycles);
+    
+    // Check if this quarter has a transition
+    const qTransition = transition && transition.quarter === quarterNum ? transition : null;
+    
+    // Separate goals by period if transition exists
+    const preTransitionKras = qTransition 
+      ? qKras.filter(k => k.period_type === 'pre_transition' && k.transition_id === qTransition.id)
+      : [];
+    
+    const preTransitionKpis = qTransition
+      ? qKpis.filter(k => k.period_type === 'pre_transition' && k.transition_id === qTransition.id)
+      : [];
+    
+    const postTransitionKras = qTransition
+      ? qKras.filter(k => k.period_type === 'post_transition' && k.transition_id === qTransition.id)
+      : [];
+    
+    const postTransitionKpis = qTransition
+      ? qKpis.filter(k => k.period_type === 'post_transition' && k.transition_id === qTransition.id)
+      : [];
+    
+    const fullQuarterKras = qTransition
+      ? []
+      : qKras.filter(k => !k.period_type || k.period_type === 'full_quarter');
+    
+    const fullQuarterKpis = qTransition
+      ? []
+      : qKpis.filter(k => !k.period_type || k.period_type === 'full_quarter');
 
     // If quarter is in the future, show not accessible message
     if (qTiming === 'future') {
@@ -339,7 +377,11 @@ export default function Evaluations() {
 
     const qKraRatings = calculateAllKRARatings(qKras, qKpisWithKra, qKpiRatingsForCalc);
     const qOverallCalc = calculateQuarterRating(qKras, qKraRatings);
-    console.log('kras',qKras,'kpis',qKpis)
+    
+    // Determine which KRAs and KPIs to display
+    const displayKras = qTransition ? [...preTransitionKras, ...postTransitionKras] : fullQuarterKras;
+    const displayKpis = qTransition ? [...preTransitionKpis, ...postTransitionKpis] : fullQuarterKpis;
+    
     return (
       <>
         <QuarterAlerts
@@ -348,6 +390,33 @@ export default function Evaluations() {
           quarterlyCycles={quarterlyCycles}
           isSubmitted={qIsSubmitted}
         />
+        
+        {/* Transition Alert */}
+        {qTransition && (
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-semibold">Mid-Quarter Transition Detected</span>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Transition Date: {formatDateShort(new Date(qTransition.transition_date))} • 
+                    Type: {qTransition.transition_type}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Badge variant={getPeriodBadgeVariant('pre_transition')}>
+                    {getPeriodLabel('pre_transition')}
+                  </Badge>
+                  <ArrowRight className="h-4 w-4" />
+                  <Badge variant={getPeriodBadgeVariant('post_transition')}>
+                    {getPeriodLabel('post_transition')}
+                  </Badge>
+                </div>
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Late permission notice */}
         {qEnded && qHasLatePermission && !qIsSubmitted && (
@@ -372,19 +441,89 @@ export default function Evaluations() {
           </TabsList>
 
           <TabsContent value="goals" className="space-y-6">
-            
-            {qKras.map(kra => (
-              <KRAEvaluationCard
-                key={kra.id}
-                kra={kra}
-                kpis={qKpis.filter(kpi => kpi.kra_id === kra.id)}
-                goalRatings={qKpiRatings}
-                kraRating={qKraRatings[kra.id]}
-                ratingScales={ratingScales}
-                canEdit={qCanEdit}
-                onRatingChange={handleKpiRatingChange}
-              />
-            ))}
+            {qTransition ? (
+              <>
+                {/* Pre-Transition Period */}
+                {preTransitionKras.length > 0 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 pb-2 border-b">
+                      <Badge variant={getPeriodBadgeVariant('pre_transition')}>
+                        {getPeriodLabel('pre_transition')}
+                      </Badge>
+                      {qTransition.pre_period_start_date && qTransition.pre_period_end_date && (
+                        <span className="text-sm text-muted-foreground">
+                          {formatPeriodDateRange(qTransition.pre_period_start_date, qTransition.pre_period_end_date)}
+                        </span>
+                      )}
+                    </div>
+                    {preTransitionKras.map(kra => (
+                      <KRAEvaluationCard
+                        key={kra.id}
+                        kra={kra}
+                        kpis={preTransitionKpis.filter(kpi => kpi.kra_id === kra.id)}
+                        goalRatings={qKpiRatings}
+                        kraRating={qKraRatings[kra.id]}
+                        ratingScales={ratingScales}
+                        canEdit={qCanEdit}
+                        onRatingChange={handleKpiRatingChange}
+                      />
+                    ))}
+                  </div>
+                )}
+                
+                {/* Transition Separator */}
+                {preTransitionKras.length > 0 && postTransitionKras.length > 0 && (
+                  <div className="flex items-center gap-2 py-2">
+                    <div className="flex-1 border-t"></div>
+                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                    <Badge variant="outline">{formatDateShort(new Date(qTransition.transition_date))}</Badge>
+                    <div className="flex-1 border-t"></div>
+                  </div>
+                )}
+                
+                {/* Post-Transition Period */}
+                {postTransitionKras.length > 0 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 pb-2 border-b">
+                      <Badge variant={getPeriodBadgeVariant('post_transition')}>
+                        {getPeriodLabel('post_transition')}
+                      </Badge>
+                      {qTransition.post_period_start_date && qTransition.post_period_end_date && (
+                        <span className="text-sm text-muted-foreground">
+                          {formatPeriodDateRange(qTransition.post_period_start_date, qTransition.post_period_end_date)}
+                        </span>
+                      )}
+                    </div>
+                    {postTransitionKras.map(kra => (
+                      <KRAEvaluationCard
+                        key={kra.id}
+                        kra={kra}
+                        kpis={postTransitionKpis.filter(kpi => kpi.kra_id === kra.id)}
+                        goalRatings={qKpiRatings}
+                        kraRating={qKraRatings[kra.id]}
+                        ratingScales={ratingScales}
+                        canEdit={qCanEdit}
+                        onRatingChange={handleKpiRatingChange}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              /* Full Quarter (No Transition) */
+              displayKras.map(kra => (
+                <KRAEvaluationCard
+                  key={kra.id}
+                  kra={kra}
+                  kpis={displayKpis.filter(kpi => kpi.kra_id === kra.id)}
+                  goalRatings={qKpiRatings}
+                  kraRating={qKraRatings[kra.id]}
+                  ratingScales={ratingScales}
+                  canEdit={qCanEdit}
+                  onRatingChange={handleKpiRatingChange}
+                />
+              ))
+            )}
             
 
             {qCanEdit && (

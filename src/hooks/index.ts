@@ -16,6 +16,10 @@ export { useGoalApproval } from './useGoalApproval';
 export { useEvaluationsData, type KpiRating, type GoalRating } from './useEvaluationsData';
 export { useEvaluationOperations } from './useEvaluationOperations';
 
+// Transition hooks
+export { useTransition, useHasTransition } from './useTransition';
+export { usePeriodRatings } from './usePeriodRatings';
+
 // Calibration hooks
 export { useCalibrationFormData, useCalibrationFormOperations, type QuotaRule } from './useCalibrationForm';
 

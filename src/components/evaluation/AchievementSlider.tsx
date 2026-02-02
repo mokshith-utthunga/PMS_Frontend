@@ -247,6 +247,7 @@ export function DualAchievementSlider({
   // Handle number input change for manager
   const handleManagerNumberChange = (newValue: number) => {
     onManagerChange?.(newValue);
+    console.log('new=>Value', newValue);
     
     // Auto-update rating based on actual achieved value when calibration exists
     const newRating = calculateRatingFromAchievement(
@@ -254,6 +255,7 @@ export function DualAchievementSlider({
       calibration, 
       newValue
     );
+    console.log('new=>Rating', newRating);
     onRatingChange?.(newRating);
   };
 
@@ -262,8 +264,25 @@ export function DualAchievementSlider({
     onEmployeeChange?.(newValue);
   };
   
-  // Calculate max value for number input (allow overachievement up to maxPercentage)
-  const maxValue = Math.round((maxPercentage / 100) * targetValue);
+  // Calculate max value for number input ONLY (not used for percentage sliders)
+  // For number-type metrics with calibration, thresholds are absolute values, not percentages
+  // So we need to use the highest threshold value, not a percentage of target
+  // NOTE: This maxValue is ONLY used for number input fields, percentage sliders use maxPercentage
+  let maxValue: number;
+  if (isNumberType && calibration && calibration.length > 0) {
+    // For number metrics with calibration, use the highest threshold + buffer
+    // This ensures managers can enter values needed for all rating levels
+    // This ONLY affects number input fields, not percentage-based sliders
+    const highestThreshold = Math.max(...calibration.map(r => r.threshold));
+    // Use highest threshold + 2 as buffer, or at least 1.5x the target, whichever is higher
+    maxValue = Math.max(
+      Math.ceil(highestThreshold + 2),
+      Math.ceil(targetValue * 1.5)
+    );
+  } else {
+    // For percentage-based sliders or number inputs without calibration, use percentage of target
+    maxValue = Math.round((maxPercentage / 100) * targetValue);
+  }
 
   const getRatingLabel = (rating: number) => {
     switch (rating) {
@@ -395,6 +414,7 @@ export function DualAchievementSlider({
               onChange={(e) => {
                 const value = parseFloat(e.target.value) || 0;
                 const clampedValue = Math.max(0, Math.min(maxValue, value));
+                console.log('clampedValue', clampedValue, 'maxValue', maxValue, 'value', value,"manager",managerAchieved);
                 handleManagerNumberChange(clampedValue);
               }}
               disabled={disabled}

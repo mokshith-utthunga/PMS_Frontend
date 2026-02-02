@@ -15,6 +15,9 @@ import { employeeService, goalsService, evaluationService, settingsService, dele
 import { useAuth } from '@/contexts/AuthContext';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 import { useCurrentEmployee } from '@/hooks/useCurrentEmployee';
+import { useTransition, usePeriodRatings } from '@/hooks';
+import { getPeriodLabel, getPeriodBadgeVariant, formatPeriodDateRange } from '@/utils/periodHelpers';
+import { formatDateShort } from '@/utils/quarterHelpers';
 import {
   Loader2,
   AlertCircle,
@@ -29,6 +32,7 @@ import {
   ClipboardCheck,
   CheckCircle2,
   XCircle,
+  ArrowRight,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DualAchievementSlider, parseNumericTarget } from '@/components/evaluation/AchievementSlider';
@@ -111,6 +115,8 @@ interface KRADisplay {
   description?: string | null;
   weight: number;
   quarter?: number | null;
+  period_type?: 'full_quarter' | 'pre_transition' | 'post_transition' | null;
+  transition_id?: string | null;
 }
 
 interface KPIDisplay {
@@ -123,6 +129,8 @@ interface KPIDisplay {
   calibration?: Array<{ threshold: number; rating: number }> | null;
   quarter?: number | null;
   metric_type?: string | null;
+  period_type?: 'full_quarter' | 'pre_transition' | 'post_transition' | null;
+  transition_id?: string | null;
 }
 
 interface GoalSelfRating {
@@ -216,6 +224,22 @@ export default function ManagerEvaluation() {
   // HR Review Rating state
   const [hrReviewRatings, setHrReviewRatings] = useState<any[]>([]);
   const [hrReviewLoading, setHrReviewLoading] = useState(false);
+  
+  // Fetch transition data for the selected quarter
+  const { transition, loading: transitionLoading } = useTransition({
+    employeeId: employeeId || undefined,
+    cycleId: activeCycle?.id,
+    quarter: selectedQuarter,
+    enabled: !!employeeId && !!activeCycle,
+  });
+  
+  // Fetch period ratings for the selected quarter
+  const { periodRatings, finalRating, loading: periodRatingsLoading } = usePeriodRatings({
+    employeeId: employeeId || undefined,
+    cycleId: activeCycle?.id,
+    quarter: selectedQuarter,
+    enabled: !!employeeId && !!activeCycle,
+  });
   
   // Determine current quarter from cycle
   const currentQuarter = useMemo(() => {
@@ -312,7 +336,7 @@ export default function ManagerEvaluation() {
       }));
       setRatingScales(scales);
 
-      // Fetch approved KRAs for this employee - include quarter
+      // Fetch approved KRAs for this employee - include quarter, period_type, and transition_id
       // activeCycleFromContext is already checked above, so it's safe to use .id
       const krasResult = await goalsService.kras.getByEmployee(employeeId, activeCycleFromContext!.id, 'approved');
       const mappedKras = (krasResult.data || []).map((kra: any) => ({
@@ -321,10 +345,12 @@ export default function ManagerEvaluation() {
         description: kra.description,
         weight: kra.weight,
         quarter: kra.quarter || null,
+        period_type: kra.period_type || null,
+        transition_id: kra.transition_id || null,
       }));
       setKras(mappedKras);
 
-      // Fetch approved KPIs (goals with kra_id) - include calibration and quarter
+      // Fetch approved KPIs (goals with kra_id) - include calibration, quarter, period_type, and transition_id
       // activeCycleFromContext is already checked above, so it's safe to use .id
       const kpisResult = await goalsService.kpis.getByEmployee(employeeId, activeCycleFromContext!.id, 'approved');
       const filteredKpis = (kpisResult.data || [])
@@ -339,6 +365,8 @@ export default function ManagerEvaluation() {
           calibration: kpi.calibration || null,
           quarter: kpi.quarter || null,
           metric_type: kpi.metric_type || null,
+          period_type: kpi.period_type || null,
+          transition_id: kpi.transition_id || null,
         }));
       setKpis(filteredKpis);
 
@@ -464,6 +492,8 @@ export default function ManagerEvaluation() {
 
         setGoalManagerRatings(mgrRatingsMap);
 
+        // Set quarterly ratings from manager reviews (raw ratings)
+        // These will be overridden by calibrated ratings from year-end evaluation if available
         const qRatings: Record<string, number | null> = { q1: null, q2: null, q3: null, q4: null };
         Object.entries(mgrReviewsByQuarter).forEach(([q, review]: [string, any]) => {
           const key = `q${q}` as keyof typeof qRatings;
@@ -502,18 +532,14 @@ export default function ManagerEvaluation() {
           if (yearEndResult.data.potential_rating !== null && yearEndResult.data.potential_rating !== undefined) {
             setPotentialRating(yearEndResult.data.potential_rating);
           }
-          // Also populate quarterly ratings from the year-end record if available
-          if (yearEndResult.data.q1_rating !== undefined || 
-              yearEndResult.data.q2_rating !== undefined ||
-              yearEndResult.data.q3_rating !== undefined ||
-              yearEndResult.data.q4_rating !== undefined) {
-            setQuarterlyRatings({
-              q1: yearEndResult.data.q1_rating ?? null,
-              q2: yearEndResult.data.q2_rating ?? null,
-              q3: yearEndResult.data.q3_rating ?? null,
-              q4: yearEndResult.data.q4_rating ?? null,
-            });
-          }
+          // ALWAYS populate quarterly ratings from the year-end record (these contain calibrated ratings after HR approval)
+          // This overrides the raw manager ratings from quarterly_manager_reviews
+          setQuarterlyRatings({
+            q1: yearEndResult.data.q1_rating ?? null,
+            q2: yearEndResult.data.q2_rating ?? null,
+            q3: yearEndResult.data.q3_rating ?? null,
+            q4: yearEndResult.data.q4_rating ?? null,
+          });
         }
       } catch (error) {
         console.log('No year-end evaluation found yet - this is normal for new evaluations');
@@ -958,7 +984,11 @@ export default function ManagerEvaluation() {
         selectedQuarter,
         activeCycle.id
       );
-      setHrReviewRatings(result.data || []);
+      // Filter to show only the specific employee being evaluated
+      const filteredRatings = (result.data || []).filter(
+        (rating: any) => rating.employee_id === employeeId
+      );
+      setHrReviewRatings(filteredRatings);
     } catch (error: any) {
       toast({
         title: 'Error',
@@ -968,7 +998,7 @@ export default function ManagerEvaluation() {
     } finally {
       setHrReviewLoading(false);
     }
-  }, [activeCycle, managerId, selectedQuarter, toast]);
+  }, [activeCycle, managerId, selectedQuarter, employeeId, toast]);
 
   const handleManagerReview = useCallback(async (employeeId: string, action: 'ACCEPT' | 'REJECT') => {
     if (!activeCycle || !selectedQuarter) return;
@@ -988,6 +1018,184 @@ export default function ManagerEvaluation() {
       });
     }
   }, [activeCycle, selectedQuarter, toast, fetchHrReviewRatings]);
+
+  // Helper function to render KRA card - MUST be defined before early returns (React Rules of Hooks)
+  const renderKRACard = useCallback((kra: any, kraKpis: any[], relevantGoalSelfRatings: Record<string, GoalSelfRating>, isSubmitted: boolean) => {
+    const isExpanded = expandedKRAs.has(kra.id);
+    return (
+      <Card key={kra.id} className="border-l-4 border-l-card-border">
+        <CardHeader className="pb-3">
+          <div className="flex items-start gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0 mt-1"
+              onClick={() => toggleKRA(kra.id)}
+            >
+              {isExpanded ? <ChevronDown className="h-4 w-4 text-[hsl(var(--card-arrow))]" /> : <ChevronRight className="h-4 w-4 text-[hsl(var(--card-arrow))]" />}
+            </Button>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <Badge variant="outline" className="bg-primary/10">
+                  KRA
+                </Badge>
+                <span className="text-sm font-medium text-primary">Weight: {kra.weight}%</span>
+              </div>
+              <CardTitle className="text-lg">{kra.title}</CardTitle>
+              {kra.description && <CardDescription className="mt-1">{kra.description}</CardDescription>}
+            </div>
+            <div className="text-right">
+              <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                <Calculator className="h-3 w-3" />
+                KRA Rating
+              </div>
+              <div className="text-xl font-bold text-primary">
+                {formatRating(calculatedKRARatings[kra.id])}
+              </div>
+            </div>
+          </div>
+        </CardHeader>
+
+        {isExpanded && (
+          <CardContent className="space-y-4">
+            {kraKpis.map((kpi) => (
+              <div key={kpi.id} className="border rounded-lg p-4 space-y-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <Badge variant="secondary">KPI</Badge>
+                    <span className="text-sm text-muted-foreground">Weight: {kpi.weight}%</span>
+                  </div>
+                  <h4 className="font-medium">{kpi.title}</h4>
+                  {kpi.description && (
+                    <p className="text-sm text-muted-foreground mt-1">{kpi.description}</p>
+                  )}
+                  {kpi.metric_type && (
+                    <p className="text-sm mt-1">
+                      <span className="text-muted-foreground">Metric Type: </span>
+                        {kpi.metric_type}
+                    </p>
+                  )}
+                  {kpi.target_value && (
+                    <p className="text-sm mt-1">
+                      <span className="text-muted-foreground">Target: </span>
+                      {kpi.target_value}
+                    </p>
+                  )}
+                </div>
+
+                {relevantGoalSelfRatings[kpi.id] && (
+                  <div className="bg-muted/50 p-3 rounded-lg space-y-2">
+                    <h5 className="font-medium text-sm flex items-center gap-2">
+                      <User className="h-4 w-4" />
+                      Employee Self Assessment
+                    </h5>
+                    <div className="grid gap-2 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">Self Rating: </span>
+                        <Badge variant="secondary">
+                          {getRatingLabel(relevantGoalSelfRatings[kpi.id].self_rating)}
+                        </Badge>
+                      </div>
+                      {relevantGoalSelfRatings[kpi.id].achievement && (
+                        <div>
+                          <span className="text-muted-foreground">Achievement: </span>
+                          <p className="mt-1">{relevantGoalSelfRatings[kpi.id].achievement}</p>
+                        </div>
+                      )}
+                      {relevantGoalSelfRatings[kpi.id].evidence && (
+                        <div>
+                          <span className="text-muted-foreground">Evidence: </span>
+                          <p className="mt-1">{relevantGoalSelfRatings[kpi.id].evidence}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {(() => {
+                  const numericTarget = parseNumericTarget(kpi.target_value);
+                  const selfRating = relevantGoalSelfRatings[kpi.id];
+                  if (numericTarget !== null) {
+                    const employeeAchieved = selfRating?.achieved_value ?? 0;
+                    const managerAchieved = goalManagerRatings[kpi.id]?.manager_achieved_value ?? employeeAchieved;
+                    return (
+                      <DualAchievementSlider
+                        calibration={kpi.calibration}
+                        targetValue={numericTarget}
+                        employeeAchieved={employeeAchieved}
+                        managerAchieved={managerAchieved}
+                        onManagerChange={(value) => handleGoalRatingChange(kpi.id, 'manager_achieved_value' as keyof GoalManagerRating, value)}
+                        onRatingChange={(rating) => handleGoalRatingChange(kpi.id, 'rating', rating)}
+                        disabled={isSubmitted}
+                        metricType={kpi.metric_type || relevantGoalSelfRatings[kpi.id]?.metric_type}
+                      />
+                    );
+                  }
+                  return null;
+                })()}
+
+                {kpi.calibration && kpi.calibration.length > 0 && (
+                  <CalibrationDisplay
+                    calibration={kpi.calibration}
+                    targetValue={kpi.target_value}
+                    achievedValue={goalManagerRatings[kpi.id]?.manager_achieved_value ?? relevantGoalSelfRatings[kpi.id]?.achieved_value ?? null}
+                    metricType={kpi.metric_type || relevantGoalSelfRatings[kpi.id]?.metric_type || "number"}
+                    className="mt-4"
+                  />
+                )}
+
+                <Separator />
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h5 className="font-medium text-sm">Your Rating</h5>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Rating *</Label>
+                    <RadioGroup
+                      value={goalManagerRatings[kpi.id]?.rating?.toString() || ''}
+                      onValueChange={(value) => handleGoalRatingChange(kpi.id, 'rating', parseInt(value))}
+                      disabled={isSubmitted}
+                      className="flex flex-wrap gap-4"
+                    >
+                      {ratingScales.map((scale) => (
+                        <div key={scale.value} className="flex items-center space-x-2">
+                          <RadioGroupItem
+                            value={scale.value.toString()}
+                            id={`mgr-${kpi.id}-${scale.value}`}
+                            disabled={isSubmitted}
+                          />
+                          <Label
+                            htmlFor={`mgr-${kpi.id}-${scale.value}`}
+                            className={`flex items-center gap-1 ${isSubmitted ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+                          >
+                            <Star className="h-4 w-4" style={{ color: scale.color || undefined }} />
+                            {scale.value} - {scale.name}
+                          </Label>
+                        </div>
+                      ))}
+                    </RadioGroup>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Comments</Label>
+                    <Textarea
+                      value={goalManagerRatings[kpi.id]?.comments || ''}
+                      onChange={(e) => handleGoalRatingChange(kpi.id, 'comments', e.target.value)}
+                      disabled={isSubmitted}
+                      placeholder="Add your comments about this KPI..."
+                      rows={3}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        )}
+      </Card>
+    );
+  }, [expandedKRAs, toggleKRA, calculatedKRARatings, goalManagerRatings, handleGoalRatingChange, ratingScales, getRatingLabel]);
 
   // Show loading state while fetching or if active cycle is still loading
   if (loading || isLoadingActiveCycle) {
@@ -1090,8 +1298,102 @@ export default function ManagerEvaluation() {
     : yearEndManagerEvaluation?.hr_rejection_reason && yearEndManagerEvaluation?.status === 'pending';
 
   // Render KRA/KPI rating content (quarterly only)
-  const renderQuarterlyRatingContent = () => (
+  const renderQuarterlyRatingContent = () => {
+    // Debug logging
+    console.log('ManagerEvaluation - Transition:', transition);
+    console.log('ManagerEvaluation - Quarter KRAs:', quarterKras.map(k => ({ id: k.id, quarter: k.quarter, period_type: k.period_type, transition_id: k.transition_id })));
+    console.log('ManagerEvaluation - Quarter KPIs:', quarterKpis.map(k => ({ id: k.id, quarter: k.quarter, period_type: k.period_type, transition_id: k.transition_id })));
+    
+    // Separate KRAs/KPIs by period if transition exists
+    const preTransitionKras = transition
+      ? quarterKras.filter(k => k.period_type === 'pre_transition' && k.transition_id === transition.id)
+      : [];
+    const preTransitionKpis = transition
+      ? quarterKpis.filter(k => k.period_type === 'pre_transition' && k.transition_id === transition.id)
+      : [];
+    const postTransitionKras = transition
+      ? quarterKras.filter(k => k.period_type === 'post_transition' && k.transition_id === transition.id)
+      : [];
+    const postTransitionKpis = transition
+      ? quarterKpis.filter(k => k.period_type === 'post_transition' && k.transition_id === transition.id)
+      : [];
+    const fullQuarterKras = transition ? [] : quarterKras.filter(k => !k.period_type || k.period_type === 'full_quarter');
+    const fullQuarterKpis = transition ? [] : quarterKpis.filter(k => !k.period_type || k.period_type === 'full_quarter');
+    
+    console.log('ManagerEvaluation - Pre-transition KRAs:', preTransitionKras.length, 'KPIs:', preTransitionKpis.length);
+    console.log('ManagerEvaluation - Post-transition KRAs:', postTransitionKras.length, 'KPIs:', postTransitionKpis.length);
+    console.log('ManagerEvaluation - Full quarter KRAs:', fullQuarterKras.length, 'KPIs:', fullQuarterKpis.length);
+    
+    // Get period ratings
+    const prePeriodRating = periodRatings.find(p => p.period_type === 'pre_transition');
+    const postPeriodRating = periodRatings.find(p => p.period_type === 'post_transition');
+    
+    return (
     <div className="space-y-6">
+      {/* Transition Alert */}
+      {transition && (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="font-semibold">Mid-Quarter Transition Detected</span>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Transition Date: {formatDateShort(new Date(transition.transition_date))} • 
+                  Type: {transition.transition_type}
+                  {transition.old_manager_name && transition.new_manager_name && (
+                    <> • Old Manager: {transition.old_manager_name} → New Manager: {transition.new_manager_name}</>
+                  )}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Badge variant={getPeriodBadgeVariant('pre_transition')}>
+                  {getPeriodLabel('pre_transition')}
+                </Badge>
+                <ArrowRight className="h-4 w-4" />
+                <Badge variant={getPeriodBadgeVariant('post_transition')}>
+                  {getPeriodLabel('post_transition')}
+                </Badge>
+              </div>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+      
+      {/* Period Ratings Display */}
+      {transition && (prePeriodRating || postPeriodRating || finalRating) && (
+        <Card className="border-2 border-blue-200 bg-blue-50">
+          <CardHeader>
+            <CardTitle className="text-lg">Period Ratings</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-3 gap-4">
+              {prePeriodRating && (
+                <div>
+                  <div className="text-sm text-muted-foreground mb-1">Pre-Transition Rating</div>
+                  <div className="text-2xl font-bold">{prePeriodRating.weighted_avg_rating?.toFixed(2) || '-'}</div>
+                  <div className="text-xs text-muted-foreground">{prePeriodRating.period_days} days</div>
+                </div>
+              )}
+              {postPeriodRating && (
+                <div>
+                  <div className="text-sm text-muted-foreground mb-1">Post-Transition Rating</div>
+                  <div className="text-2xl font-bold">{postPeriodRating.weighted_avg_rating?.toFixed(2) || '-'}</div>
+                  <div className="text-xs text-muted-foreground">{postPeriodRating.period_days} days</div>
+                </div>
+              )}
+              {finalRating && (
+                <div>
+                  <div className="text-sm text-muted-foreground mb-1">Final Quarterly Rating</div>
+                  <div className="text-2xl font-bold text-primary">{finalRating.final_quarterly_rating?.toFixed(2) || '-'}</div>
+                  <div className="text-xs text-muted-foreground">{finalRating.calculation_method}</div>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      
       <Tabs 
         value={evaluationTab} 
         onValueChange={handleTabChange}
@@ -1144,266 +1446,89 @@ export default function ManagerEvaluation() {
             </CardContent>
           </Card>
 
-            {quarterKras.map((kra) => {
-              console.log('kra in the manager evaluation',kra)
-              const kraKpis = getKPIsForKRA(kra.id);
-              const isExpanded = expandedKRAs.has(kra.id);
-
-              return (
-                <Card key={kra.id} className="border-l-4 border-l-card-border">
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start gap-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 shrink-0 mt-1"
-                        onClick={() => toggleKRA(kra.id)}
-                      >
-                        {isExpanded ? <ChevronDown className="h-4 w-4 text-[hsl(var(--card-arrow))]" /> : <ChevronRight className="h-4 w-4 text-[hsl(var(--card-arrow))]" />}
-                      </Button>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Badge variant="outline" className="bg-primary/10">
-                            KRA
-                          </Badge>
-                          <span className="text-sm font-medium text-primary">Weight: {kra.weight}%</span>
-                        </div>
-                        <CardTitle className="text-lg">{kra.title}</CardTitle>
-                        {kra.description && <CardDescription className="mt-1">{kra.description}</CardDescription>}
-                      </div>
-                      <div className="text-right">
-                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                          <Calculator className="h-3 w-3" />
-                          KRA Rating
-                        </div>
-                        <div className="text-xl font-bold text-primary">
-                          {formatRating(calculatedKRARatings[kra.id])}
-                        </div>
-                      </div>
-                    </div>
-                  </CardHeader>
-
-                  {isExpanded && (
-                    <CardContent className="space-y-4">
-                      {kraKpis.map((kpi) => (
-                        <div key={kpi.id} className="border rounded-lg p-4 space-y-4">
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <Badge variant="secondary">KPI</Badge>
-                              <span className="text-sm text-muted-foreground">Weight: {kpi.weight}%</span>
-                            </div>
-                            <h4 className="font-medium">{kpi.title}</h4>
-                            {kpi.description && (
-                              <p className="text-sm text-muted-foreground mt-1">{kpi.description}</p>
-                            )}
-                            {kpi.metric_type && (
-                              <p className="text-sm mt-1">
-                                <span className="text-muted-foreground">Metric Type: </span>
-                                  {kpi.metric_type}
-                              </p>
-                            )}
-                            {kpi.target_value && (
-                              <p className="text-sm mt-1">
-                                <span className="text-muted-foreground">Target: </span>
-                                {kpi.target_value}
-                              </p>
-                            )}
-                          </div>
-
-                          {relevantGoalSelfRatings[kpi.id] && (
-                            <div className="bg-muted/50 p-3 rounded-lg space-y-2">
-                              <h5 className="font-medium text-sm flex items-center gap-2">
-                                <User className="h-4 w-4" />
-                                Employee Self Assessment
-                              </h5>
-                              <div className="grid gap-2 text-sm">
-                                <div>
-                                  <span className="text-muted-foreground">Self Rating: </span>
-                                  <Badge variant="secondary">
-                                    {getRatingLabel(relevantGoalSelfRatings[kpi.id].self_rating)}
-                                  </Badge>
-                                </div>
-                                {relevantGoalSelfRatings[kpi.id].achievement && (
-                                  <div>
-                                    <span className="text-muted-foreground">Achievement: </span>
-                                    <p className="mt-1">{relevantGoalSelfRatings[kpi.id].achievement}</p>
-                                  </div>
-                                )}
-                                {relevantGoalSelfRatings[kpi.id].evidence && (
-                                  <div>
-                                    <span className="text-muted-foreground">Evidence: </span>
-                                    <p className="mt-1">{relevantGoalSelfRatings[kpi.id].evidence}</p>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-
-                          {(() => {
-                            const numericTarget = parseNumericTarget(kpi.target_value);
-                            const selfRating = relevantGoalSelfRatings[kpi.id];
-                            if (numericTarget !== null) {
-                              const employeeAchieved = selfRating?.achieved_value ?? 0;
-                              const managerAchieved = goalManagerRatings[kpi.id]?.manager_achieved_value ?? employeeAchieved;
-                              return (
-                                <DualAchievementSlider
-                                  calibration={kpi.calibration}
-                                  targetValue={numericTarget}
-                                  employeeAchieved={employeeAchieved}
-                                  managerAchieved={managerAchieved}
-                                  onManagerChange={(value) => handleGoalRatingChange(kpi.id, 'manager_achieved_value' as keyof GoalManagerRating, value)}
-                                  onRatingChange={(rating) => handleGoalRatingChange(kpi.id, 'rating', rating)}
-                                  disabled={isSubmitted}
-                                  metricType={kpi.metric_type || relevantGoalSelfRatings[kpi.id]?.metric_type}
-                                />
-                              );
-                            }
-                            return null;
-                          })()}
-
-                          {/* Calibration Scale Display */}
-                          {kpi.calibration && kpi.calibration.length > 0 && (
-                            <CalibrationDisplay
-                              calibration={kpi.calibration}
-                              targetValue={kpi.target_value}
-                              achievedValue={goalManagerRatings[kpi.id]?.manager_achieved_value ?? relevantGoalSelfRatings[kpi.id]?.achieved_value ?? null}
-                              metricType={kpi.metric_type || relevantGoalSelfRatings[kpi.id]?.metric_type || "number"}
-                              className="mt-4"
-                            />
-                          )}
-
-                          <Separator />
-
-                          <div className="space-y-4">
-                            <div className="flex items-center justify-between">
-                            <h5 className="font-medium text-sm">Your Rating</h5>
-                              {(() => {
-                                // Check if progress bar has been used
-                                const currentRating = goalManagerRatings[kpi.id];
-                                const numericTarget = parseNumericTarget(kpi.target_value);
-                                
-                                if (numericTarget === null) return null;
-                                
-                                const employeeAchieved = relevantGoalSelfRatings[kpi.id]?.achieved_value ?? 0;
-                                const managerAchieved = currentRating?.manager_achieved_value ?? employeeAchieved;
-
-                                const hasProgressBarValue = 
-                                  (currentRating?.progress_percentage !== null && 
-                                   currentRating?.progress_percentage !== undefined) ||
-                                  (currentRating?.manager_achieved_value !== null &&
-                                   currentRating?.manager_achieved_value !== undefined &&
-                                   managerAchieved !== employeeAchieved);
-                                
-                                if (hasProgressBarValue && !isSubmitted) {
-                                  return (
-                                    <span className="text-xs text-muted-foreground italic">
-                                      Rating controlled by progress bar
-                                    </span>
-                                  );
-                                }
-                                return null;
-                              })()}
-                            </div>
-
-                            <div className="space-y-2">
-                              <Label>Rating *</Label>
-                              {(() => {
-                                const currentRating = goalManagerRatings[kpi.id];
-                                const numericTarget = parseNumericTarget(kpi.target_value);
-                                
-                                if (numericTarget === null) {
-                                  return (
-                              <RadioGroup
-                                value={goalManagerRatings[kpi.id]?.rating?.toString() || ''}
-                                onValueChange={(value) => handleGoalRatingChange(kpi.id, 'rating', parseInt(value))}
-                                disabled={isSubmitted}
-                                className="flex flex-wrap gap-4"
-                              >
-                                {ratingScales.map((scale) => (
-                                  <div key={scale.value} className="flex items-center space-x-2">
-                                    <RadioGroupItem
-                                      value={scale.value.toString()}
-                                      id={`mgr-${kpi.id}-${scale.value}`}
-                                            disabled={isSubmitted}
-                                    />
-                                    <Label
-                                      htmlFor={`mgr-${kpi.id}-${scale.value}`}
-                                            className={`flex items-center gap-1 ${isSubmitted ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
-                                    >
-                                      <Star className="h-4 w-4" style={{ color: scale.color || undefined }} />
-                                      {scale.value} - {scale.name}
-                                    </Label>
-                                  </div>
-                                ))}
-                              </RadioGroup>
-                                  );
-                                }
-                                
-                                const employeeAchieved = relevantGoalSelfRatings[kpi.id]?.achieved_value ?? 0;
-                                const managerAchieved = currentRating?.manager_achieved_value ?? employeeAchieved;
-                                
-                              
-                                const hasProgressBarValue = 
-                                  (currentRating?.progress_percentage !== null && 
-                                   currentRating?.progress_percentage !== undefined) ||
-                                  (currentRating?.manager_achieved_value !== null &&
-                                   currentRating?.manager_achieved_value !== undefined &&
-                                   managerAchieved !== employeeAchieved);
-                                
-                                const isRatingDisabled = isSubmitted || hasProgressBarValue;
-                                
-                                return (
-                                  <RadioGroup
-                                    value={goalManagerRatings[kpi.id]?.rating?.toString() || ''}
-                                    onValueChange={(value) => {
-                                      // Prevent manual rating change if progress bar has been used
-                                      if (!hasProgressBarValue) {
-                                        handleGoalRatingChange(kpi.id, 'rating', parseInt(value));
-                                      }
-                                    }}
-                                    disabled={isRatingDisabled}
-                                    className="flex flex-wrap gap-4"
-                                  >
-                                    {ratingScales.map((scale) => (
-                                      <div key={scale.value} className="flex items-center space-x-2">
-                                        <RadioGroupItem
-                                          value={scale.value.toString()}
-                                          id={`mgr-${kpi.id}-${scale.value}`}
-                                          disabled={isRatingDisabled}
-                                        />
-                                        <Label
-                                          htmlFor={`mgr-${kpi.id}-${scale.value}`}
-                                          className={`flex items-center gap-1 ${isRatingDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
-                                        >
-                                          <Star className="h-4 w-4" style={{ color: scale.color || undefined }} />
-                                          {scale.value} - {scale.name}
-                                        </Label>
-                                      </div>
-                                    ))}
-                                  </RadioGroup>
-                                );
-                              })()}
-                            </div>
-
-                            <div className="space-y-2">
-                              <Label>Comments <span className="text-destructive">*</span></Label>
-                              <Textarea
-                                placeholder="Provide feedback on this KPI (required)..."
-                                value={goalManagerRatings[kpi.id]?.comments || ''}
-                                onChange={(e) => handleGoalRatingChange(kpi.id, 'comments', e.target.value)}
-                                disabled={isSubmitted}
-                                rows={2}
-                                className={!goalManagerRatings[kpi.id]?.comments?.trim() && !isSubmitted ? 'border-orange-300' : ''}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </CardContent>
+          {transition ? (
+            <>
+              {/* Pre-Transition Period */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 pb-2 border-b">
+                  <Badge variant={getPeriodBadgeVariant('pre_transition')}>
+                    {getPeriodLabel('pre_transition')}
+                  </Badge>
+                  {transition.pre_period_start_date && transition.pre_period_end_date && (
+                    <span className="text-sm text-muted-foreground">
+                      {formatPeriodDateRange(transition.pre_period_start_date, transition.pre_period_end_date)}
+                    </span>
                   )}
-                </Card>
-              );
-            })}
+                  {transition.old_manager_name && (
+                    <span className="text-sm text-muted-foreground ml-auto">
+                      Manager: {transition.old_manager_name}
+                    </span>
+                  )}
+                </div>
+                {preTransitionKras.length > 0 ? (
+                  preTransitionKras.map((kra) => {
+                    const kraKpis = preTransitionKpis.filter(k => k.kra_id === kra.id);
+                    return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+                  })
+                ) : (
+                  <Card>
+                    <CardContent className="py-8 text-center text-muted-foreground">
+                      <p>No KRAs/KPIs found for the pre-transition period.</p>
+                      <p className="text-sm mt-2">Goals from before the transition date should appear here.</p>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+              
+              {/* Transition Separator */}
+              {(preTransitionKras.length > 0 || postTransitionKras.length > 0) && (
+                <div className="flex items-center gap-2 py-2">
+                  <div className="flex-1 border-t"></div>
+                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
+                  <Badge variant="outline">{formatDateShort(new Date(transition.transition_date))}</Badge>
+                  <div className="flex-1 border-t"></div>
+                </div>
+              )}
+              
+              {/* Post-Transition Period */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 pb-2 border-b">
+                  <Badge variant={getPeriodBadgeVariant('post_transition')}>
+                    {getPeriodLabel('post_transition')}
+                  </Badge>
+                  {transition.post_period_start_date && transition.post_period_end_date && (
+                    <span className="text-sm text-muted-foreground">
+                      {formatPeriodDateRange(transition.post_period_start_date, transition.post_period_end_date)}
+                    </span>
+                  )}
+                  {transition.new_manager_name && (
+                    <span className="text-sm text-muted-foreground ml-auto">
+                      Manager: {transition.new_manager_name}
+                    </span>
+                  )}
+                </div>
+                {postTransitionKras.length > 0 ? (
+                  postTransitionKras.map((kra) => {
+                    const kraKpis = postTransitionKpis.filter(k => k.kra_id === kra.id);
+                    return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+                  })
+                ) : (
+                  <Card>
+                    <CardContent className="py-8 text-center text-muted-foreground">
+                      <p>No KRAs/KPIs found for the post-transition period.</p>
+                      <p className="text-sm mt-2">New goals can be created for the post-transition period.</p>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </>
+          ) : (
+            /* Full Quarter (No Transition) */
+            fullQuarterKras.map((kra) => {
+              const kraKpis = fullQuarterKpis.filter(k => k.kra_id === kra.id);
+              return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+            })
+          )}
             
             {/* Action Buttons for KRA/KPI Ratings Tab */}
             {!isSubmitted && canEvaluate && (
@@ -1567,7 +1692,7 @@ export default function ManagerEvaluation() {
                 <Alert>
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>
-                    HR has normalized ratings for your team members. Please review and accept or reject each rating.
+                    HR has normalized and calibrated ratings for {employee?.full_name || 'this employee'}. Please review and accept or reject the rating.
                   </AlertDescription>
                 </Alert>
                 {hrReviewRatings.map((rating) => (
@@ -1584,22 +1709,86 @@ export default function ManagerEvaluation() {
                             Grade: {rating.grade} • Q{rating.quarter}
                           </CardDescription>
                         </div>
-                        <div className="text-right">
-                          <div className="text-sm text-muted-foreground">Raw Rating</div>
-                          <div className="text-xl font-semibold">{formatRating(rating.raw_rating)}</div>
-                          <div className="text-sm text-muted-foreground mt-2">HR Normalized</div>
-                          <div className="text-2xl font-bold text-primary">
-                            {formatRating(rating.final_normalized_rating)}
-                          </div>
-                        </div>
                       </div>
                     </CardHeader>
-                    <CardContent>
-                      <div className="flex gap-2">
+                    <CardContent className="space-y-6">
+                      {/* Ratings Display */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {/* Raw Rating */}
+                        <div className="p-4 rounded-lg border-2 bg-muted/30">
+                          <div className="text-sm font-medium text-muted-foreground mb-3">
+                            Raw Rating
+                          </div>
+                          <div className="text-3xl font-bold text-gray-700">
+                            {formatRating(rating.raw_rating)}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            Original manager rating before normalization
+                          </p>
+                        </div>
+
+                        {/* HR Normalized Rating */}
+                        <div className="p-4 rounded-lg border-2 border-primary/30 bg-primary/5">
+                          <div className="text-sm font-medium text-primary mb-3">
+                            HR Normalized Rating
+                          </div>
+                          <div className="text-3xl font-bold text-primary">
+                            {formatRating(rating.final_normalized_rating)}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-2">
+                            After Box-Cox transformation and min-max scaling
+                          </p>
+                          {rating.final_normalized_rating && rating.raw_rating && (
+                            <div className="text-xs mt-2">
+                              {Math.abs(parseFloat(rating.final_normalized_rating) - parseFloat(rating.raw_rating)) < 0.01 ? (
+                                <span className="text-muted-foreground">No change</span>
+                              ) : parseFloat(rating.final_normalized_rating) > parseFloat(rating.raw_rating) ? (
+                                <span className="text-green-600">
+                                  ↑ +{(parseFloat(rating.final_normalized_rating) - parseFloat(rating.raw_rating)).toFixed(2)}
+                                </span>
+                              ) : (
+                                <span className="text-red-600">
+                                  ↓ {(parseFloat(rating.final_normalized_rating) - parseFloat(rating.raw_rating)).toFixed(2)}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Calibrated Rating */}
+                        <div className="p-4 rounded-lg border-2 border-purple-300 bg-purple-50">
+                          <div className="text-sm font-medium text-purple-600 mb-3">
+                            Calibrated Rating
+                          </div>
+                          {rating.calibrated_rating !== null && rating.calibrated_rating !== undefined ? (
+                            <>
+                              <div className="text-3xl font-bold text-purple-600">
+                                {'★'.repeat(rating.calibrated_rating)} ({rating.calibrated_rating})
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-2">
+                                Bell curve distribution within grade
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <div className="text-3xl font-bold text-muted-foreground">
+                                -
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-2">
+                                Calibration not applied yet
+                              </p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="flex gap-2 pt-4 border-t">
                         <Button
                           onClick={() => handleManagerReview(rating.employee_id, 'ACCEPT')}
                           variant="default"
                           className="flex-1"
+                          size="lg"
                         >
                           <CheckCircle2 className="mr-2 h-4 w-4" />
                           Accept
@@ -1608,6 +1797,7 @@ export default function ManagerEvaluation() {
                           onClick={() => handleManagerReview(rating.employee_id, 'REJECT')}
                           variant="destructive"
                           className="flex-1"
+                          size="lg"
                         >
                           <XCircle className="mr-2 h-4 w-4" />
                           Reject
@@ -1622,6 +1812,7 @@ export default function ManagerEvaluation() {
         </Tabs>
       </div>
     );
+  };
 
   // Render Year-End Evaluation Content (Only Overall Assessment - no KRA/KPI tabs)
   const renderYearEndEvaluationContent = () => {

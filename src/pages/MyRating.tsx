@@ -117,6 +117,7 @@ export default function MyRating() {
   // Evaluation data
   const [selfReview, setSelfReview] = useState<any>(null);
   const [managerReview, setManagerReview] = useState<any>(null);
+  const [calibratedRating, setCalibratedRating] = useState<number | null>(null);
   const [goalRatings, setGoalRatings] = useState<GoalRating[]>([]);
   const [kraRatings, setKraRatings] = useState<KRARating[]>([]);
   const [kras, setKras] = useState<any[]>([]);
@@ -276,6 +277,27 @@ export default function MyRating() {
       const mgrReviewData = mgrReviewsResult.data?.find((r: any) => r.quarter === quarter);
       setManagerReview(mgrReviewData || null);
 
+      // Always try to fetch calibrated rating if HR has published it
+      // The API will only return data if status = 'PUBLISHED', so it's safe to always try
+      let fetchedCalibratedRating: number | null = null;
+      try {
+        const calibratedResult = await evaluationService.normalization.getEmployeeRating(
+          employeeId,
+          quarter,
+          currentActiveCycle.id
+        );
+        if (calibratedResult.data?.calibrated_rating) {
+          fetchedCalibratedRating = calibratedResult.data.calibrated_rating;
+          setCalibratedRating(fetchedCalibratedRating);
+        } else {
+          setCalibratedRating(null);
+        }
+      } catch (error) {
+        // No calibrated rating found - this is normal if not published yet
+        console.log('No calibrated rating found yet - this is normal if not published');
+        setCalibratedRating(null);
+      }
+
       // Get manager KPI feedback (only if HR approved or employee can see)
       let mgrFeedback: any[] = [];
       if (mgrReviewData && (mgrReviewData.hr_approved_at || mgrReviewData.status === 'submitted')) {
@@ -291,7 +313,7 @@ export default function MyRating() {
         return {
           ...goal,
           self_rating: selfRating?.self_rating || null,
-          manager_rating: mgrReviewData?.hr_approved_at ? (mgrFeedbackItem?.rating || null) : null,
+          manager_rating: calibratedRating ? (calibratedRating || null) : null,
           manager_comments: mgrReviewData?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null
         };
       });
@@ -323,28 +345,37 @@ export default function MyRating() {
       );
 
       // Set KRA ratings
+      // Use calibrated rating if available (published), otherwise use calculated rating
       const kraRatingsData: KRARating[] = quarterKras.map((kra: any) => ({
         id: kra.id,
         title: kra.title,
         weight: kra.weight,
         self_rating: calculatedSelfKRARatings[kra.id] || null,
-        manager_rating: mgrReviewData?.hr_approved_at ? (calculatedManagerKRARatings[kra.id] || null) : null,
+        manager_rating: fetchedCalibratedRating !== null && fetchedCalibratedRating !== undefined
+          ? fetchedCalibratedRating
+          : mgrReviewData?.hr_approved_at 
+            ? (calculatedManagerKRARatings[kra.id] || null) 
+            : null,
         quarter: kra.quarter || null,
       }));
 
       setKraRatings(kraRatingsData);
 
       // Determine evaluation state after fetching all data
+      // If calibrated rating exists (published by HR), consider it as HR approved
       if (!mgrReviewData) {
         setEvaluationState('manager_pending');
-      } else if (!mgrReviewData.hr_approved_at) {
-        setEvaluationState('hr_pending');
       } else if (mgrReviewData.employee_acknowledged_at) {
         setEvaluationState('employee_accepted');
       } else if (mgrReviewData.employee_rejected_at) {
         setEvaluationState('employee_rejected');
-      } else {
+      } else if (fetchedCalibratedRating !== null && fetchedCalibratedRating !== undefined) {
+        // HR has published the calibrated rating, so it's approved
         setEvaluationState('hr_approved');
+      } else if (mgrReviewData.hr_approved_at) {
+        setEvaluationState('hr_approved');
+      } else {
+        setEvaluationState('hr_pending');
       }
     } catch (error: any) {
       console.error('Error fetching data:', error);
@@ -357,6 +388,8 @@ export default function MyRating() {
       setLoading(false);
     }
   }, [user, selectedQuarter, viewMode, activeCycleFromContext, activeCycle, currentEmployee, toast]);
+
+  console.log(calibratedRating);
 
   const handleAcceptRating = useCallback(async () => {
     if (!managerReview) return;
@@ -744,24 +777,24 @@ export default function MyRating() {
     );
   }
 
-  if (!employeeId && isHR) {
-    return (
-      <MainLayout>
-        <div className="space-y-6">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">My Rating</h1>
-            <p className="text-muted-foreground">View your performance rating</p>
-          </div>
-          <Alert>
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>
-              As an HR user, you can view employee ratings from the Reports page.
-            </AlertDescription>
-          </Alert>
-        </div>
-      </MainLayout>
-    );
-  }
+  // if (!employeeId && isHR) {
+  //   return (
+  //     <MainLayout>
+  //       <div className="space-y-6">
+  //         <div>
+  //           <h1 className="text-3xl font-bold tracking-tight">My Rating</h1>
+  //           <p className="text-muted-foreground">View your performance rating</p>
+  //         </div>
+  //         <Alert>
+  //           <AlertCircle className="h-4 w-4" />
+  //           <AlertDescription>
+  //             As an HR user, you can view employee ratings from the Reports page.
+  //           </AlertDescription>
+  //         </Alert>
+  //       </div>
+  //     </MainLayout>
+  //   );
+  // }
 
   // Create single unified tab layout
   const renderTabs = (quarterContent: React.ReactNode) => (
@@ -909,7 +942,7 @@ export default function MyRating() {
                                           <div className="text-xs text-muted-foreground mb-1">Your Self Rating</div>
                                           <div className="font-medium">{getRatingLabel(kpi.self_rating)}</div>
                                         </div>
-                                      </div>
+                                      </div>                                      
                                     </div>
                                   ))}
                                 </div>
@@ -938,7 +971,7 @@ export default function MyRating() {
 
   const renderQuarterlyContent = () => (
     <>
-      {evaluationState === 'hr_pending' && (
+      {evaluationState === 'hr_pending' && calibratedRating === null && (
         <>
           <Alert className="border-blue-200 bg-blue-50">
             <AlertCircle className="h-4 w-4 text-blue-600" />
@@ -964,6 +997,7 @@ export default function MyRating() {
                 </div>
               ) : (
                 kraRatings.map((kra) => {
+                  console.log(kra);
                   const kraKPIs = goalRatings.filter((kpi) => kpi.kra_id === kra.id);
                   const isExpanded = expandedKRAs[kra.id] || false;
                   
@@ -990,11 +1024,14 @@ export default function MyRating() {
                           <div className="text-right">
                             <div className="flex items-center gap-1 text-sm text-muted-foreground">
                               <Calculator className="h-3 w-3" />
-                              KRA Rating
+                              KRA Ratings
                             </div>
-                            <div className="text-xl font-bold text-primary">
-                              {getRatingLabel(kra.self_rating)}
+                            <div className="text-sm  font-normal text-primary">
+                              <span className="text-right text-sm font-medium"> Self: </span> <span className="text-right ">{getRatingLabel(kra.self_rating)}</span>
                             </div>
+                            <div className="text-sm font-normal text-primary mt-1">
+                               <span className="text-right text-sm font-medium"> Manager: </span> <span className="text-right ">{getRatingLabel(kra.manager_rating)}</span>
+                              </div>
                           </div>
                         </div>
                       </CardHeader>
@@ -1018,9 +1055,10 @@ export default function MyRating() {
                                   
                                   <div className="mt-3">
                                     <div className="p-3 rounded bg-muted/30">
-                                      <div className="text-xs text-muted-foreground mb-1">Your Self Rating</div>
+                                      <div className="text-xs text-muted-foreground mb-1">Your Self Ratings</div>
                                       <div className="font-medium">{getRatingLabel(kpi.self_rating)}</div>
                                     </div>
+                                  
                                   </div>
                                 </div>
                               ))}
@@ -1050,10 +1088,17 @@ export default function MyRating() {
               <div className="text-center p-6 rounded-lg bg-primary/5 border-2 border-primary">
                 <div className="text-sm text-muted-foreground mb-2">Performance Rating</div>
                 <div className="text-4xl font-bold text-primary mb-2">
-                  {managerReview?.calculated_overall_rating 
-                    ? formatRating(managerReview.calculated_overall_rating)
-                    : '-'}
+                  {calibratedRating !== null && calibratedRating !== undefined
+                    ? formatRating(calibratedRating)
+                    : managerReview?.calculated_overall_rating 
+                      ? formatRating(managerReview.calculated_overall_rating)
+                      : '-'}
                 </div>
+                {/* {calibratedRating !== null && calibratedRating !== undefined && (
+                  <div className="text-xs text-muted-foreground mt-2">
+                    (Calibrated Rating - Final)
+                  </div>
+                )} */}
               </div>
             </CardContent>
           </Card>

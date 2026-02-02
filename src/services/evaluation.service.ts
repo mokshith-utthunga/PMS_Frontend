@@ -1,6 +1,7 @@
 // Evaluation Service - Quarterly evaluation API calls
 // Uses quarterly_self_reviews and quarterly_manager_reviews tables
 import { api } from './api';
+import type { PeriodType } from './transition.service';
 
 // Quarterly Self Review Types
 export interface QuarterlySelfReviewData {
@@ -11,6 +12,10 @@ export interface QuarterlySelfReviewData {
   overall_rating?: number;
   overall_comments?: string;
   status?: string;
+  period_type?: PeriodType;
+  transition_id?: string | null;
+  period_start_date?: string | null;
+  period_end_date?: string | null;
   submitted_at?: string;
   created_at?: string;
   updated_at?: string;
@@ -41,6 +46,11 @@ export interface QuarterlyManagerReviewData {
   guidance?: string;
   calculated_overall_rating?: number | null;
   status?: string;
+  period_type?: PeriodType;
+  transition_id?: string | null;
+  period_start_date?: string | null;
+  period_end_date?: string | null;
+  is_old_manager_review?: boolean;
   approved_at?: string;
   hr_approved_at?: string;
   released_at?: string;
@@ -110,16 +120,20 @@ export interface YearEndEvaluationData {
 export const evaluationService = {
   // ========== Quarterly Self Reviews ==========
   selfReviews: {
-    get: (employeeId: string, cycleId: string, quarter?: number) => {
+    get: (employeeId: string, cycleId: string, quarter?: number, periodType?: PeriodType | null, transitionId?: string | null) => {
       let url = `/api/evaluations/quarterly-self-reviews?employee_id=${employeeId}&cycle_id=${cycleId}`;
       if (quarter) url += `&quarter=${quarter}`;
+      if (periodType) url += `&period_type=${periodType}`;
+      if (transitionId) url += `&transition_id=${transitionId}`;
       return api.get<{ data: QuarterlySelfReviewData[] }>(url);
     },
 
-    getByQuarter: (employeeId: string, cycleId: string, quarter: number) => 
-      api.get<{ data: QuarterlySelfReviewData | null }>(
-        `/api/evaluations/quarterly-self-reviews?employee_id=${employeeId}&cycle_id=${cycleId}&quarter=${quarter}&single=true`
-      ),
+    getByQuarter: (employeeId: string, cycleId: string, quarter: number, periodType?: PeriodType | null, transitionId?: string | null) => {
+      let url = `/api/evaluations/quarterly-self-reviews?employee_id=${employeeId}&cycle_id=${cycleId}&quarter=${quarter}`;
+      if (periodType) url += `&period_type=${periodType}`;
+      if (transitionId) url += `&transition_id=${transitionId}`;
+      return api.get<{ data: QuarterlySelfReviewData | null }>(url);
+    },
 
     upsert: (data: Omit<QuarterlySelfReviewData, 'id' | 'created_at' | 'updated_at'>) => 
       api.post<{ data: QuarterlySelfReviewData }>(
@@ -151,16 +165,20 @@ export const evaluationService = {
 
   // ========== Quarterly Manager Reviews ==========
   managerReviews: {
-    get: (employeeId: string, cycleId: string, quarter?: number) => {
+    get: (employeeId: string, cycleId: string, quarter?: number, periodType?: PeriodType | null, transitionId?: string | null) => {
       let url = `/api/evaluations/quarterly-manager-reviews?employee_id=${employeeId}&cycle_id=${cycleId}`;
       if (quarter) url += `&quarter=${quarter}`;
+      if (periodType) url += `&period_type=${periodType}`;
+      if (transitionId) url += `&transition_id=${transitionId}`;
       return api.get<{ data: QuarterlyManagerReviewData[] }>(url);
     },
 
-    getByQuarter: (employeeId: string, cycleId: string, quarter: number) => 
-      api.get<{ data: QuarterlyManagerReviewData | null }>(
-        `/api/evaluations/quarterly-manager-reviews?employee_id=${employeeId}&cycle_id=${cycleId}&quarter=${quarter}&single=true`
-      ),
+    getByQuarter: (employeeId: string, cycleId: string, quarter: number, periodType?: PeriodType | null, transitionId?: string | null) => {
+      let url = `/api/evaluations/quarterly-manager-reviews?employee_id=${employeeId}&cycle_id=${cycleId}&quarter=${quarter}`;
+      if (periodType) url += `&period_type=${periodType}`;
+      if (transitionId) url += `&transition_id=${transitionId}`;
+      return api.get<{ data: QuarterlyManagerReviewData | null }>(url);
+    },
 
     getCompletedCount: (cycleId: string, reviewerId?: string) => {
       let url = `/api/evaluations/quarterly-manager-reviews/count?cycle_id=${cycleId}&status=submitted`;
@@ -172,6 +190,22 @@ export const evaluationService = {
       api.post<{ data: QuarterlyManagerReviewData }>(
         '/api/evaluations/quarterly-manager-reviews',
         data
+      ),
+  },
+
+  // ========== Period Ratings ==========
+  periodRatings: {
+    get: (employeeId: string, cycleId: string, quarter?: number, periodType?: PeriodType | null) => {
+      let url = `/api/evaluations/period-ratings?employee_id=${employeeId}&cycle_id=${cycleId}`;
+      if (quarter) url += `&quarter=${quarter}`;
+      if (periodType) url += `&period_type=${periodType}`;
+      return api.get<{ data: any[] }>(url);
+    },
+
+    calculateFinal: (employeeId: string, cycleId: string, quarter: number, useTimeWeighted?: boolean) =>
+      api.post<{ data: any }>(
+        '/api/evaluations/calculate-final-rating',
+        { employee_id: employeeId, cycle_id: cycleId, quarter, use_time_weighted: useTimeWeighted }
       ),
   },
 
@@ -283,6 +317,16 @@ export const evaluationService = {
       api.put<{ data: any }>(`/api/evaluations/hr/normalized-rating/${id}`, {
         final_normalized_rating: finalNormalizedRating,
       }),
+
+    calibrate: (quarter: number, cycleId: string) =>
+      api.post<{ data: { processed: number; skipped: number; message: string; distribution?: any } }>(
+        `/api/evaluations/hr/calibrate?quarter=${quarter}&cycle_id=${cycleId}`
+      ),
+
+    getEmployeeRating: (employeeId: string, quarter: number, cycleId: string) =>
+      api.get<{ data: { calibrated_rating: number | null; status: string } | null }>(
+        `/api/evaluations/employee/normalized-rating?employee_id=${employeeId}&quarter=${quarter}&cycle_id=${cycleId}`
+      ),
   },
 
   // ========== Year-End Evaluation ==========

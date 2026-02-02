@@ -49,6 +49,14 @@ export const employeeService = {
     );
   },
 
+  // Search employees by email or employee code
+  search: (query: string, limit = 10) => {
+    const params = new URLSearchParams();
+    params.append('q', query);
+    params.append('limit', String(limit));
+    return api.get<{ data: Employee[] }>(`/api/employees/search?${params.toString()}`);
+  },
+
   // Get team members for a manager
   getTeam: (managerId: string) => 
     api.get<{ data: Employee[]; count: number }>(`/api/employees/${managerId}/team`),

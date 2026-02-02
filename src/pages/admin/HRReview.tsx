@@ -41,6 +41,9 @@ import {
   TrendingUp,
   Calendar,
   Clock,
+  ChevronDown,
+  ChevronRight,
+  Send,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
@@ -133,36 +136,25 @@ export default function HRReview() {
   const [reviewDetails, setReviewDetails] = useState<any>(null);
   const [selfReview, setSelfReview] = useState<any>(null);
   const [goalRatings, setGoalRatings] = useState<any[]>([]);
+  const [kraRatings, setKraRatings] = useState<any[]>([]); // Store KRAs with their KPIs
   
   // Rejection detail data
   const [rejectionSelfReview, setRejectionSelfReview] = useState<any>(null);
   const [rejectionGoalRatings, setRejectionGoalRatings] = useState<any[]>([]);
+  const [rejectionKraRatings, setRejectionKraRatings] = useState<any[]>([]);
 
   // Normalized ratings state
   const [normalizedRatings, setNormalizedRatings] = useState<any[]>([]);
   const [normalizedRatingsLoading, setNormalizedRatingsLoading] = useState(false);
   const [selectedQuarter, setSelectedQuarter] = useState<number>(1);
   const [normalizing, setNormalizing] = useState(false);
+  const [calibrating, setCalibrating] = useState(false);
   const [editingRating, setEditingRating] = useState<string | null>(null);
   const [editedRatingValue, setEditedRatingValue] = useState<number>(0);
+  const [expandedRatings, setExpandedRatings] = useState<Set<string>>(new Set());
 
   const isHR = hasAnyRole(['hr_admin', 'hrbp', 'system_admin']);
   const isBUHead = hasAnyRole(['dept_head']);
-
-  useEffect(() => {
-    if (!isHR && !isBUHead) {
-      setLoading(false);
-      return;
-    }
-    fetchData();
-  }, [isHR, isBUHead, activeCycleFromContext, activeCycle]);
-
-  // Update activeCycle when context data changes
-  useEffect(() => {
-    if (activeCycleFromContext) {
-      setActiveCycle(activeCycleFromContext);
-    }
-  }, [activeCycleFromContext]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -183,7 +175,7 @@ export default function HRReview() {
       // Fetch pending year-end reviews
       const yearEndReviewsResult = await evaluationService.yearEndHRReview.getPendingReviews(currentActiveCycle.id);
       setPendingYearEndReviews(yearEndReviewsResult.data || []);
-
+      
       // Fetch rating rejections
       const rejectionsResult = await evaluationService.ratingRejections.get(currentActiveCycle.id);
       setRatingRejections(rejectionsResult.data || []);
@@ -197,7 +189,22 @@ export default function HRReview() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, activeCycleFromContext, activeCycle]);
+
+  useEffect(() => {
+    if (!isHR && !isBUHead) {
+      setLoading(false);
+      return;
+    }
+    fetchData();
+  }, [isHR, isBUHead, activeCycleFromContext, activeCycle, fetchData]);
+
+  // Update activeCycle when context data changes
+  useEffect(() => {
+    if (activeCycleFromContext) {
+      setActiveCycle(activeCycleFromContext);
+    }
+  }, [activeCycleFromContext]);
 
   const fetchNormalizedRatings = useCallback(async (quarter?: number, status?: string) => {
     if (!activeCycle) {
@@ -247,12 +254,35 @@ export default function HRReview() {
       console.log('Normalization result:', result);
       
       toast({
-        title: 'Success',
-        description: result.data?.message || `Normalized ${result.data?.processed || 0} ratings for Q${quarter}`,
+        title: 'Normalization Complete',
+        description: result.data?.message || `Normalized ${result.data?.processed || 0} ratings for Q${quarter}. Starting calibration...`,
       });
       
+      // Automatically run calibration after normalization
+      try {
+        console.log(`Calibrating ratings for Q${quarter}, cycle: ${activeCycle.id}`);
+        const calibrationResult = await evaluationService.normalization.calibrate(quarter, activeCycle.id);
+        console.log('Calibration result:', calibrationResult);
+        
+        const distribution = calibrationResult.data?.distribution;
+        const distText = distribution 
+          ? ` (5★: ${distribution[5] || 0}, 4★: ${distribution[4] || 0}, 3★: ${distribution[3] || 0}, 2★: ${distribution[2] || 0}, 1★: ${distribution[1] || 0})`
+          : '';
+        
+        toast({
+          title: 'Success',
+          description: (calibrationResult.data?.message || `Normalized and calibrated ${calibrationResult.data?.processed || 0} ratings for Q${quarter}`) + distText,
+        });
+      } catch (calibrationError: any) {
+        console.error('Calibration error:', calibrationError);
+        toast({
+          title: 'Calibration Warning',
+          description: calibrationError.message || 'Normalization completed but calibration failed. You can try calibrating manually.',
+          variant: 'destructive',
+        });
+      }
+      
       // Refresh normalized ratings for the HR Review Rating tab
-      console.log('Fetching normalized ratings for Q' + quarter);
       await fetchNormalizedRatings(quarter);
       
       // Refresh pending reviews to reflect any changes
@@ -268,6 +298,46 @@ export default function HRReview() {
       setNormalizing(false);
     }
   }, [activeCycle, toast, fetchNormalizedRatings, fetchData]);
+
+  const handleCalibrate = useCallback(async (quarter: number) => {
+    if (!activeCycle) {
+      toast({
+        title: 'Error',
+        description: 'No active cycle found',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setCalibrating(true);
+    try {
+      console.log(`Calibrating ratings for Q${quarter}, cycle: ${activeCycle.id}`);
+      const result = await evaluationService.normalization.calibrate(quarter, activeCycle.id);
+      console.log('Calibration result:', result);
+      
+      const distribution = result.data?.distribution;
+      const distText = distribution 
+        ? ` (5★: ${distribution[5] || 0}, 4★: ${distribution[4] || 0}, 3★: ${distribution[3] || 0}, 2★: ${distribution[2] || 0}, 1★: ${distribution[1] || 0})`
+        : '';
+      
+      toast({
+        title: 'Success',
+        description: (result.data?.message || `Calibrated ${result.data?.processed || 0} ratings for Q${quarter}`) + distText,
+      });
+      
+      // Refresh normalized ratings to show calibrated_rating
+      await fetchNormalizedRatings(quarter);
+    } catch (error: any) {
+      console.error('Calibration error:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to calibrate ratings',
+        variant: 'destructive',
+      });
+    } finally {
+      setCalibrating(false);
+    }
+  }, [activeCycle, toast, fetchNormalizedRatings]);
 
   const handleSendToManager = useCallback(async (employeeIds: string[]) => {
     if (!activeCycle) return;
@@ -290,6 +360,44 @@ export default function HRReview() {
       setSaving(null);
     }
   }, [activeCycle, selectedQuarter, toast, fetchNormalizedRatings]);
+
+  const handleBulkSendToManagers = useCallback(async () => {
+    if (!activeCycle) return;
+    
+    // Get all DRAFT and REJECTED ratings for the selected quarter
+    const draftRatings = normalizedRatings.filter(
+      r => (r.status === 'DRAFT' || r.status === 'REJECTED') && r.calibrated_rating !== null && r.calibrated_rating !== undefined
+    );
+    
+    if (draftRatings.length === 0) {
+      toast({
+        title: 'No ratings to send',
+        description: 'No DRAFT or REJECTED ratings with calibration found for this quarter.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    const employeeIds = draftRatings.map(r => r.employee_id);
+    
+    setSaving('bulk-send-all');
+    try {
+      await evaluationService.normalization.sendToManager(employeeIds, selectedQuarter, activeCycle.id);
+      toast({
+        title: 'Success',
+        description: `Sent ${employeeIds.length} rating(s) to their respective managers`,
+      });
+      await fetchNormalizedRatings(selectedQuarter);
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to send ratings to managers',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(null);
+    }
+  }, [activeCycle, selectedQuarter, normalizedRatings, toast, fetchNormalizedRatings]);
 
   const handlePublish = useCallback(async (employeeIds: string[]) => {
     if (!activeCycle) return;
@@ -342,24 +450,34 @@ export default function HRReview() {
       const selfReviewData = selfReviewResult.data?.find((r: any) => r.quarter === review.quarter);
       setSelfReview(selfReviewData || null);
 
-      // Get goals and ratings
+      // Get KRAs using the specified API
+      const krasResult = await goalsService.kras.getByEmployee(
+        review.employee_id,
+        review.cycle_id,
+        'approved',
+        review.quarter
+      );
+
+      // Get goals (KPIs) using the specified API
       const goalsResult = await goalsService.kpis.getByEmployee(
         review.employee_id,
         review.cycle_id,
-        'approved'
+        'approved',
+        review.quarter
       );
 
-      // Get self ratings
+      // Get self ratings using the specified API
       let selfRatings: any[] = [];
       if (selfReviewData?.id) {
         const selfProgressResult = await evaluationService.goalSelfRatings.get(selfReviewData.id);
         selfRatings = selfProgressResult.data || [];
       }
 
-      // Get manager KPI feedback
+      // Get manager KPI feedback using the specified API
       const mgrFeedbackResult = await evaluationService.kpiManagerFeedback.getByReview(review.id);
       const mgrFeedback = mgrFeedbackResult.data || [];
 
+      // Combine goals with ratings
       const combinedGoals = (goalsResult.data || []).map((goal: any) => {
         const selfRating = selfRatings.find((r: any) => r.goal_id === goal.id);
         const mgrFeedbackItem = mgrFeedback.find((r: any) => r.goal_id === goal.id);
@@ -375,6 +493,36 @@ export default function HRReview() {
       });
 
       setGoalRatings(combinedGoals);
+
+      // Organize KRAs with their KPIs hierarchically
+      const krasWithKpis = (krasResult.data || []).map((kra: any) => {
+        const kpisForKra = combinedGoals.filter((goal: any) => goal.kra_id === kra.id);
+        
+        // Calculate KRA rating as weighted average of KPI ratings
+        let kraRating = null;
+        let totalWeight = 0;
+        let weightedSum = 0;
+        
+        kpisForKra.forEach((kpi: any) => {
+          if (kpi.manager_rating !== null && kpi.manager_rating !== undefined) {
+            const kpiWeight = parseFloat(kpi.weight || 0);
+            weightedSum += parseFloat(kpi.manager_rating) * kpiWeight;
+            totalWeight += kpiWeight;
+          }
+        });
+        
+        if (totalWeight > 0) {
+          kraRating = weightedSum / totalWeight;
+        }
+
+        return {
+          ...kra,
+          kpis: kpisForKra,
+          calculated_rating: kraRating,
+        };
+      });
+
+      setKraRatings(krasWithKpis);
       setReviewDetails(review);
     } catch (error: any) {
       console.error('Error fetching review details:', error);
@@ -466,21 +614,30 @@ export default function HRReview() {
       const selfReviewData = selfReviewResult.data?.find((r: any) => r.quarter === rejection.quarter);
       setRejectionSelfReview(selfReviewData || null);
 
-      // Get goals and ratings
+      // Get KRAs using the specified API
+      const krasResult = await goalsService.kras.getByEmployee(
+        rejection.employee_id,
+        rejection.cycle_id,
+        'approved',
+        rejection.quarter
+      );
+
+      // Get goals (KPIs) using the specified API
       const goalsResult = await goalsService.kpis.getByEmployee(
         rejection.employee_id,
         rejection.cycle_id,
-        'approved'
+        'approved',
+        rejection.quarter
       );
 
-      // Get self ratings
+      // Get self ratings using the specified API
       let selfRatings: any[] = [];
       if (selfReviewData?.id) {
         const selfProgressResult = await evaluationService.goalSelfRatings.get(selfReviewData.id);
         selfRatings = selfProgressResult.data || [];
       }
 
-      // Get manager KPI feedback
+      // Get manager KPI feedback using the specified API
       const mgrFeedbackResult = await evaluationService.kpiManagerFeedback.getByReview(rejection.manager_review_id);
       const mgrFeedback = mgrFeedbackResult.data || [];
 
@@ -499,6 +656,36 @@ export default function HRReview() {
       });
 
       setRejectionGoalRatings(combinedGoals);
+
+      // Organize KRAs with their KPIs hierarchically
+      const krasWithKpis = (krasResult.data || []).map((kra: any) => {
+        const kpisForKra = combinedGoals.filter((goal: any) => goal.kra_id === kra.id);
+        
+        // Calculate KRA rating as weighted average of KPI ratings
+        let kraRating = null;
+        let totalWeight = 0;
+        let weightedSum = 0;
+        
+        kpisForKra.forEach((kpi: any) => {
+          if (kpi.manager_rating !== null && kpi.manager_rating !== undefined) {
+            const kpiWeight = parseFloat(kpi.weight || 0);
+            weightedSum += parseFloat(kpi.manager_rating) * kpiWeight;
+            totalWeight += kpiWeight;
+          }
+        });
+        
+        if (totalWeight > 0) {
+          kraRating = weightedSum / totalWeight;
+        }
+
+        return {
+          ...kra,
+          kpis: kpisForKra,
+          calculated_rating: kraRating,
+        };
+      });
+
+      setRejectionKraRatings(krasWithKpis);
     } catch (error: any) {
       console.error('Error fetching rejection details:', error);
       toast({
@@ -622,9 +809,6 @@ export default function HRReview() {
               <Calendar className="h-4 w-4 mr-1" />
               Year-End ({pendingYearEndReviews.length})
             </TabsTrigger>
-            <TabsTrigger value="rejections">
-              Rejections ({ratingRejections.filter(r => r.status === 'pending').length})
-            </TabsTrigger>
             {isHR && (
               <>
                 <TabsTrigger 
@@ -651,6 +835,10 @@ export default function HRReview() {
                 </TabsTrigger>
               </>
             )}
+            <TabsTrigger value="rejections">
+              Rejections ({ratingRejections.filter(r => r.status === 'pending').length})
+            </TabsTrigger>
+          
           </TabsList>
 
           <TabsContent value="reviews" className="space-y-4">
@@ -683,9 +871,15 @@ export default function HRReview() {
                           // so this will work even when data is loaded from cache
                           const quarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === quarter);
                           const managerReviewEndDate = quarterlyCycle?.quarterly_manager_review_end_date;
-                          const canNormalize = managerReviewEndDate 
-                            ? new Date() >= new Date(managerReviewEndDate)
-                            : false;
+                          
+                          // Compare dates (not datetime) - button should appear only after the end date has passed
+                          let canNormalize = false;
+                          if (managerReviewEndDate) {
+                            const endDate = new Date(managerReviewEndDate);
+                            endDate.setHours(23, 59, 59, 999); // Set to end of day
+                            const now = new Date();
+                            canNormalize = now > endDate; // Strictly after the end date
+                          }
                           
                           return (
                             <div className="flex items-center gap-2">
@@ -693,11 +887,11 @@ export default function HRReview() {
                                 <Button
                                   onClick={() => handleNormalize(quarter)}
                                   disabled={normalizing || !activeCycle}
-                                  variant="outline"
+                                  className="bg-green-600 text-white hover:opacity-90 transition hover:bg-green-700"
                                 >
                                   {normalizing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                   <Calculator className="mr-2 h-4 w-4" />
-                                  Normalize Q{quarter}
+                                  Normalize & Calibrate Q{quarter}
                                 </Button>
                               ) : (
                                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -755,6 +949,7 @@ export default function HRReview() {
                                     setSelectedReview(review);
                                     setShowApproveDialog(true);
                                   }}
+                                  variant="outline"
                                   disabled={saving === review.id}
                                 >
                                   {saving === review.id && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
@@ -957,25 +1152,39 @@ export default function HRReview() {
           {/* HR Review Rating Tab */}
           {isHR && (
             <TabsContent value="hr-review-rating" className="space-y-4">
-              <div className="flex items-center gap-4">
-                <Label>Quarter:</Label>
-                <select
-                  value={selectedQuarter}
-                  onChange={(e) => {
-                    const q = parseInt(e.target.value);
-                    setSelectedQuarter(q);
-                    fetchNormalizedRatings(q);
-                  }}
-                  className="px-3 py-2 border rounded-md"
-                >
-                  <option value={1}>Q1</option>
-                  <option value={2}>Q2</option>
-                  <option value={3}>Q3</option>
-                  <option value={4}>Q4</option>
-                </select>
-                <p className="text-sm text-muted-foreground">
-                  Normalized ratings will appear here after clicking "Normalize Q{selectedQuarter}" in the Quarterly tab
-                </p>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <Label>Quarter:</Label>
+                  <select
+                    value={selectedQuarter}
+                    onChange={(e) => {
+                      const q = parseInt(e.target.value);
+                      setSelectedQuarter(q);
+                      fetchNormalizedRatings(q);
+                    }}
+                    className="px-3 py-2 border rounded-md"
+                  >
+                    <option value={1}>Q1</option>
+                    <option value={2}>Q2</option>
+                    <option value={3}>Q3</option>
+                    <option value={4}>Q4</option>
+                  </select>
+                  <p className="text-sm text-muted-foreground">
+                    Normalized ratings will appear here after clicking "Normalize Q{selectedQuarter}" in the Quarterly tab
+                  </p>
+                </div>
+                {normalizedRatings.filter(r => (r.status === 'DRAFT' || r.status === 'REJECTED') && r.calibrated_rating !== null && r.calibrated_rating !== undefined).length > 0 && (
+                  <Button
+                    onClick={handleBulkSendToManagers}
+                    disabled={saving === 'bulk-send-all' || !activeCycle}
+                    className="bg-blue-600 text-white hover:bg-blue-700"
+                    size="lg"
+                  >
+                    {saving === 'bulk-send-all' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    <Send className="mr-2 h-4 w-4" />
+                    Send All to Managers ({normalizedRatings.filter(r => (r.status === 'DRAFT' || r.status === 'REJECTED') && r.calibrated_rating !== null && r.calibrated_rating !== undefined).length})
+                  </Button>
+                )}
               </div>
 
               {/* Explanation Card */}
@@ -1112,6 +1321,119 @@ export default function HRReview() {
                               </div>
                             </CardHeader>
                             <CardContent>
+                              {/* KPI and KRA Breakdown */}
+                              {(rating.normalized_kpi_ratings || rating.normalized_kra_ratings) && (
+                                <div className="mb-4">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                      const newExpanded = new Set(expandedRatings);
+                                      if (newExpanded.has(rating.id)) {
+                                        newExpanded.delete(rating.id);
+                                      } else {
+                                        newExpanded.add(rating.id);
+                                      }
+                                      setExpandedRatings(newExpanded);
+                                    }}
+                                    className="w-full justify-between"
+                                  >
+                                    <span className="text-sm font-medium">
+                                      {expandedRatings.has(rating.id) ? 'Hide' : 'Show'} KPI & KRA Breakdown
+                                    </span>
+                                    {expandedRatings.has(rating.id) ? (
+                                      <ChevronDown className="h-4 w-4" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                  
+                                  {expandedRatings.has(rating.id) && (
+                                    <div className="mt-4 space-y-4 border-t pt-4">
+                                      {/* KRA Ratings */}
+                                      {rating.normalized_kra_ratings && Array.isArray(rating.normalized_kra_ratings) && rating.normalized_kra_ratings.length > 0 && (
+                                        <div>
+                                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                                            <Target className="h-4 w-4" />
+                                            KRA Ratings
+                                          </h4>
+                                          <div className="space-y-2">
+                                            {rating.normalized_kra_ratings.map((kra: any, idx: number) => (
+                                              <div key={idx} className="text-sm p-2 bg-muted rounded">
+                                                <div className="flex justify-between items-center">
+                                                  <span className="font-medium">KRA {idx + 1} (Weight: {kra.weight}%)</span>
+                                                  <div className="flex gap-4 text-xs">
+                                                    <div>
+                                                      <span className="text-muted-foreground">Raw: </span>
+                                                      <span className="font-medium">{kra.raw_rating ? formatRating(kra.raw_rating) : 'N/A'}</span>
+                                                    </div>
+                                                    <div>
+                                                      <span className="text-muted-foreground">Normalized: </span>
+                                                      <span className="font-medium text-primary">{kra.final_normalized ? formatRating(kra.final_normalized) : 'N/A'}</span>
+                                                    </div>
+                                                    {kra.raw_rating && kra.final_normalized && (
+                                                      <div className={parseFloat(kra.final_normalized) > parseFloat(kra.raw_rating) ? 'text-green-600' : parseFloat(kra.final_normalized) < parseFloat(kra.raw_rating) ? 'text-red-600' : 'text-muted-foreground'}>
+                                                        {parseFloat(kra.final_normalized) > parseFloat(kra.raw_rating) ? '↑' : parseFloat(kra.final_normalized) < parseFloat(kra.raw_rating) ? '↓' : '='}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                      
+                                      {/* KPI Ratings */}
+                                      {rating.normalized_kpi_ratings && Array.isArray(rating.normalized_kpi_ratings) && rating.normalized_kpi_ratings.length > 0 && (
+                                        <div>
+                                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                                            <Target className="h-4 w-4" />
+                                            KPI Ratings
+                                          </h4>
+                                          <div className="space-y-2 max-h-64 overflow-y-auto">
+                                            {rating.normalized_kpi_ratings.map((kpi: any, idx: number) => (
+                                              <div key={idx} className="text-sm p-2 bg-muted rounded">
+                                                <div className="flex justify-between items-center">
+                                                  <span className="font-medium">KPI {idx + 1} (Weight: {kpi.weight}%)</span>
+                                                  <div className="flex gap-3 text-xs">
+                                                    <div>
+                                                      <span className="text-muted-foreground">Raw: </span>
+                                                      <span className="font-medium">{kpi.raw_rating ? formatRating(kpi.raw_rating) : 'N/A'}</span>
+                                                    </div>
+                                                    {kpi.normalized_manager !== null && (
+                                                      <div>
+                                                        <span className="text-muted-foreground">Mgr: </span>
+                                                        <span className="font-medium">{formatRating(kpi.normalized_manager)}</span>
+                                                      </div>
+                                                    )}
+                                                    {kpi.normalized_grade !== null && (
+                                                      <div>
+                                                        <span className="text-muted-foreground">Grade: </span>
+                                                        <span className="font-medium">{formatRating(kpi.normalized_grade)}</span>
+                                                      </div>
+                                                    )}
+                                                    <div>
+                                                      <span className="text-muted-foreground">Final: </span>
+                                                      <span className="font-medium text-primary">{kpi.final_normalized ? formatRating(kpi.final_normalized) : 'N/A'}</span>
+                                                    </div>
+                                                    {kpi.raw_rating && kpi.final_normalized && (
+                                                      <div className={parseFloat(kpi.final_normalized) > parseFloat(kpi.raw_rating) ? 'text-green-600' : parseFloat(kpi.final_normalized) < parseFloat(kpi.raw_rating) ? 'text-red-600' : 'text-muted-foreground'}>
+                                                        {parseFloat(kpi.final_normalized) > parseFloat(kpi.raw_rating) ? '↑' : parseFloat(kpi.final_normalized) < parseFloat(kpi.raw_rating) ? '↓' : '='}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              
                               <div className="flex gap-2">
                                 {editingRating === rating.id ? (
                                   <>
@@ -1267,10 +1589,21 @@ export default function HRReview() {
                                         </div>
                                       )}
                                     </div>
+                                    {rating.calibrated_rating !== null && rating.calibrated_rating !== undefined && (
+                                      <div className="pt-2 border-t">
+                                        <div className="text-xs text-muted-foreground mb-1">Calibrated Rating (Bell Curve)</div>
+                                        <div className="text-2xl font-bold text-purple-600">
+                                          {'★'.repeat(rating.calibrated_rating)} ({rating.calibrated_rating})
+                                        </div>
+                                        <div className="text-xs text-muted-foreground mt-1">
+                                          Based on final_normalized_rating within grade
+                                        </div>
+                                      </div>
+                                    )}
                                     <div className="pt-2 border-t text-xs text-muted-foreground space-y-1">
-                                      <div className="font-semibold mb-1">Intermediate Ratings:</div>
-                                      <div className="grid grid-cols-2 gap-2">
-                                        <div>
+                                      {/* <div className="font-semibold mb-1">Intermediate Ratings:</div> */}
+                                      {/* <div className="grid grid-cols-2 gap-2"> */}
+                                        {/* <div>
                                           <div>Manager Level:</div>
                                           <div className="font-medium">{formatRating(rating.boxcox_manager_level_rating)}</div>
                                           {rating.manager_lambda !== null && (
@@ -1279,8 +1612,8 @@ export default function HRReview() {
                                           {rating.manager_group_size !== null && (
                                             <div className="text-[10px]">n={rating.manager_group_size}</div>
                                           )}
-                                        </div>
-                                        <div>
+                                        </div> */}
+                                        {/* <div>
                                           <div>Grade Level:</div>
                                           <div className="font-medium">{formatRating(rating.boxcox_grade_level_rating)}</div>
                                           {rating.grade_lambda !== null && (
@@ -1289,8 +1622,8 @@ export default function HRReview() {
                                           {rating.grade_group_size !== null && (
                                             <div className="text-[10px]">n={rating.grade_group_size}</div>
                                           )}
-                                        </div>
-                                      </div>
+                                        </div> */}
+                                      {/* </div> */}
                                       {rating.manager_weight && rating.grade_weight && (
                                         <div className="mt-1 text-[10px]">
                                           Weights: {Math.round(parseFloat(rating.manager_weight) * 100)}% Manager / {Math.round(parseFloat(rating.grade_weight) * 100)}% Grade
@@ -1302,6 +1635,119 @@ export default function HRReview() {
                               </div>
                             </CardHeader>
                             <CardContent>
+                              {/* KPI and KRA Breakdown */}
+                              {(rating.normalized_kpi_ratings || rating.normalized_kra_ratings) && (
+                                <div className="mb-4">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                      const newExpanded = new Set(expandedRatings);
+                                      if (newExpanded.has(rating.id)) {
+                                        newExpanded.delete(rating.id);
+                                      } else {
+                                        newExpanded.add(rating.id);
+                                      }
+                                      setExpandedRatings(newExpanded);
+                                    }}
+                                    className="w-full justify-between"
+                                  >
+                                    <span className="text-sm font-medium">
+                                      {expandedRatings.has(rating.id) ? 'Hide' : 'Show'} KPI & KRA Breakdown
+                                    </span>
+                                    {expandedRatings.has(rating.id) ? (
+                                      <ChevronDown className="h-4 w-4" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                  
+                                  {expandedRatings.has(rating.id) && (
+                                    <div className="mt-4 space-y-4 border-t pt-4">
+                                      {/* KRA Ratings */}
+                                      {rating.normalized_kra_ratings && Array.isArray(rating.normalized_kra_ratings) && rating.normalized_kra_ratings.length > 0 && (
+                                        <div>
+                                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                                            <Target className="h-4 w-4" />
+                                            KRA Ratings
+                                          </h4>
+                                          <div className="space-y-2">
+                                            {rating.normalized_kra_ratings.map((kra: any, idx: number) => (
+                                              <div key={idx} className="text-sm p-2 bg-muted rounded">
+                                                <div className="flex justify-between items-center">
+                                                  <span className="font-medium">KRA {idx + 1} (Weight: {kra.weight}%)</span>
+                                                  <div className="flex gap-4 text-xs">
+                                                    <div>
+                                                      <span className="text-muted-foreground">Raw: </span>
+                                                      <span className="font-medium">{kra.raw_rating ? formatRating(kra.raw_rating) : 'N/A'}</span>
+                                                    </div>
+                                                    <div>
+                                                      <span className="text-muted-foreground">Normalized: </span>
+                                                      <span className="font-medium text-primary">{kra.final_normalized ? formatRating(kra.final_normalized) : 'N/A'}</span>
+                                                    </div>
+                                                    {kra.raw_rating && kra.final_normalized && (
+                                                      <div className={parseFloat(kra.final_normalized) > parseFloat(kra.raw_rating) ? 'text-green-600' : parseFloat(kra.final_normalized) < parseFloat(kra.raw_rating) ? 'text-red-600' : 'text-muted-foreground'}>
+                                                        {parseFloat(kra.final_normalized) > parseFloat(kra.raw_rating) ? '↑' : parseFloat(kra.final_normalized) < parseFloat(kra.raw_rating) ? '↓' : '='}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                      
+                                      {/* KPI Ratings */}
+                                      {rating.normalized_kpi_ratings && Array.isArray(rating.normalized_kpi_ratings) && rating.normalized_kpi_ratings.length > 0 && (
+                                        <div>
+                                          <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                                            <Target className="h-4 w-4" />
+                                            KPI Ratings
+                                          </h4>
+                                          <div className="space-y-2 max-h-64 overflow-y-auto">
+                                            {rating.normalized_kpi_ratings.map((kpi: any, idx: number) => (
+                                              <div key={idx} className="text-sm p-2 bg-muted rounded">
+                                                <div className="flex justify-between items-center">
+                                                  <span className="font-medium">KPI {idx + 1} (Weight: {kpi.weight}%)</span>
+                                                  <div className="flex gap-3 text-xs">
+                                                    <div>
+                                                      <span className="text-muted-foreground">Raw: </span>
+                                                      <span className="font-medium">{kpi.raw_rating ? formatRating(kpi.raw_rating) : 'N/A'}</span>
+                                                    </div>
+                                                    {kpi.normalized_manager !== null && (
+                                                      <div>
+                                                        <span className="text-muted-foreground">Mgr: </span>
+                                                        <span className="font-medium">{formatRating(kpi.normalized_manager)}</span>
+                                                      </div>
+                                                    )}
+                                                    {kpi.normalized_grade !== null && (
+                                                      <div>
+                                                        <span className="text-muted-foreground">Grade: </span>
+                                                        <span className="font-medium">{formatRating(kpi.normalized_grade)}</span>
+                                                      </div>
+                                                    )}
+                                                    <div>
+                                                      <span className="text-muted-foreground">Final: </span>
+                                                      <span className="font-medium text-primary">{kpi.final_normalized ? formatRating(kpi.final_normalized) : 'N/A'}</span>
+                                                    </div>
+                                                    {kpi.raw_rating && kpi.final_normalized && (
+                                                      <div className={parseFloat(kpi.final_normalized) > parseFloat(kpi.raw_rating) ? 'text-green-600' : parseFloat(kpi.final_normalized) < parseFloat(kpi.raw_rating) ? 'text-red-600' : 'text-muted-foreground'}>
+                                                        {parseFloat(kpi.final_normalized) > parseFloat(kpi.raw_rating) ? '↑' : parseFloat(kpi.final_normalized) < parseFloat(kpi.raw_rating) ? '↓' : '='}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              
                               <div className="flex gap-2">
                                 {rating.status === 'ACCEPTED' && (
                                   <Button
@@ -1414,11 +1860,11 @@ export default function HRReview() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    {selfReview.overall_comments && (
+                    {selfReview.overall_rating && (
                       <div className="mb-4">
-                        <Label className="text-sm font-medium">Overall Comments</Label>
-                        <p className="text-sm text-muted-foreground mt-1 bg-muted/50 p-3 rounded">
-                          {selfReview.overall_comments}
+                        <Label className="text-sm font-medium">Overall Rating</Label>
+                        <p className="text-lg text-normal font-bold p-3 rounded">
+                          {formatRating(selfReview.overall_rating)}
                         </p>
                       </div>
                     )}
@@ -1426,54 +1872,135 @@ export default function HRReview() {
                 </Card>
               )}
 
-              {/* Goal Ratings */}
+              {/* Goal Ratings - Hierarchical Structure: KRAs -> KPIs */}
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Target className="h-5 w-5" />
-                    Goal Ratings
+                    Goal Ratings (KRAs → KPIs)
                   </CardTitle>
+                  <CardDescription>
+                    Overall Rating = Goal Rating = Weighted Average of KRAs
+                    <br />
+                    KRA Rating = Weighted Average of KPIs
+                  </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-4">
-                  {goalRatings.map((goal) => (
-                    <div key={goal.id} className="p-4 rounded-lg border">
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <Badge variant="outline">{goal.goal_type.toUpperCase()}</Badge>
-                            <span className="text-sm text-muted-foreground">Weight: {goal.weight}%</span>
-                          </div>
-                          <h4 className="font-medium">{goal.title}</h4>
-                        </div>
-                      </div>
-                      
-                      <div className="grid gap-4 sm:grid-cols-2 mt-4">
-                        <div className="p-3 rounded bg-muted/30">
-                          <div className="text-xs text-muted-foreground mb-1">Employee Self Rating</div>
-                          <div className="font-medium">{goal.self_rating || '-'}</div>
-                          {goal.self_achievement && (
-                            <div className="text-xs text-muted-foreground mt-2">
-                              {goal.self_achievement}
+                <CardContent className="space-y-6">
+                  {kraRatings.length > 0 ? (
+                    kraRatings.map((kra) => (
+                      <div key={kra.id} className="p-4 rounded-lg border-2 border-primary/20 bg-primary/5">
+                        {/* KRA Header */}
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Badge variant="default" className="bg-primary">KRA</Badge>
+                              <span className="text-sm text-muted-foreground">Weight: {kra.weight}%</span>
+                              {kra.calculated_rating !== null && (
+                                <span className="text-sm font-semibold text-primary">
+                                  KRA Rating: {formatRating(kra.calculated_rating)}
+                                </span>
+                              )}
                             </div>
-                          )}
-                        </div>
-                        <div className="p-3 rounded bg-primary/5">
-                          <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
-                          <div className="font-medium">{goal.manager_rating || '-'}</div>
-                        </div>
-                      </div>
-
-                      {goal.manager_comments && (
-                        <div className="mt-3 p-3 rounded bg-muted/20">
-                          <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                            <MessageSquare className="h-3 w-3" />
-                            Manager Feedback
+                            <h4 className="font-semibold text-lg">{kra.title}</h4>
+                            {kra.description && (
+                              <p className="text-sm text-muted-foreground mt-1">{kra.description}</p>
+                            )}
                           </div>
-                          <p className="text-sm">{goal.manager_comments}</p>
                         </div>
-                      )}
-                    </div>
-                  ))}
+
+                        {/* KPIs under this KRA */}
+                        {kra.kpis && kra.kpis.length > 0 ? (
+                          <div className="space-y-3 mt-4 pl-4 border-l-2 border-primary/30">
+                            <div className="text-xs font-medium text-muted-foreground mb-2">KPIs:</div>
+                            {kra.kpis.map((kpi: any) => (
+                              <div key={kpi.id} className="p-3 rounded-lg border bg-background">
+                                <div className="flex items-start justify-between mb-2">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <Badge variant="outline">{kpi.goal_type?.toUpperCase() || 'KPI'}</Badge>
+                                      <span className="text-xs text-muted-foreground">Weight: {kpi.weight}%</span>
+                                    </div>
+                                    <h5 className="font-medium text-sm">{kpi.title}</h5>
+                                  </div>
+                                </div>
+                                
+                                <div className="grid gap-3 sm:grid-cols-2 mt-3">
+                                  <div className="p-2 rounded bg-muted/30">
+                                    <div className="text-xs text-muted-foreground mb-1">Employee Self Rating</div>
+                                    <div className="font-medium text-sm">{kpi.self_rating || '-'}</div>
+                                    {kpi.self_achievement && (
+                                      <div className="text-xs text-muted-foreground mt-1">
+                                        {kpi.self_achievement}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="p-2 rounded bg-primary/5">
+                                    <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
+                                    <div className="font-medium text-sm">{kpi.manager_rating ? formatRating(kpi.manager_rating) : '-'}</div>
+                                  </div>
+                                </div>
+
+                                {kpi.manager_comments && (
+                                  <div className="mt-2 p-2 rounded bg-muted/20">
+                                    <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                                      <MessageSquare className="h-3 w-3" />
+                                      Manager Feedback
+                                    </div>
+                                    <p className="text-xs">{kpi.manager_comments}</p>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-muted-foreground mt-2 pl-4">No KPIs found for this KRA</div>
+                        )}
+                      </div>
+                    ))
+                  ) : goalRatings.length > 0 ? (
+                    // Fallback to flat structure if KRAs not available
+                    goalRatings.map((goal) => (
+                      <div key={goal.id} className="p-4 rounded-lg border">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <Badge variant="outline">{goal.goal_type?.toUpperCase() || 'KPI'}</Badge>
+                              <span className="text-sm text-muted-foreground">Weight: {goal.weight}%</span>
+                            </div>
+                            <h4 className="font-medium">{goal.title}</h4>
+                          </div>
+                        </div>
+                        
+                        <div className="grid gap-4 sm:grid-cols-2 mt-4">
+                          <div className="p-3 rounded bg-muted/30">
+                            <div className="text-xs text-muted-foreground mb-1">Employee Self Rating</div>
+                            <div className="font-medium">{goal.self_rating || '-'}</div>
+                            {goal.self_achievement && (
+                              <div className="text-xs text-muted-foreground mt-2">
+                                {goal.self_achievement}
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-3 rounded bg-primary/5">
+                            <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
+                            <div className="font-medium">{goal.manager_rating ? formatRating(goal.manager_rating) : '-'}</div>
+                          </div>
+                        </div>
+
+                        {goal.manager_comments && (
+                          <div className="mt-3 p-3 rounded bg-muted/20">
+                            <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                              <MessageSquare className="h-3 w-3" />
+                              Manager Feedback
+                            </div>
+                            <p className="text-sm">{goal.manager_comments}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center text-muted-foreground py-4">No goals found</div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -1901,55 +2428,134 @@ export default function HRReview() {
                 </Card>
               )}
 
-              {/* Goal Ratings */}
-              {rejectionGoalRatings.length > 0 && (
+              {/* Goal Ratings - Hierarchical Structure: KRAs -> KPIs */}
+              {(rejectionKraRatings.length > 0 || rejectionGoalRatings.length > 0) && (
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Target className="h-5 w-5" />
-                      Goal Ratings
+                      Goal Ratings (KRAs → KPIs)
                     </CardTitle>
+                    <CardDescription>
+                      Overall Rating = Goal Rating = Weighted Average of KRAs
+                      <br />
+                      KRA Rating = Weighted Average of KPIs
+                    </CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-4">
-                    {rejectionGoalRatings.map((goal) => (
-                      <div key={goal.id} className="p-4 rounded-lg border">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2 mb-1">
-                              <Badge variant="outline">{goal.goal_type.toUpperCase()}</Badge>
-                              <span className="text-sm text-muted-foreground">Weight: {goal.weight}%</span>
-                            </div>
-                            <h4 className="font-medium">{goal.title}</h4>
-                          </div>
-                        </div>
-                        
-                        <div className="grid gap-4 sm:grid-cols-2 mt-4">
-                          <div className="p-3 rounded bg-muted/30">
-                            <div className="text-xs text-muted-foreground mb-1">Employee Self Rating</div>
-                            <div className="font-medium">{goal.self_rating || '-'}</div>
-                            {goal.self_achievement && (
-                              <div className="text-xs text-muted-foreground mt-2">
-                                {goal.self_achievement}
+                  <CardContent className="space-y-6">
+                    {rejectionKraRatings.length > 0 ? (
+                      rejectionKraRatings.map((kra) => (
+                        <div key={kra.id} className="p-4 rounded-lg border-2 border-primary/20 bg-primary/5">
+                          {/* KRA Header */}
+                          <div className="flex items-start justify-between mb-4">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Badge variant="default" className="bg-primary">KRA</Badge>
+                                <span className="text-sm text-muted-foreground">Weight: {kra.weight}%</span>
+                                {kra.calculated_rating !== null && (
+                                  <span className="text-sm font-semibold text-primary">
+                                    KRA Rating: {formatRating(kra.calculated_rating)}
+                                  </span>
+                                )}
                               </div>
-                            )}
-                          </div>
-                          <div className="p-3 rounded bg-primary/5">
-                            <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
-                            <div className="font-medium">{goal.manager_rating || '-'}</div>
-                          </div>
-                        </div>
-
-                        {goal.manager_comments && (
-                          <div className="mt-3 p-3 rounded bg-muted/20">
-                            <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
-                              <MessageSquare className="h-3 w-3" />
-                              Manager Feedback
+                              <h4 className="font-semibold text-lg">{kra.title}</h4>
+                              {kra.description && (
+                                <p className="text-sm text-muted-foreground mt-1">{kra.description}</p>
+                              )}
                             </div>
-                            <p className="text-sm">{goal.manager_comments}</p>
                           </div>
-                        )}
-                      </div>
-                    ))}
+
+                          {/* KPIs under this KRA */}
+                          {kra.kpis && kra.kpis.length > 0 ? (
+                            <div className="space-y-3 mt-4 pl-4 border-l-2 border-primary/30">
+                              <div className="text-xs font-medium text-muted-foreground mb-2">KPIs:</div>
+                              {kra.kpis.map((kpi: any) => (
+                                <div key={kpi.id} className="p-3 rounded-lg border bg-background">
+                                  <div className="flex items-start justify-between mb-2">
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <Badge variant="outline">{kpi.goal_type?.toUpperCase() || 'KPI'}</Badge>
+                                        <span className="text-xs text-muted-foreground">Weight: {kpi.weight}%</span>
+                                      </div>
+                                      <h5 className="font-medium text-sm">{kpi.title}</h5>
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="grid gap-3 sm:grid-cols-2 mt-3">
+                                    <div className="p-2 rounded bg-muted/30">
+                                      <div className="text-xs text-muted-foreground mb-1">Employee Self Rating</div>
+                                      <div className="font-medium text-sm">{kpi.self_rating || '-'}</div>
+                                      {kpi.self_achievement && (
+                                        <div className="text-xs text-muted-foreground mt-1">
+                                          {kpi.self_achievement}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="p-2 rounded bg-primary/5">
+                                      <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
+                                      <div className="font-medium text-sm">{kpi.manager_rating ? formatRating(kpi.manager_rating) : '-'}</div>
+                                    </div>
+                                  </div>
+
+                                  {kpi.manager_comments && (
+                                    <div className="mt-2 p-2 rounded bg-muted/20">
+                                      <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                                        <MessageSquare className="h-3 w-3" />
+                                        Manager Feedback
+                                      </div>
+                                      <p className="text-xs">{kpi.manager_comments}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-sm text-muted-foreground mt-2 pl-4">No KPIs found for this KRA</div>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      // Fallback to flat structure if KRAs not available
+                      rejectionGoalRatings.map((goal) => (
+                        <div key={goal.id} className="p-4 rounded-lg border">
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1">
+                                <Badge variant="outline">{goal.goal_type?.toUpperCase() || 'KPI'}</Badge>
+                                <span className="text-sm text-muted-foreground">Weight: {goal.weight}%</span>
+                              </div>
+                              <h4 className="font-medium">{goal.title}</h4>
+                            </div>
+                          </div>
+                          
+                          <div className="grid gap-4 sm:grid-cols-2 mt-4">
+                            <div className="p-3 rounded bg-muted/30">
+                              <div className="text-xs text-muted-foreground mb-1">Employee Self Rating</div>
+                              <div className="font-medium">{goal.self_rating || '-'}</div>
+                              {goal.self_achievement && (
+                                <div className="text-xs text-muted-foreground mt-2">
+                                  {goal.self_achievement}
+                                </div>
+                              )}
+                            </div>
+                            <div className="p-3 rounded bg-primary/5">
+                              <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
+                              <div className="font-medium">{goal.manager_rating ? formatRating(goal.manager_rating) : '-'}</div>
+                            </div>
+                          </div>
+
+                          {goal.manager_comments && (
+                            <div className="mt-3 p-3 rounded bg-muted/20">
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                                <MessageSquare className="h-3 w-3" />
+                                Manager Feedback
+                              </div>
+                              <p className="text-sm">{goal.manager_comments}</p>
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
                   </CardContent>
                 </Card>
               )}
@@ -1975,6 +2581,7 @@ export default function HRReview() {
                       setSelectedRejection(null);
                       setRejectionSelfReview(null);
                       setRejectionGoalRatings([]);
+                      setRejectionKraRatings([]);
                     }}
                   >
                     Dismiss

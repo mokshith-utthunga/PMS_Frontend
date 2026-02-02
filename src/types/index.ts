@@ -161,6 +161,8 @@ export interface KRA {
   order_index: number;
   status: GoalStatus;
   manager_comments?: string | null;
+  period_type?: 'full_quarter' | 'pre_transition' | 'post_transition' | null;
+  transition_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -182,6 +184,8 @@ export interface Goal {
   due_date?: string | null;
   status: GoalStatus;
   manager_comments?: string | null;
+  period_type?: 'full_quarter' | 'pre_transition' | 'post_transition' | null;
+  transition_id?: string | null;
   created_at: string;
   updated_at: string;
 }

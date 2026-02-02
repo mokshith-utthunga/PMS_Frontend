@@ -1,9 +1,11 @@
 // Custom hook for Team Member Goals data fetching
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { employeeService, goalsService } from '@/services';
 import { logError } from '@/errors';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import { useTransition } from './useTransition';
 import type { Employee, KRA, Goal, BonusKRA, BonusKPI } from '@/types';
+import type { PeriodType } from '@/services/transition.service';
 
 export interface TeamMemberGoalsData {
   employee: Employee | null;
@@ -14,10 +16,18 @@ export interface TeamMemberGoalsData {
   loading: boolean;
 }
 
-export function useTeamMemberGoals(employeeId: string | undefined, quarter?: number | null) {
+export function useTeamMemberGoals(employeeId: string | undefined, quarter?: number | null, periodType?: PeriodType | null) {
   // Get active cycle from context (fetched once at app initialization)
   const { activeCycle: activeCycleFromContext } = useActiveCycle();
   
+  // Fetch transition if quarter is specified
+  const { transition } = useTransition({
+    employeeId,
+    cycleId: activeCycleFromContext?.id,
+    quarter,
+    enabled: !!employeeId && !!activeCycleFromContext && !!quarter,
+  });
+
   const [data, setData] = useState<TeamMemberGoalsData>({
     employee: null,
     kras: [],
@@ -26,6 +36,9 @@ export function useTeamMemberGoals(employeeId: string | undefined, quarter?: num
     bonusKpis: [],
     loading: true,
   });
+
+  // Memoize transition_id to avoid unnecessary re-fetches
+  const transitionId = useMemo(() => transition?.id || null, [transition]);
 
   const fetchData = useCallback(async () => {
     if (!employeeId) return;
@@ -47,10 +60,10 @@ export function useTeamMemberGoals(employeeId: string | undefined, quarter?: num
 
       const cycleId = activeCycle.id;
 
-      // Fetch all data in parallel with quarter filter
+      // Fetch all data in parallel with quarter and period filters
       const [krasResult, kpisResult] = await Promise.all([
-        goalsService.kras.getByEmployee(employeeId, cycleId, undefined, quarter),
-        goalsService.kpis.getByEmployee(employeeId, cycleId, undefined, quarter),
+        goalsService.kras.getByEmployee(employeeId, cycleId, undefined, quarter, periodType || null, transitionId),
+        goalsService.kpis.getByEmployee(employeeId, cycleId, undefined, quarter, periodType || null, transitionId),
       ]);
 
       // Fetch bonus KRAs via different endpoint used in manager view
@@ -84,11 +97,12 @@ export function useTeamMemberGoals(employeeId: string | undefined, quarter?: num
       logError(error, 'useTeamMemberGoals');
       setData(prev => ({ ...prev, loading: false }));
     }
-  }, [employeeId, quarter, activeCycleFromContext]);
+  }, [employeeId, quarter, periodType, transitionId, activeCycleFromContext]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  return { ...data, refetch: fetchData };
+  // Memoize return value to prevent unnecessary re-renders
+  return useMemo(() => ({ ...data, refetch: fetchData, transition }), [data, fetchData, transition]);
 }

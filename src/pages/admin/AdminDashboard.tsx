@@ -5,7 +5,7 @@ import MainLayout from '@/components/layout/MainLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Users, Calendar, Upload, Shield, Building2, GraduationCap, MapPin, Target, FileText } from 'lucide-react';
+import { Users, Calendar, Upload, Shield, Building2, GraduationCap, MapPin, Target, FileText, ArrowRightLeft } from 'lucide-react';
 import { statsService } from '@/services/stats.service';
 import { StatCard } from '@/components/admin/StatCard';
 import { QuickActionCard } from '@/components/admin/QuickActionCard';
@@ -108,6 +108,14 @@ export default function AdminDashboard() {
                 icon={FileText}
                 link="/admin/templates"
                 buttonText="Manage Templates"
+                variant="secondary"
+              />
+              <QuickActionCard
+                title="Transitions"
+                description="Manage mid-quarter employee transitions"
+                icon={ArrowRightLeft}
+                link="/admin/transitions"
+                buttonText="Manage Transitions"
                 variant="secondary"
               />
             </div>

@@ -1,6 +1,7 @@
 // Goals Service - KRA, KPI, Bonus KRA/KPI API calls
 import { api } from './api';
 import type { KRA, Goal, BonusKRA, BonusKPI, GoalStatus } from '@/types';
+import type { PeriodType } from './transition.service';
 
 // KRA Types for this service
 export interface CreateKRAData {
@@ -77,23 +78,27 @@ export interface CreateBonusKPIData {
 export const goalsService = {
   // ========== KRA Operations ==========
   kras: {
-    getAll: (cycleId: string, status?: string, quarter?: number | null) => {
+    getAll: (cycleId: string, status?: string, quarter?: number | null, periodType?: PeriodType | null, transitionId?: string | null) => {
       let url = `/api/kras?cycle_id=${cycleId}`;
       if (status) url += `&status=${status}`;
       // Only add quarter param when it's a valid number (1-4)
       if (quarter && quarter >= 1 && quarter <= 4) {
         url += `&quarter=${quarter}`;
       }
+      if (periodType) url += `&period_type=${periodType}`;
+      if (transitionId) url += `&transition_id=${transitionId}`;
       return api.get<{ data: KRA[] }>(url);
     },
 
-    getByEmployee: (employeeId: string, cycleId: string, status?: string, quarter?: number | null) => {
+    getByEmployee: (employeeId: string, cycleId: string, status?: string, quarter?: number | null, periodType?: PeriodType | null, transitionId?: string | null) => {
       let url = `/api/kras?employee_id=${employeeId}&cycle_id=${cycleId}`;
       if (status) url += `&status=${status}`;
       // Only add quarter param when it's a valid number (1-4)
       if (quarter && quarter >= 1 && quarter <= 4) {
         url += `&quarter=${quarter}`;
       }
+      if (periodType) url += `&period_type=${periodType}`;
+      if (transitionId) url += `&transition_id=${transitionId}`;
       return api.get<{ data: KRA[] }>(url);
     },
 
@@ -112,13 +117,15 @@ export const goalsService = {
 
   // ========== KPI/Goals Operations ==========
   kpis: {
-    getByEmployee: (employeeId: string, cycleId: string, status?: string, quarter?: number | null) => {
+    getByEmployee: (employeeId: string, cycleId: string, status?: string, quarter?: number | null, periodType?: PeriodType | null, transitionId?: string | null) => {
       let url = `/api/goals?employee_id=${employeeId}&cycle_id=${cycleId}`;
       if (status) url += `&status=${status}`;
       // Only add quarter param when it's a valid number (1-4)
       if (quarter && quarter >= 1 && quarter <= 4) {
         url += `&quarter=${quarter}`;
       }
+      if (periodType) url += `&period_type=${periodType}`;
+      if (transitionId) url += `&transition_id=${transitionId}`;
       return api.get<{ data: Goal[] }>(url);
     },
 
