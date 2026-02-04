@@ -87,7 +87,18 @@ export function AchievementSlider({
             // step={0.01}
             value={numericAchievedValue}
             onChange={(e) => {
-              const value = parseFloat(e.target.value) || 0;
+              // Handle empty string as 0, but preserve 0 as a valid value
+              const inputValue = e.target.value;
+              if (inputValue === '' || inputValue === null || inputValue === undefined) {
+                handleNumberChange(0);
+                return;
+              }
+              const value = parseFloat(inputValue);
+              // Check for NaN explicitly, but allow 0 as a valid number
+              if (isNaN(value)) {
+                handleNumberChange(0);
+                return;
+              }
               const clampedValue = Math.max(0, Math.min(maxValue, value));
               handleNumberChange(clampedValue);
             }}
@@ -156,19 +167,92 @@ export function calculateRatingFromAchievement(
   achievedValue?: number
 ): number {
   if (calibration && calibration.length > 0) {
-    const compareValue = achievedValue !== undefined ? achievedValue : valueOrPercentage;
+    // Use actual achieved value if provided (for number metrics), otherwise use percentage
+    // Explicitly handle 0 as a valid value (not undefined)
+    const rawValue = achievedValue !== undefined ? achievedValue : valueOrPercentage;
     
-    const sortedRules = [...calibration].sort((a, b) => b.threshold - a.threshold);
+    // Ensure compareValue is a number (handle string inputs and ensure 0 is preserved)
+    let compareValue: number;
+    if (typeof rawValue === 'number') {
+      compareValue = rawValue;
+    } else if (typeof rawValue === 'string') {
+      compareValue = parseFloat(rawValue);
+    } else {
+      compareValue = Number(rawValue);
+    }
     
-    for (const rule of sortedRules) {
-      if (compareValue >= rule.threshold) {
-        return rule.rating;
+    // Check if conversion resulted in NaN (0 is a valid number, so only check for NaN)
+    if (isNaN(compareValue)) return 1; // Fallback to rating 1 if invalid
+    
+    // Use the same range-based logic as calculateRatingFromCalibration
+    // Sort by threshold ascending to match range display logic
+    const sortedRules = [...calibration].sort((a, b) => a.threshold - b.threshold);
+    
+    if (sortedRules.length === 0) return 1;
+    
+    // Handle value exactly equal to first threshold (including 0)
+    // If first threshold is 0 and value is 0, return that threshold's rating
+    if (compareValue === sortedRules[0].threshold) {
+      return sortedRules[0].rating;
+    }
+    
+    // Check if value is below first threshold
+    // If first threshold is > 0 and value is 0, return first threshold's rating
+    if (compareValue < sortedRules[0].threshold) {
+      return sortedRules[0].rating;
+    }
+    
+    // Check each range from second threshold onwards
+    for (let i = 1; i < sortedRules.length; i++) {
+      const previousRule = sortedRules[i - 1];
+      const currentRule = sortedRules[i];
+      
+      // Range is from (previous_threshold + 1) to current_threshold (inclusive)
+      const rangeStart = previousRule.threshold + 1;
+      const rangeEnd = currentRule.threshold;
+      
+      // Check if value is within this range (inclusive)
+      if (compareValue >= rangeStart && compareValue <= rangeEnd) {
+        return currentRule.rating;
+      }
+      
+      // Handle values between thresholds: if value is > previous threshold but < rangeStart,
+      // it should get the rating of the previous threshold
+      // Example: if thresholds are 85 and 90, and value is 85.5:
+      // - 85.5 > 85 (previous threshold)
+      // - 85.5 < 86 (rangeStart = 85 + 1)
+      // - So it should get the rating of threshold 85
+      if (compareValue > previousRule.threshold && compareValue < rangeStart) {
+        return previousRule.rating;
       }
     }
     
-    return sortedRules[sortedRules.length - 1]?.rating || 1;
+    // Handle values exactly at first threshold: they get the second threshold's rating
+    // (since they're not < first_threshold and not in the 51-60 range)
+    if (sortedRules.length > 1 && compareValue === sortedRules[0].threshold) {
+      return sortedRules[1].rating;
+    }
+    
+    // Handle values between the highest threshold and the next range start
+    // If value is > highest threshold but < (highest threshold + 1), it should get the highest threshold's rating
+    const highestRule = sortedRules[sortedRules.length - 1];
+    if (compareValue > highestRule.threshold) {
+      // Check if there's a gap - if value is just slightly above highest threshold,
+      // it should still get the highest threshold's rating
+      // Otherwise, if it's significantly above, use highest rating
+      return highestRule.rating;
+    }
+    
+    // Handle values exactly at the highest threshold: they get that threshold's rating
+    if (compareValue === highestRule.threshold) {
+      return highestRule.rating;
+    }
+    
+    // Fallback: use highest rating (shouldn't reach here in normal cases)
+    return highestRule.rating;
   }
   
+  // Fallback to percentage-based rating if no calibration
   if (valueOrPercentage >= 100) return 5;
   if (valueOrPercentage >= 80) return 4;
   if (valueOrPercentage >= 60) return 3;
@@ -334,7 +418,7 @@ export function DualAchievementSlider({
               "font-medium text-primary",
               isEmployeeOverAchieved && "text-purple-600 dark:text-purple-400"
             )}>
-              {employeePercentage}%
+              {employeeAchieved}%
               {isEmployeeOverAchieved && " 🎯"}
             </span>
           )}
@@ -397,7 +481,7 @@ export function DualAchievementSlider({
               </>
             ) : (
               <>
-                {typeof managerPercentage === 'number' ? managerPercentage.toFixed(1) : '0.0'}%
+                {typeof managerAchieved === 'number' ? managerAchieved.toFixed(1) : '0.0'}%
                 {isManagerOverAchieved && " 🎯"}
               </>
             )}
@@ -427,7 +511,7 @@ export function DualAchievementSlider({
         ) :disabled ? (
           <div className="relative">
             <Progress 
-              value={managerDisplayPercentage} 
+              value={managerAchieved} 
               className={cn(
                 "h-3 [&>div]:bg-[#00562c]",
                 isManagerOverAchieved && "[&>div]:bg-purple-500"

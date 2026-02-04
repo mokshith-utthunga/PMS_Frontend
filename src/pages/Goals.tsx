@@ -60,74 +60,52 @@ export default function Goals() {
   // Get active cycle data from context (fetched once at app initialization)
   const { activeCycle: activeCycleFromContext, goalsQuarterlyCycles: goalsQuarterlyCyclesFromContext, goalSetting } = useActiveCycle();
 
-  // State to track if we're viewing the transition tab - read from URL
-  const isTransitionTabFromUrl = searchParams.get('transition') === 'true';
-  const [isTransitionTab, setIsTransitionTab] = useState(isTransitionTabFromUrl);
+  // Track nested tab within quarter: 'pre-transition' or 'transition'
+  // Default to 'pre-transition', will be updated based on transition and quarter
+  const [nestedTab, setNestedTab] = useState<'pre-transition' | 'transition'>('pre-transition');
+  // isTransitionTab is true when nestedTab is 'transition'
+  const isTransitionTab = nestedTab === 'transition';
   
-  // Sync transition tab state with URL
-  useEffect(() => {
-    setIsTransitionTab(isTransitionTabFromUrl);
-  }, [isTransitionTabFromUrl]);
-  
-  // Fetch all goals data - fetch for transition quarter when in transition tab, otherwise use selected quarter
-  const currentQuarter = useMemo(() => {
-    if (isTransitionTab) {
-      // We'll get transition from goalsData, but for now fetch all quarters
-      return null; // Fetch all goals, we'll filter by transition
-    }
-    return quarter || null;
-  }, [isTransitionTab, quarter]);
-  
-  const goalsData = useGoalsData(user?.id, currentQuarter);
+  // Fetch goals data for the selected quarter
+  const goalsData = useGoalsData(user?.id, quarter || null);
   const { employeeId, employeeProfile, kras: allKras, kpis: allKpis, hasLatePermission, hasActiveTransition, transition, loading, refetch } = goalsData;
   
-  // Clean up URL if transition parameter exists but no active transition
+  // Update nested tab default when quarter or transition changes
   useEffect(() => {
-    if (isTransitionTabFromUrl && !hasActiveTransition) {
-      // Remove transition parameter if no active transition exists
-      setSearchParams(prev => {
-        const newParams = new URLSearchParams(prev);
-        newParams.delete('transition');
-        return newParams;
-      }, { replace: true });
+    if (transition && quarter === transition.quarter) {
+      // If we're viewing the quarter with transition, default to pre-transition tab
+      setNestedTab('pre-transition');
     }
-  }, [isTransitionTabFromUrl, hasActiveTransition, setSearchParams]);
+  }, [transition, quarter]);
   
-  // When in transition tab, also fetch goals for the transition quarter specifically
-  const transitionQuarterForFetch = transition?.quarter || null;
-  const transitionGoalsData = useGoalsData(
-    user?.id, 
-    isTransitionTab && transitionQuarterForFetch ? transitionQuarterForFetch : null
-  );
-  
-  // Combined refetch function that refetches both data sources when needed
+  // Combined refetch function
   const refetchAllGoals = useCallback(() => {
     goalsData.refetch();
-    if (isTransitionTab && transitionQuarterForFetch) {
-      transitionGoalsData.refetch();
-    }
-  }, [goalsData.refetch, transitionGoalsData.refetch, isTransitionTab, transitionQuarterForFetch]);
+  }, [goalsData.refetch]);
   
-  // Filter goals for transition tab (only post-transition) or regular tabs (exclude post-transition)
+  // Filter goals based on nested tab
+  // For employees, they should see all their goals, but we filter for display purposes:
+  // - Pre-transition tab: show pre-transition and full_quarter goals
+  // - Transition tab: show post-transition goals
   const { kras, kpis } = useMemo(() => {
-    if (isTransitionTab && hasActiveTransition && transition) {
-      // In transition tab: use transition-specific goals data and show only post-transition goals
-      const transitionKras = (transitionGoalsData.kras || []).filter(kra => 
-        kra.period_type === 'post_transition' && kra.transition_id === transition.id
+    if (isTransitionTab && hasActiveTransition && transition && quarter === transition.quarter) {
+      // In transition nested tab: show only post-transition goals
+      const transitionKras = allKras.filter(kra => 
+        kra.period_type === 'post_transition' && kra.transition_id === transition.id && kra.quarter === quarter
       );
-      const transitionKpis = (transitionGoalsData.kpis || []).filter(kpi => 
-        kpi.period_type === 'post_transition' && kpi.transition_id === transition.id
+      const transitionKpis = allKpis.filter(kpi => 
+        kpi.period_type === 'post_transition' && kpi.transition_id === transition.id && kpi.quarter === quarter
       );
       return { kras: transitionKras, kpis: transitionKpis };
     } else {
-      // In regular tabs: show pre-transition and full_quarter goals, exclude post-transition goals
-      // This ensures pre-transition goals (set before transition) are visible
+      // In pre-transition tab or no transition: show pre-transition and full_quarter goals
       const regularKras = allKras.filter(kra => {
+        if (kra.quarter !== quarter) return false;
         // Include if no period_type (full_quarter) or if pre_transition
         if (!kra.period_type || kra.period_type === 'full_quarter') {
           return true;
         }
-        // Include pre_transition goals (even if they have transition_id)
+        // Include pre_transition goals
         if (kra.period_type === 'pre_transition') {
           return true;
         }
@@ -135,11 +113,12 @@ export default function Goals() {
         return false;
       });
       const regularKpis = allKpis.filter(kpi => {
+        if (kpi.quarter !== quarter) return false;
         // Include if no period_type (full_quarter) or if pre_transition
         if (!kpi.period_type || kpi.period_type === 'full_quarter') {
           return true;
         }
-        // Include pre_transition goals (even if they have transition_id)
+        // Include pre_transition goals
         if (kpi.period_type === 'pre_transition') {
           return true;
         }
@@ -148,7 +127,7 @@ export default function Goals() {
       });
       return { kras: regularKras, kpis: regularKpis };
     }
-  }, [isTransitionTab, hasActiveTransition, transition, allKras, allKpis, transitionGoalsData.kras, transitionGoalsData.kpis]);
+  }, [isTransitionTab, hasActiveTransition, transition, quarter, allKras, allKpis]);
 
   // Use active cycle from context (prefer context over hook data for consistency)
   const activeCycle = activeCycleFromContext || goalsData.activeCycle;
@@ -511,50 +490,19 @@ export default function Goals() {
         {/* Quarter Tabs */}
         {activeCycle && availableQuarters.length > 0 && (
           <TooltipProvider>
-            <Tabs value={isTransitionTab ? 'transition' : (quarter ? `q${quarter}` : undefined)} onValueChange={(value) => {
-              if (value === 'transition') {
-                setIsTransitionTab(true);
-                // Update URL to include transition parameter and set quarter to transition quarter
-                if (transition && transition.quarter) {
-                  setSearchParams(prev => {
-                    const newParams = new URLSearchParams(prev);
-                    newParams.set('quarter', `q${transition.quarter}`);
-                    newParams.set('transition', 'true');
-                    return newParams;
-                  }, { replace: true });
-                } else {
-                  setSearchParams(prev => {
-                    const newParams = new URLSearchParams(prev);
-                    newParams.set('transition', 'true');
-                    return newParams;
-                  }, { replace: true });
-                }
-              } else {
-                setIsTransitionTab(false);
-                // Remove transition parameter from URL
-                setSearchParams(prev => {
-                  const newParams = new URLSearchParams(prev);
-                  newParams.delete('transition');
-                  return newParams;
-                }, { replace: true });
-                
+            <Tabs value={quarter ? `q${quarter}` : undefined} onValueChange={(value) => {
                 const q = parseInt(value.replace('q', ''));
                 if (q >= 1 && q <= 4) {
                   // Only allow changing to quarters where goal submission has started
                   const goalStarted = hasGoalSubmissionStarted(q);
                   if (goalStarted) {
                     setQuarter(q as 1 | 2 | 3 | 4);
-                  }
+                  // Reset nested tab to pre-transition when switching quarters
+                  setNestedTab('pre-transition');
                 }
               }
             }}>
               <TabsList>
-                {/* Transition Tab - Only visible if employee has active transition */}
-                {hasActiveTransition && transition && (
-                  <TabsTrigger value="transition">
-                    Transition
-                  </TabsTrigger>
-                )}
                 {availableQuarters.map(q => {
                   // Use backend response to determine if goal setting is enabled for this quarter
                   // Enable tab if: it's the current goal_setting quarter AND goal_setting.enabled is true
@@ -604,36 +552,147 @@ export default function Goals() {
                     <TabsTrigger 
                       key={q} 
                       value={`q${q}`}
-                      onClick={() => {
-                        setIsTransitionTab(false);
-                        // Remove transition parameter from URL when switching to regular quarter tab
-                        setSearchParams(prev => {
-                          const newParams = new URLSearchParams(prev);
-                          newParams.delete('transition');
-                          return newParams;
-                        }, { replace: true });
-                      }}
                     >
                       {formatQuarterLabel(q)}
                     </TabsTrigger>
                   );
                 })}
               </TabsList>
+              {availableQuarters.map(q => {
+                // Use goal submission dates for goals, not self-review dates
+                const qStarted = hasGoalSubmissionStarted(q);
+                const qEnded = hasGoalSubmissionEnded(q);
+                const qWorkStatus = canWorkOnGoalsForQuarter(q);
+                const startDate = getGoalSubmissionStartDate(q);
+                const endDate = getGoalSubmissionEndDate(q);
+                const displayStartDate = startDate || getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
+                const displayEndDate = endDate || getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
+               
+                // Check if this quarter has a transition
+                const quarterTransition = transition && transition.quarter === q ? transition : null;
+                const hasTransition = quarterTransition && hasActiveTransition;
+                
+                return (
+                  <TabsContent key={q} value={`q${q}`} className="space-y-6">
+                   {!qStarted ? (
+                      <Card>
+                        <CardContent className="flex flex-col items-center justify-center py-12">
+                          <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
+                          <h3 className="font-semibold text-lg">{formatQuarterLabel(q)} Has Not Started Yet</h3>
+                          <p className="text-muted-foreground text-center mt-2">
+                            {displayStartDate && displayEndDate ? (
+                              <>
+                                The {formatQuarterLabel(q)} goal setting period will be open from{' '}
+                                <span className="font-medium">{formatDateShort(displayStartDate)}</span> to{' '}
+                                <span className="font-medium">{formatDateShort(displayEndDate)}</span>.
+                              </>
+                            ) : (
+                              `The ${formatQuarterLabel(q)} goal setting period has not been scheduled yet.`
+                            )}
+                          </p>
+                          <p className="text-sm text-muted-foreground mt-2">
+                            Please check back when the quarter begins.
+                          </p>
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <>
+                        {/* Nested Tabs for Pre-Transition and Transition (if transition exists) */}
+                        {hasTransition ? (
+                          <Tabs 
+                            value={q === quarter ? nestedTab : 'pre-transition'} 
+                            onValueChange={(value) => {
+                              if (q === quarter) {
+                                setNestedTab(value as 'pre-transition' | 'transition');
+                              }
+                            }}
+                            className="space-y-6"
+                          >
+                            <TabsList>
+                              <TabsTrigger value="pre-transition">Pre-Transition</TabsTrigger>
+                              <TabsTrigger value="transition">Transition</TabsTrigger>
+                            </TabsList>
+                            
+                            {/* Pre-Transition Tab Content */}
+                            <TabsContent value="pre-transition" className="space-y-6">
+                              {q === quarter && nestedTab === 'pre-transition' && (
+                                <>
+                                  <GoalStatusAlerts
+                                    cycle={activeCycle}
+                                    employeeId={employeeId}
+                                    isHR={isHR}
+                                    kras={kras}
+                                    deadlineStatus={deadlineStatus}
+                                    hasLatePermission={hasLatePermission}
+                                  />
+
+                                  {qEnded && hasLatePermission && (
+                                    <Card className="border-amber-200 bg-amber-50">
+                                      <CardContent className="py-3">
+                                        <p className="text-sm text-amber-800">
+                                          <AlertTriangle className="inline h-4 w-4 mr-2" />
+                                          You have been granted late submission access for {formatQuarterLabel(q)} by HR/Admin.
+                                        </p>
+                                      </CardContent>
+                                    </Card>
+                                  )}
+
+                                  {activeCycle && employeeId && (
+                                    <>
+                                      <GoalsProgressCard totalWeight={kraOps.totalKRAWeight} krasCount={kras.length} />
+
+                                      {kras.length === 0 ? (
+                                        <GoalsEmptyState />
+                                      ) : (
+                                        <div className="space-y-4">
+                                          {kras.map(kra => (
+                                            <KRACard
+                                              key={kra.id}
+                                              kra={kra}
+                                              kpis={kraOps.getKPIsForKRA(kra.id)}
+                                              canEdit={kraOps.canEdit(kra.status)}
+                                              onEditKRA={k => { setEditingKRA(k); setKraFormOpen(true); }}
+                                              onDeleteKRA={kraOps.deleteKRA}
+                                              onAddKPI={kraId => { setSelectedKRAId(kraId); setKpiFormOpen(true); }}
+                                              onEditKPI={kpi => { setEditingKPI(kpi); setSelectedKRAId(kpi.kra_id || null); setKpiFormOpen(true); }}
+                                              onDeleteKPI={kpiOps.deleteKPI}
+                                            />
+                                          ))}
+
+                                          {hasDraft && validationIssues.length > 0 && (
+                                            <ValidationAlert issues={validationIssues} />
+                                          )}
+
+                                          {hasDraft && !allSubmittedOrApproved && (
+                                            <Button onClick={kraOps.submitForApproval} className="w-full bg-blue-600 hover:bg-blue-700" disabled={!isValid}>
+                                              <Send className="mr-2 h-4 w-4" />
+                                              Submit KRAs & KPIs for Approval
+                                            </Button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </>
+                              )}
+                            </TabsContent>
+                            
               {/* Transition Tab Content */}
-              {hasActiveTransition && transition && (
                 <TabsContent value="transition" className="space-y-6">
+                              {q === quarter && nestedTab === 'transition' && (
+                                <>
                   <Card className="border-blue-200 bg-blue-50">
                     <CardContent className="py-4">
                       <div className="flex items-start gap-3">
                         <div className="flex-1">
                           <h3 className="font-semibold text-lg mb-1">Post-Transition Goals</h3>
                           <p className="text-sm text-muted-foreground">
-                            You have a mid-quarter transition on {transition.transition_date ? new Date(transition.transition_date).toLocaleDateString() : 'N/A'}. 
+                                            You have a mid-quarter transition on {quarterTransition?.transition_date ? new Date(quarterTransition.transition_date).toLocaleDateString() : 'N/A'}. 
                             Create new goals for the post-transition period here. These goals will be reviewed by your new manager.
                           </p>
-                          {transition.new_manager_name && (
+                                          {quarterTransition?.new_manager_name && (
                             <p className="text-sm text-muted-foreground mt-1">
-                              New Manager: <span className="font-medium">{transition.new_manager_name}</span>
+                                              New Manager: <span className="font-medium">{quarterTransition.new_manager_name}</span>
                             </p>
                           )}
                         </div>
@@ -677,86 +736,58 @@ export default function Goals() {
                       )}
                     </>
                   )}
-                </TabsContent>
+                                </>
               )}
-              {availableQuarters.map(q => {
-                // Use goal submission dates for goals, not self-review dates
-                const qStarted = hasGoalSubmissionStarted(q);
-                const qEnded = hasGoalSubmissionEnded(q);
-                const qWorkStatus = canWorkOnGoalsForQuarter(q);
-                const startDate = getGoalSubmissionStartDate(q);
-                const endDate = getGoalSubmissionEndDate(q);
-                const displayStartDate = startDate || getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
-                const displayEndDate = endDate || getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
-               
-                return (
-                  <TabsContent key={q} value={`q${q}`} className="space-y-6">
-                   {!qStarted ? (
-                      <Card>
-                        <CardContent className="flex flex-col items-center justify-center py-12">
-                          <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
-                          <h3 className="font-semibold text-lg">{formatQuarterLabel(q)} Has Not Started Yet</h3>
-                          <p className="text-muted-foreground text-center mt-2">
-                            {displayStartDate && displayEndDate ? (
+                            </TabsContent>
+                          </Tabs>
+                        ) : (
+                          /* No Transition - Show regular goals */
+                          <>
+                            {qEnded && !hasLatePermission ? (
                               <>
-                                The {formatQuarterLabel(q)} goal setting period will be open from{' '}
-                                <span className="font-medium">{formatDateShort(displayStartDate)}</span> to{' '}
-                                <span className="font-medium">{formatDateShort(displayEndDate)}</span>.
-                              </>
-                            ) : (
-                              `The ${formatQuarterLabel(q)} goal setting period has not been scheduled yet.`
-                            )}
-                          </p>
-                          <p className="text-sm text-muted-foreground mt-2">
-                            Please check back when the quarter begins.
-                          </p>
-                        </CardContent>
-                      </Card>
-                    ) : qEnded && !hasLatePermission && !hasActiveTransition ? (
-                      <>
-                        {/* Show error if period ended, no late permission, and not transition employee */}
+                                {/* Show error if period ended, no late permission, and not transition employee */}
                           {endDate && (
                             <PeriodClose quarterNum={q} qEndDate={endDate} title="Goal Setting" />
                           )}
                   
-                        {/* Check if goals for this specific quarter are submitted/approved */}
-                        {(() => {
-                          // Filter goals for this specific quarter
-                          const quarterKras = allKras.filter(kra => kra.quarter === q);
-                          const quarterKpis = allKpis.filter(kpi => kpi.quarter === q);
-                          
-                          // Check if at least one goal is submitted/approved
-                          const hasSubmittedGoals = quarterKras.some(k => 
-                            k.status === 'submitted' || k.status === 'approved' || k.status === 'locked'
-                          ) || quarterKpis.some(k => 
-                            k.status === 'submitted' || k.status === 'approved' || k.status === 'locked'
-                          );
-                          
-                          // Show submitted/approved goals even if period ended
-                          if (hasSubmittedGoals && quarterKras.length > 0) {
-                            return (
+                                {/* Check if goals for this specific quarter are submitted/approved */}
+                                {(() => {
+                                  // Filter goals for this specific quarter
+                                  const quarterKras = allKras.filter(kra => kra.quarter === q);
+                                  const quarterKpis = allKpis.filter(kpi => kpi.quarter === q);
+                                  
+                                  // Check if at least one goal is submitted/approved
+                                  const hasSubmittedGoals = quarterKras.some(k => 
+                                    k.status === 'submitted' || k.status === 'approved' || k.status === 'locked'
+                                  ) || quarterKpis.some(k => 
+                                    k.status === 'submitted' || k.status === 'approved' || k.status === 'locked'
+                                  );
+                                  
+                                  // Show submitted/approved goals even if period ended
+                                  if (hasSubmittedGoals && quarterKras.length > 0) {
+                                    return (
                             <div className="mt-6 w-full space-y-4">
-                                {quarterKras.map(kra => {
-                                  const kraKpis = quarterKpis.filter(kpi => kpi.kra_id === kra.id);
-                                  return (
+                                        {quarterKras.map(kra => {
+                                          const kraKpis = quarterKpis.filter(kpi => kpi.kra_id === kra.id);
+                                          return (
                                 <KRACard
                                   key={kra.id}
                                   kra={kra}
-                                      kpis={kraKpis}
-                                      canEdit={false} // Read-only view for submitted/approved goals
+                                              kpis={kraKpis}
+                                              canEdit={false} // Read-only view for submitted/approved goals
                                   onEditKRA={() => {}}
                                   onDeleteKRA={() => {}}
                                   onAddKPI={() => {}}
                                   onEditKPI={() => {}}
                                   onDeleteKPI={() => {}}
                                 />
-                                  );
-                                })}
+                                          );
+                                        })}
                             </div>
-                            );
-                          }
-                          return null;
-                        })()}
+                                    );
+                                  }
+                                  return null;
+                                })()}
                       </>
                     ) : (
                       <>
@@ -813,6 +844,10 @@ export default function Goals() {
                                   </Button>
                                 )}
                               </div>
+                                    )}
+                                  </>
+                                )}
+                              </>
                             )}
                           </>
                         )}

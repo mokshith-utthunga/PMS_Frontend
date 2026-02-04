@@ -31,6 +31,7 @@ export interface EvaluationsData {
   kpis: Goal[];
   ratingScales: RatingScale[];
   quarterlyReviews: Record<number, QuarterlySelfReviewData | null>;
+  allReviewsByQuarter: Record<number, QuarterlySelfReviewData[]>;
   kpiRatings: Record<number, Record<string, KpiRating>>;
   loading: boolean;
   // Quarter-specific data
@@ -54,6 +55,7 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
     kpis: [],
     ratingScales: [],
     quarterlyReviews: {},
+    allReviewsByQuarter: { 1: [], 2: [], 3: [], 4: [] },
     kpiRatings: {},
     loading: true,
     quarterKras: {},
@@ -108,12 +110,13 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
           goalsService.kras.getByEmployee(employeeId, cycleId, undefined, q), // No status filter - include both 'approved' and 'locked'
           goalsService.kpis.getByEmployee(employeeId, cycleId, undefined, q), // No status filter - include both 'approved' and 'locked'
         ]);
-        // Filter to only include KRAs/KPIs with status='approved' or 'locked'
+        // Filter to only include KRAs/KPIs with status='approved', 'locked', or 'submitted'
+        // 'submitted' goals are also approved and should be visible for evaluation
         const filteredKras = (krasResult.data || []).filter((kra: KRA) => 
-          kra.status === 'approved' || kra.status === 'locked'
+          kra.status === 'approved' || kra.status === 'locked' || kra.status === 'submitted'
         );
         const filteredKpis = (kpisResult.data || []).filter((g: Goal) => 
-          g.kra_id && (g.status === 'approved' || g.status === 'locked')
+          g.kra_id && (g.status === 'approved' || g.status === 'locked' || g.status === 'submitted')
         ) as Goal[];
         return {
           quarter: q,
@@ -184,18 +187,58 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
           if (review?.id) {
             const ratingsResult = await evaluationService.goalSelfRatings.get(review.id);
             
-            (ratingsResult.data || []).forEach((r: GoalSelfRatingData) => {
+            (ratingsResult.data || []).forEach((r: any) => {
+              // Use period_type from rating (now available in API response) or fallback to review's period_type
+              const ratingPeriodType = r.period_type || review.period_type || 'full_quarter';
+              const ratingTransitionId = r.transition_id || review.transition_id || null;
+              
               // Only add rating if it matches the KPI's period_type and transition_id
               const kpi = qKpis.find((k: Goal) => k.id === r.goal_id);
               if (kpi) {
+                console.log('[useEvaluationsData] Matching rating to KPI:', {
+                  goalId: r.goal_id,
+                  ratingPeriodType,
+                  ratingTransitionId,
+                  kpiPeriodType: kpi.period_type,
+                  kpiTransitionId: kpi.transition_id,
+                });
                 const kpiPeriodType = kpi.period_type || 'full_quarter';
                 const kpiTransitionId = kpi.transition_id || null;
-                const reviewPeriodType = review.period_type || 'full_quarter';
-                const reviewTransitionId = review.transition_id || null;
                 
-                // Match rating to KPI if period_type and transition_id match
-                if (kpiPeriodType === reviewPeriodType && 
-                    (kpiTransitionId === reviewTransitionId || (!kpiTransitionId && !reviewTransitionId))) {
+                // Match rating to KPI:
+                // 1. If KPI has null transition_id or full_quarter period_type, it can match with pre_transition ratings
+                //    (these are the old goals that should be shown in pre-transition tab)
+                // 2. If KPI has pre_transition period_type, match with pre_transition ratings (regardless of transition_id match)
+                // 3. Otherwise, match by exact period_type and transition_id
+                let shouldMatch = false;
+                
+                // Case 1: KPI has null transition_id or full_quarter - can match with pre_transition or full_quarter ratings
+                if (!kpiTransitionId && (kpiPeriodType === 'full_quarter' || !kpiPeriodType)) {
+                  if (ratingPeriodType === 'pre_transition' || ratingPeriodType === 'full_quarter') {
+                    shouldMatch = true;
+                  }
+                }
+                // Case 2: KPI has pre_transition period_type - match with pre_transition ratings
+                else if (kpiPeriodType === 'pre_transition' && ratingPeriodType === 'pre_transition') {
+                  // Match if transition_ids match, or if KPI has null transition_id
+                  if (!kpiTransitionId || !ratingTransitionId || String(kpiTransitionId) === String(ratingTransitionId)) {
+                    shouldMatch = true;
+                  }
+                }
+                // Case 3: KPI has post_transition period_type - match with post_transition ratings
+                else if (kpiPeriodType === 'post_transition' && ratingPeriodType === 'post_transition') {
+                  // Match if transition_ids match
+                  if (kpiTransitionId && ratingTransitionId && String(kpiTransitionId) === String(ratingTransitionId)) {
+                    shouldMatch = true;
+                  }
+                }
+                // Case 4: Both have full_quarter - match
+                else if (kpiPeriodType === 'full_quarter' && ratingPeriodType === 'full_quarter') {
+                  shouldMatch = true;
+                }
+                
+                if (shouldMatch) {
+                  console.log('[useEvaluationsData] Rating matched and added:', r.goal_id);
                   quarterRatings[r.goal_id] = {
                     goal_id: r.goal_id,
                     achievement: r.achievement || '',
@@ -204,7 +247,14 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
                     target_value: r.target_value,
                     evidence: r.evidence || '',
                   };
+                } else {
+                  console.log('[useEvaluationsData] Rating NOT matched:', {
+                    goalId: r.goal_id,
+                    reason: 'Matching conditions not met',
+                  });
                 }
+              } else {
+                console.log('[useEvaluationsData] KPI not found for rating:', r.goal_id);
               }
             });
           }
@@ -252,6 +302,7 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
         kpis: allKpis,
         ratingScales,
         quarterlyReviews: reviewsMap,
+        allReviewsByQuarter,
         kpiRatings: ratingsMap,
         loading: false,
         quarterKras,

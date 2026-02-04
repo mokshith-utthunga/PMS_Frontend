@@ -50,14 +50,11 @@ export default function Evaluations() {
     return '1';
   });
   
-  // State to track if we're viewing the transition tab - read from URL
-  const isTransitionTabFromUrl = searchParams.get('transition') === 'true';
-  const [isTransitionTab, setIsTransitionTab] = useState(isTransitionTabFromUrl);
-  
-  // Sync transition tab state with URL
-  useEffect(() => {
-    setIsTransitionTab(isTransitionTabFromUrl);
-  }, [isTransitionTabFromUrl]);
+  // Track nested tab within quarter: 'pre-transition' or 'transition'
+  // Default to 'pre-transition', will be updated based on transition and quarter
+  const [nestedTab, setNestedTab] = useState<'pre-transition' | 'transition'>('pre-transition');
+  // isTransitionTab is true when nestedTab is 'transition'
+  const isTransitionTab = nestedTab === 'transition';
 
   // Fetch evaluations data with selected quarter
   // Use URL quarter if available, otherwise use selectedQuarter
@@ -67,6 +64,7 @@ export default function Evaluations() {
   const {
     employeeId, activeCycle, quarterlyCycles, ratingScales,
     quarterlyReviews: initialQuarterlyReviews,
+    allReviewsByQuarter,
     kpiRatings: initialKpiRatings,
     currentQuarter, loading, refetch,
     quarterKras, quarterKpis,
@@ -102,17 +100,15 @@ export default function Evaluations() {
     }
   }, [employeeId, activeCycle?.id]);
   
-  // Clean up URL if transition parameter exists but no active transition
+  // Sync nested tab with URL transition parameter
   useEffect(() => {
-    if (isTransitionTabFromUrl && !transition) {
-      // Remove transition parameter if no active transition exists
-      setSearchParams(prev => {
-        const newParams = new URLSearchParams(prev);
-        newParams.delete('transition');
-        return newParams;
-      }, { replace: true });
+    const isTransitionFromUrl = searchParams.get('transition') === 'true';
+    if (isTransitionFromUrl) {
+      setNestedTab('transition');
+    } else {
+      setNestedTab('pre-transition');
     }
-  }, [isTransitionTabFromUrl, transition, setSearchParams]);
+  }, [searchParams]);
   
   // Sync selectedQuarter with URL quarter - prioritize URL over currentQuarter
   // URL is the single source of truth for quarter selection
@@ -153,6 +149,8 @@ export default function Evaluations() {
         // If self review is enabled, select the review_for_quarter
         setSelectedQuarter(String(selfReview.review_for_quarter));
         setQuarter(selfReview.review_for_quarter as 1 | 2 | 3 | 4);
+        // Reset nested tab to pre-transition
+        setNestedTab('pre-transition');
         return;
       }
       
@@ -230,11 +228,46 @@ export default function Evaluations() {
     return quarterKpis[activeQuarter] || [];
   }, [quarterKpis, activeQuarter]);
 
+  // Calculate which KPIs are relevant for the current period (for saving)
+  const currentPeriodKpis = useMemo(() => {
+    const q = activeQuarter;
+    const qKpis = quarterKpis[q] || [];
+    // Use transitions state (which has all quarters) instead of transition hook (which only has active quarter)
+    const qTransition = transitions[q] || (transition && transition.quarter === q ? transition : null);
+    
+    if (!qTransition) {
+      // No transition: return all KPIs (full quarter, null transition_id, etc.)
+      return qKpis.filter(k => !k.period_type || k.period_type === 'full_quarter' || !k.transition_id);
+    }
+    
+    // Has transition: filter based on active tab
+    const transitionIdStr = String(qTransition.id);
+    if (isTransitionTab) {
+      // Transition tab: return post-transition KPIs with matching transition_id
+      return qKpis.filter(k => k.period_type === 'post_transition' && k.transition_id && String(k.transition_id) === transitionIdStr);
+    } else {
+      // Pre-transition tab: return pre-transition KPIs with matching transition_id,
+      // OR KPIs with null transition_id, OR KPIs with full_quarter period_type
+      return qKpis.filter(k => {
+        if (!k.transition_id) {
+          // KPIs with null transition_id should be included in pre-transition tab
+          return true;
+        }
+        if (k.period_type === 'full_quarter') {
+          // KPIs with full_quarter period_type should be included in pre-transition tab
+          return true;
+        }
+        return k.period_type === 'pre_transition' && String(k.transition_id) === transitionIdStr;
+      });
+    }
+  }, [activeQuarter, quarterKpis, transitions, transition, isTransitionTab]);
+
   // Determine period info for the current quarter based on transition and KPIs being rated
   // This determines which period-specific review to save to
   const currentQuarterPeriodInfo = useMemo(() => {
     const q = activeQuarter;
-    const qTransition = transition && transition.quarter === q ? transition : null;
+    // Use transitions state (which has all quarters) instead of transition hook (which only has active quarter)
+    const qTransition = transitions[q] || (transition && transition.quarter === q ? transition : null);
     
     if (!qTransition) {
       return { periodType: null, transitionId: null, periodStartDate: null, periodEndDate: null };
@@ -287,15 +320,36 @@ export default function Evaluations() {
         periodEndDate: calculatedPreEndDate,
       };
     }
-  }, [activeQuarter, transition, quarterlyCycles, isTransitionTab]);
+  }, [activeQuarter, transitions, transition, quarterlyCycles, isTransitionTab]);
+
+  // Callback to update ratings after save
+  const handleRatingsUpdate = useCallback((quarter: number, newRatings: Record<string, any>) => {
+    setKpiRatings(prev => {
+      const quarterRatings = prev[quarter] || {};
+      // Merge the new ratings with existing ratings for this quarter
+      // This ensures we don't lose ratings for other KPIs in the same quarter
+      const updatedRatings = { ...quarterRatings };
+      Object.keys(newRatings).forEach(goalId => {
+        updatedRatings[goalId] = {
+          ...updatedRatings[goalId],
+          ...newRatings[goalId],
+        };
+      });
+      return {
+        ...prev,
+        [quarter]: updatedRatings,
+      };
+    });
+  }, []);
 
   const evalOps = useEvaluationOperations({
     employeeId,
     cycleId: activeCycle?.id || null,
     quarterlyReviews,
     kpiRatings,
-    kpis: currentQuarterKpis,
+    kpis: currentPeriodKpis,
     onSuccess: refetch,
+    onRatingsUpdate: handleRatingsUpdate,
     periodType: currentQuarterPeriodInfo.periodType,
     transitionId: currentQuarterPeriodInfo.transitionId,
     periodStartDate: currentQuarterPeriodInfo.periodStartDate,
@@ -434,32 +488,144 @@ export default function Evaluations() {
     const qEndDate = getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, quarterNum, quarterlyCycles);
     
     // Check if this quarter has a transition
-    const qTransition = transition && transition.quarter === quarterNum ? transition : null;
+    // Use transitions state (which has all quarters) instead of transition hook (which only has active quarter)
+    const qTransition = transitions[quarterNum] || (transition && transition.quarter === quarterNum ? transition : null);
+    
+    // Debug logging
+    if (qTransition) {
+      console.log('[Evaluations] Filtering goals for transition:', {
+        quarter: quarterNum,
+        transitionId: qTransition.id,
+        transitionIdType: typeof qTransition.id,
+        totalKras: qKras.length,
+        totalKpis: qKpis.length,
+        allKras: qKras.map(k => ({ 
+          id: k.id, 
+          period_type: k.period_type, 
+          transition_id: k.transition_id,
+          transition_id_type: typeof k.transition_id,
+          status: k.status,
+          quarter: k.quarter
+        })),
+        allKpis: qKpis.map(k => ({ 
+          id: k.id, 
+          period_type: k.period_type, 
+          transition_id: k.transition_id,
+          transition_id_type: typeof k.transition_id,
+          status: k.status,
+          quarter: k.quarter
+        })),
+      });
+    }
     
     // Separate goals by period if transition exists
+    // For pre-transition: show goals with period_type='pre_transition' AND transition_id matches,
+    // OR goals where transition_id IS NULL, OR goals with period_type='full_quarter'
+    // (these are the old goals that should be shown in pre-transition)
+    // For post-transition: show goals with period_type='post_transition' AND transition_id matches
+    const transitionIdStr = qTransition ? String(qTransition.id) : null;
     const preTransitionKras = qTransition 
-      ? qKras.filter(k => k.period_type === 'pre_transition' && k.transition_id === qTransition.id)
+      ? qKras.filter(k => {
+          // Include if:
+          // 1. transition_id IS NULL (old goals)
+          // 2. period_type = 'full_quarter' (fallback)
+          // 3. period_type = 'pre_transition' AND transition_id matches
+          if (!k.transition_id) {
+            // Goals with null transition_id should be shown in pre-transition tab
+            return true;
+          }
+          if (k.period_type === 'full_quarter') {
+            // Goals with full_quarter period_type should be shown in pre-transition tab
+            return true;
+          }
+          const periodMatch = k.period_type === 'pre_transition';
+          const transitionMatch = String(k.transition_id) === transitionIdStr;
+          return periodMatch && transitionMatch;
+        })
       : [];
     
     const preTransitionKpis = qTransition
-      ? qKpis.filter(k => k.period_type === 'pre_transition' && k.transition_id === qTransition.id)
+      ? qKpis.filter(k => {
+          // Include if:
+          // 1. transition_id IS NULL (old goals)
+          // 2. period_type = 'full_quarter' (fallback)
+          // 3. period_type = 'pre_transition' AND transition_id matches
+          if (!k.transition_id) {
+            // Goals with null transition_id should be shown in pre-transition tab
+            return true;
+          }
+          if (k.period_type === 'full_quarter') {
+            // Goals with full_quarter period_type should be shown in pre-transition tab
+            return true;
+          }
+          const periodMatch = k.period_type === 'pre_transition';
+          const transitionMatch = String(k.transition_id) === transitionIdStr;
+          return periodMatch && transitionMatch;
+        })
       : [];
     
     const postTransitionKras = qTransition
-      ? qKras.filter(k => k.period_type === 'post_transition' && k.transition_id === qTransition.id)
+      ? qKras.filter(k => {
+          // Only show post-transition goals with matching transition_id
+          const periodMatch = k.period_type === 'post_transition';
+          const transitionMatch = k.transition_id ? String(k.transition_id) === transitionIdStr : false;
+          return periodMatch && transitionMatch;
+        })
       : [];
     
     const postTransitionKpis = qTransition
-      ? qKpis.filter(k => k.period_type === 'post_transition' && k.transition_id === qTransition.id)
+      ? qKpis.filter(k => {
+          // Only show post-transition goals with matching transition_id
+          const periodMatch = k.period_type === 'post_transition';
+          const transitionMatch = k.transition_id ? String(k.transition_id) === transitionIdStr : false;
+          return periodMatch && transitionMatch;
+        })
       : [];
     
+    // If no transition, show all goals (including those with null transition_id)
     const fullQuarterKras = qTransition
       ? []
-      : qKras.filter(k => !k.period_type || k.period_type === 'full_quarter');
+      : qKras.filter(k => !k.period_type || k.period_type === 'full_quarter' || !k.transition_id);
     
     const fullQuarterKpis = qTransition
       ? []
-      : qKpis.filter(k => !k.period_type || k.period_type === 'full_quarter');
+      : qKpis.filter(k => !k.period_type || k.period_type === 'full_quarter' || !k.transition_id);
+    
+    // Debug logging for filtered results
+    if (qTransition) {
+      console.log('[Evaluations] Filtered goals:', {
+        preTransitionKras: preTransitionKras.length,
+        preTransitionKpis: preTransitionKpis.length,
+        postTransitionKras: postTransitionKras.length,
+        postTransitionKpis: postTransitionKpis.length,
+        preTransitionKraIds: preTransitionKras.map(k => k.id),
+        preTransitionKpiIds: preTransitionKpis.map(k => k.id),
+        goalsWithNullTransitionId: {
+          kras: qKras.filter(k => !k.transition_id).length,
+          kpis: qKpis.filter(k => !k.transition_id).length,
+        },
+        goalsWithFullQuarter: {
+          kras: qKras.filter(k => k.period_type === 'full_quarter').length,
+          kpis: qKpis.filter(k => k.period_type === 'full_quarter').length,
+        }
+      });
+    } else {
+      console.log('[Evaluations] No transition for quarter:', {
+        quarter: quarterNum,
+        totalKras: qKras.length,
+        totalKpis: qKpis.length,
+        fullQuarterKras: fullQuarterKras.length,
+        fullQuarterKpis: fullQuarterKpis.length,
+        goalsWithNullTransitionId: {
+          kras: qKras.filter(k => !k.transition_id).length,
+          kpis: qKpis.filter(k => !k.transition_id).length,
+        },
+        goalsWithFullQuarter: {
+          kras: qKras.filter(k => k.period_type === 'full_quarter').length,
+          kpis: qKpis.filter(k => k.period_type === 'full_quarter').length,
+        }
+      });
+    }
 
     // If quarter is in the future, show not accessible message
     if (qTiming === 'future') {
@@ -534,7 +700,12 @@ export default function Evaluations() {
     }
 
     // Quarter has goals and is accessible (or has late permission) - show evaluation content
-    const qIsOpen = isQuarterOpen(activeCycle, quarterNum, quarterlyCycles);
+    // Use backend selfReview data to determine if quarter is open for self-review
+    // If selfReview is available, check if this quarter is the review_for_quarter and enabled
+    // Otherwise, fallback to date-based check
+    const qIsOpen = selfReview 
+      ? (selfReview.review_for_quarter === quarterNum && selfReview.enabled === true)
+      : isQuarterOpen(activeCycle, quarterNum, quarterlyCycles);
     
     // For transitions, we need to get the correct review based on period_type
     // If working on post-transition KPIs, get post-transition review
@@ -542,14 +713,18 @@ export default function Evaluations() {
     // Otherwise, use the primary review (which defaults to post-transition if available)
     let qReview = quarterlyReviews[quarterNum];
     if (qTransition) {
-      // Fetch the specific review for the period we're working on
+      // Find the specific review for the period we're working on
       const periodInfo = currentQuarterPeriodInfo;
       if (periodInfo.periodType && periodInfo.transitionId) {
-        // Try to find the review matching the current period
-        // We'll need to fetch it or get it from the reviews array
-        // For now, use the primary review and let the backend handle period-specific saves
-        // The issue is that quarterlyReviews only stores one review per quarter
-        // We'll need to update useEvaluationsData to return all reviews, then select the right one here
+        // Find the review matching the current period from allReviewsByQuarter
+        const allReviews = allReviewsByQuarter[quarterNum] || [];
+        const matchingReview = allReviews.find((r: any) => 
+          r.period_type === periodInfo.periodType && 
+          r.transition_id === periodInfo.transitionId
+        );
+        if (matchingReview) {
+          qReview = matchingReview;
+        }
       }
     }
     const qIsSubmitted = qReview?.status === 'submitted';
@@ -569,9 +744,24 @@ export default function Evaluations() {
     // - For other periods: only allow if review not submitted
     const qCanEdit = (qIsOpen || qHasLatePermission || (hasTransitionForQuarter && isWithinQuarterDates)) && 
                      (isPostTransitionPeriod ? true : !qIsSubmitted);
-    const qKpiRatings = kpiRatings[quarterNum] || {};
+    
+    // Determine which KRAs and KPIs to display
+    // Determine which KRAs/KPIs to display based on tab
+    const displayKras = isTransition ? postTransitionKras : 
+                       (qTransition ? preTransitionKras : fullQuarterKras);
+    const displayKpis = isTransition ? postTransitionKpis : 
+                        (qTransition ? preTransitionKpis : fullQuarterKpis);
+    
+    // Filter ratings to only include ratings for the displayed KPIs
+    const allQuarterRatings = kpiRatings[quarterNum] || {};
+    const qKpiRatings: Record<string, KpiRating> = {};
+    displayKpis.forEach(kpi => {
+      if (allQuarterRatings[kpi.id]) {
+        qKpiRatings[kpi.id] = allQuarterRatings[kpi.id];
+      }
+    });
 
-    const qKpisWithKra: KPIForCalculation[] = qKpis
+    const qKpisWithKra: KPIForCalculation[] = displayKpis
       .filter((kpi): kpi is Goal & { kra_id: string } => !!kpi.kra_id)
       .map(kpi => ({
         id: kpi.id,
@@ -580,7 +770,7 @@ export default function Evaluations() {
       }));
 
     const qKpiRatingsForCalc: Record<string, number | null> = {};
-    qKpis.forEach(kpi => {
+    displayKpis.forEach(kpi => {
       const achievedValue = qKpiRatings[kpi.id]?.achieved_value;
       if (kpi.calibration && kpi.calibration.length > 0 && achievedValue !== null && achievedValue !== undefined) {
         qKpiRatingsForCalc[kpi.id] = calculateRatingFromCalibration(achievedValue, kpi.calibration);
@@ -589,15 +779,8 @@ export default function Evaluations() {
       }
     });
 
-    const qKraRatings = calculateAllKRARatings(qKras, qKpisWithKra, qKpiRatingsForCalc);
-    const qOverallCalc = calculateQuarterRating(qKras, qKraRatings);
-    
-    // Determine which KRAs and KPIs to display
-    // Determine which KRAs/KPIs to display based on tab
-    const displayKras = isTransition ? postTransitionKras : 
-                       (qTransition ? preTransitionKras : fullQuarterKras);
-    const displayKpis = isTransition ? postTransitionKpis : 
-                        (qTransition ? preTransitionKpis : fullQuarterKpis);
+    const qKraRatings = calculateAllKRARatings(displayKras, qKpisWithKra, qKpiRatingsForCalc);
+    const qOverallCalc = calculateQuarterRating(displayKras, qKraRatings);
     
     return (
       <>
@@ -799,24 +982,14 @@ export default function Evaluations() {
         </div>
 
         <Tabs 
-          value={isTransitionTab ? `q${activeQuarter}-transition` : String(activeQuarter)} 
+          value={selectedQuarter} 
           onValueChange={(value) => {
-            if (value.endsWith('-transition')) {
-              // Transition tab selected
-              const quarterNum = parseInt(value.replace('-transition', '').replace('q', ''));
+            const quarterNum = parseInt(value);
+            if (quarterNum >= 1 && quarterNum <= 4) {
               setSelectedQuarter(String(quarterNum));
               setQuarter(quarterNum as 1 | 2 | 3 | 4);
-              setSearchParams(prev => {
-                const newParams = new URLSearchParams(prev);
-                newParams.set('quarter', String(quarterNum));
-                newParams.set('transition', 'true');
-                return newParams;
-              }, { replace: true });
-            } else {
-              // Regular quarter tab selected
-              const quarterNum = parseInt(value);
-              setSelectedQuarter(String(quarterNum));
-              setQuarter(quarterNum as 1 | 2 | 3 | 4);
+              // Reset nested tab to pre-transition when switching quarters
+              setNestedTab('pre-transition');
               setSearchParams(prev => {
                 const newParams = new URLSearchParams(prev);
                 newParams.set('quarter', String(quarterNum));
@@ -828,7 +1001,7 @@ export default function Evaluations() {
           className="space-y-4"
         >
           <TabsList className="grid w-full" style={{ 
-            gridTemplateColumns: `repeat(${4 + Object.keys(transitions).length}, 1fr)` 
+            gridTemplateColumns: `repeat(4, 1fr)` 
           }}>
             {[1, 2, 3, 4].map(quarterNum => {
               // Use backend response to determine if self review is enabled for this quarter
@@ -849,44 +1022,72 @@ export default function Evaluations() {
                 ? (isSelfReviewEnabled || hasSelfEvalForQuarter)
                 : (getQuarterTiming(activeCycle, quarterNum, quarterlyCycles) !== 'future');
               
-              const hasTransition = !!transitions[quarterNum];
-              
               return (
-                <React.Fragment key={quarterNum}>
-                  <TabsTrigger 
-                    value={String(quarterNum)} 
-                    disabled={!isTabEnabled}
-                    className="flex items-center gap-2"
-                  >
-                    Q{quarterNum}
-                  </TabsTrigger>
-                  {hasTransition && (
-                    <TabsTrigger 
-                      key={`${quarterNum}-transition`}
-                      value={`q${quarterNum}-transition`}
-                      disabled={!isTabEnabled}
-                      className="flex items-center gap-2"
-                    >
-                      Transition
-                    </TabsTrigger>
-                  )}
-                </React.Fragment>
+                <TabsTrigger 
+                  key={quarterNum}
+                  value={String(quarterNum)} 
+                  disabled={!isTabEnabled}
+                  className="flex items-center gap-2"
+                >
+                  Q{quarterNum}
+                </TabsTrigger>
               );
             })}
           </TabsList>
           
-          {[1, 2, 3, 4].map(quarterNum => (
-            <React.Fragment key={quarterNum}>
-              <TabsContent value={String(quarterNum)} className="space-y-4">
-                {renderQuarterContent(quarterNum, false)}
+          {[1, 2, 3, 4].map(quarterNum => {
+            // Check if this quarter has a transition
+            const quarterTransition = transitions[quarterNum];
+            const hasTransition = !!quarterTransition;
+            
+            return (
+              <TabsContent key={quarterNum} value={String(quarterNum)} className="space-y-4">
+                {/* Nested Tabs for Pre-Transition and Transition (if transition exists) */}
+                {hasTransition ? (
+                  <Tabs 
+                    value={quarterNum === parseInt(selectedQuarter) ? nestedTab : 'pre-transition'} 
+                    onValueChange={(value) => {
+                      if (quarterNum === parseInt(selectedQuarter)) {
+                        setNestedTab(value as 'pre-transition' | 'transition');
+                        setSearchParams(prev => {
+                          const newParams = new URLSearchParams(prev);
+                          if (value === 'transition') {
+                            newParams.set('transition', 'true');
+                          } else {
+                            newParams.delete('transition');
+                          }
+                          return newParams;
+                        }, { replace: true });
+                      }
+                    }}
+                    className="space-y-4"
+                  >
+                    <TabsList>
+                      <TabsTrigger value="pre-transition">Pre-Transition</TabsTrigger>
+                      <TabsTrigger value="transition">Transition</TabsTrigger>
+                    </TabsList>
+                    
+                    {/* Pre-Transition Tab Content */}
+                    <TabsContent value="pre-transition" className="space-y-4">
+                      {quarterNum === parseInt(selectedQuarter) && nestedTab === 'pre-transition' && (
+                        renderQuarterContent(quarterNum, false)
+                      )}
+                    </TabsContent>
+                    
+                    {/* Transition Tab Content */}
+                    <TabsContent value="transition" className="space-y-4">
+                      {quarterNum === parseInt(selectedQuarter) && nestedTab === 'transition' && (
+                        renderQuarterContent(quarterNum, true)
+                      )}
+                    </TabsContent>
+                  </Tabs>
+                ) : (
+                  /* No Transition - Show regular content */
+                  renderQuarterContent(quarterNum, false)
+                )}
               </TabsContent>
-              {transitions[quarterNum] && (
-                <TabsContent value={`q${quarterNum}-transition`} className="space-y-4">
-                  {renderQuarterContent(quarterNum, true)}
-                </TabsContent>
-              )}
-            </React.Fragment>
-          ))}
+            );
+          })}
         </Tabs>
       </div>
     </MainLayout>

@@ -25,12 +25,26 @@ export function KPIRatingForm({
   onRatingChange,
 }: KPIRatingFormProps) {
   const numericTarget = parseNumericTarget(kpi.target_value);
-  const currentAchieved = rating?.achieved_value ?? 0;
+  console.log('currentAchieved',typeof rating?.achieved_value, rating?.achieved_value);
+  // Explicitly handle 0 as a valid value (not undefined/null)
+  // If achieved_value is explicitly 0, use it; otherwise default to 0 if undefined/null
+  const currentAchieved = rating?.achieved_value !== undefined && rating?.achieved_value !== null 
+    ? rating.achieved_value 
+    : 0;
 
   // Auto-calculate rating from calibration when achievement changes
   const calculatedRating = useMemo(() => {
     if (kpi.calibration && kpi.calibration.length > 0) {
-      return calculateRatingFromCalibration(currentAchieved, kpi.calibration);
+      // Explicitly pass 0 as a number, not as falsy
+      const valueToCalculate = currentAchieved === 0 ? 0 : currentAchieved;
+      const rating = calculateRatingFromCalibration(valueToCalculate, kpi.calibration);
+      console.log('calculateRatingFromCalibration', {
+        valueToCalculate,
+        calibration: kpi.calibration,
+        rating,
+        currentAchieved
+      });
+      return rating;
     }
     return null;
   }, [currentAchieved, kpi.calibration]);
@@ -88,7 +102,7 @@ export function KPIRatingForm({
         </div>
         
         {/* Display calculated rating prominently */}
-        {calculatedRating !== null && (
+        {calculatedRating !== null && calculatedRating !== undefined && (
           <div className="text-right">
             <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1 justify-end">
               <Star className="h-3 w-3" />

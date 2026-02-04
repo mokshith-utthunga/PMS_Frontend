@@ -17,20 +17,104 @@ export function calculateRatingFromCalibration(
   calibration: CalibrationRule[] | null | undefined
 ): number | null {
   if (!calibration || calibration.length === 0) return null;
+  // Explicitly check for null/undefined, but allow 0 as a valid value
   if (achievedValue === null || achievedValue === undefined) return null;
   
-  // Sort by threshold descending
-  const sortedRules = [...calibration].sort((a, b) => b.threshold - a.threshold);
+  // Ensure achievedValue is a number (handle string inputs)
+  // Explicitly handle 0 as a valid number (not falsy)
+  let numericValue: number;
+  if (typeof achievedValue === 'number') {
+    numericValue = achievedValue;
+  } else if (typeof achievedValue === 'string') {
+    numericValue = parseFloat(achievedValue);
+  } else {
+    numericValue = Number(achievedValue);
+  }
   
-  // Find matching rating - achieved value >= threshold
-  for (const rule of sortedRules) {
-    if (achievedValue >= rule.threshold) {
-      return rule.rating;
+  // Check if conversion resulted in NaN (0 is a valid number, so only check for NaN)
+  if (isNaN(numericValue)) return null;
+  
+  // Sort by threshold ascending to match range display logic
+  const sortedRules = [...calibration].sort((a, b) => a.threshold - b.threshold);
+  
+  console.log('calculateRatingFromCalibration: after sorting', {
+    numericValue,
+    sortedRules: sortedRules.map(r => ({ threshold: r.threshold, rating: r.rating })),
+    firstRule: sortedRules[0] ? { threshold: sortedRules[0].threshold, rating: sortedRules[0].rating } : null
+  });
+  
+  if (sortedRules.length === 0) return null;
+  
+  // Find matching rating based on range logic (matching the display)
+  // Ranges are: < first_threshold, (first+1)-second_threshold, (second+1)-third_threshold, etc.
+  // Example: thresholds [50, 60, 75, 90, 100] with ratings [1, 2, 3, 4, 5]
+  // Ranges: <50→1, 51-60→2, 61-75→3, 76-90→4, 91-100→5
+  
+  // Handle value exactly equal to first threshold (including 0)
+  // If first threshold is 0 and value is 0, return that threshold's rating
+  if (numericValue === sortedRules[0].threshold) {
+    console.log('calculateRatingFromCalibration: value equals first threshold', {
+      numericValue,
+      firstThreshold: sortedRules[0].threshold,
+      firstRating: sortedRules[0].rating
+    });
+    return sortedRules[0].rating;
+  }
+  
+  // Check if value is below first threshold
+  // If first threshold is > 0 and value is 0, return first threshold's rating
+  if (numericValue < sortedRules[0].threshold) {
+    return sortedRules[0].rating;
+  }
+  
+  // Check each range from second threshold onwards
+  for (let i = 1; i < sortedRules.length; i++) {
+    const previousRule = sortedRules[i - 1];
+    const currentRule = sortedRules[i];
+    
+    // Range is from (previous_threshold + 1) to current_threshold (inclusive)
+    const rangeStart = previousRule.threshold + 1;
+    const rangeEnd = currentRule.threshold;
+    
+    // Check if value is within this range (inclusive)
+    if (numericValue >= rangeStart && numericValue <= rangeEnd) {
+      return currentRule.rating;
+    }
+    
+    // Handle values between thresholds: if value is > previous threshold but < rangeStart,
+    // it should get the rating of the previous threshold
+    // Example: if thresholds are 85 and 90, and value is 85.5:
+    // - 85.5 > 85 (previous threshold)
+    // - 85.5 < 86 (rangeStart = 85 + 1)
+    // - So it should get the rating of threshold 85
+    if (numericValue > previousRule.threshold && numericValue < rangeStart) {
+      return previousRule.rating;
     }
   }
   
-  // If below all thresholds, use lowest rating as fallback
-  return sortedRules[sortedRules.length - 1].rating;
+  // Handle values exactly at first threshold: they get the second threshold's rating
+  // (since they're not < first_threshold and not in the 51-60 range)
+  if (sortedRules.length > 1 && numericValue === sortedRules[0].threshold) {
+    return sortedRules[1].rating;
+  }
+  
+  // Handle values between the highest threshold and the next range start
+  // If value is > highest threshold but < (highest threshold + 1), it should get the highest threshold's rating
+  const highestRule = sortedRules[sortedRules.length - 1];
+  if (numericValue > highestRule.threshold) {
+    // Check if there's a gap - if value is just slightly above highest threshold,
+    // it should still get the highest threshold's rating
+    // Otherwise, if it's significantly above, use highest rating
+    return highestRule.rating;
+  }
+  
+  // Handle values exactly at the highest threshold: they get that threshold's rating
+  if (numericValue === highestRule.threshold) {
+    return highestRule.rating;
+  }
+  
+  // Fallback: use highest rating (shouldn't reach here in normal cases)
+  return highestRule.rating;
 }
 
 export function CalibrationDisplay({
@@ -44,34 +128,16 @@ export function CalibrationDisplay({
     return null;
   }
 
-  const sortedRules = [...calibration].sort((a, b) => b.threshold - a.threshold);
-
-  // Find current rating based on achieved value
-  let currentRating: number | null = null;
-  let matchedThreshold: number | null = null;
-  
-  if (achievedValue !== null && achievedValue !== undefined) {
-    // Find matching rating - compare achieved value directly to threshold
-    for (const rule of sortedRules) {
-      if (achievedValue >= rule.threshold) {
-        currentRating = rule.rating;
-        matchedThreshold = rule.threshold;
-        break;
-      }
-    }
-    // If no rule matches (below all thresholds), use lowest rating as fallback
-    if (currentRating === null && sortedRules.length > 0) {
-      currentRating = sortedRules[sortedRules.length - 1].rating;
-      matchedThreshold = null; // Below all thresholds
-    }
-  }
+  // Use the same calculation function for consistency
+  const currentRating = calculateRatingFromCalibration(achievedValue, calibration);
+  const matchedThreshold: number | null = null; // Not used in display, kept for compatibility
 
   // Generate range descriptions in the new format
   // Example: <50 rating 1, 51-60 rating 2, 61-75 rating 3, etc.
   const rangeDescriptions = useMemo(() => {
     const descriptions: { range: string; rating: number; isFallback?: boolean }[] = [];
     
-    if (sortedRules.length === 0) return descriptions;
+    if (!calibration || calibration.length === 0) return descriptions;
     
     // Sort by threshold ascending for range generation
     const ascendingRules = [...calibration].sort((a, b) => a.threshold - b.threshold);
@@ -144,14 +210,19 @@ export function CalibrationDisplay({
   };
 
   const isCurrentRange = (desc: { range: string; rating: number; isFallback?: boolean }) => {
+    // Explicitly handle 0 as a valid value (not null/undefined)
     if (achievedValue === null || achievedValue === undefined || currentRating === null) return false;
+    
+    // Convert achievedValue to number to ensure proper comparison (handles string "0")
+    const numericAchieved = typeof achievedValue === 'number' ? achievedValue : parseFloat(String(achievedValue));
+    if (isNaN(numericAchieved)) return false;
     
     // Check if the achieved value falls within this range
     if (currentRating === desc.rating) {
       if (desc.isFallback) {
         // For fallback range (< threshold), check if value is below the lowest threshold
         const ascendingRules = [...calibration].sort((a, b) => a.threshold - b.threshold);
-        if (ascendingRules.length > 0 && achievedValue < ascendingRules[0].threshold) {
+        if (ascendingRules.length > 0 && numericAchieved < ascendingRules[0].threshold) {
           return true;
         }
       } else {
@@ -161,7 +232,7 @@ export function CalibrationDisplay({
         if (rangeMatch) {
           const start = parseFloat(rangeMatch[1]);
           const end = parseFloat(rangeMatch[2]);
-          if (achievedValue >= start && achievedValue <= end) {
+          if (numericAchieved >= start && numericAchieved <= end) {
             return true;
           }
         } else {
@@ -169,7 +240,7 @@ export function CalibrationDisplay({
           const valueMatch = desc.range.match(/(\d+)/);
           if (valueMatch) {
             const value = parseFloat(valueMatch[1]);
-            if (Math.abs(achievedValue - value) < 0.01) {
+            if (Math.abs(numericAchieved - value) < 0.01) {
               return true;
             }
           }

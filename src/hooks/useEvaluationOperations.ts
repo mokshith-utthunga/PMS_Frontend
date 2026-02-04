@@ -19,6 +19,7 @@ interface UseEvaluationOperationsProps {
   kpiRatings: Record<number, Record<string, KpiRating>>;
   kpis: { id: string }[];
   onSuccess: () => void;
+  onRatingsUpdate?: (quarter: number, ratings: Record<string, KpiRating>) => void;
   periodType?: 'full_quarter' | 'pre_transition' | 'post_transition' | null;
   transitionId?: string | null;
   periodStartDate?: string | null;
@@ -32,6 +33,7 @@ export function useEvaluationOperations({
   kpiRatings,
   kpis,
   onSuccess,
+  onRatingsUpdate,
   periodType,
   transitionId,
   periodStartDate,
@@ -51,7 +53,17 @@ export function useEvaluationOperations({
       setSaving(true);
       try {
         let review = quarterlyReviews[quarter];
-        const currentRatings = kpiRatings[quarter] || {};
+        const allQuarterRatings = kpiRatings[quarter] || {};
+        
+        // Filter ratings to only include ratings for KPIs in the current period
+        // This ensures we only save ratings for KPIs that are being displayed/evaluated
+        const kpiIds = new Set(kpis.map(k => k.id));
+        const currentRatings: Record<string, KpiRating> = {};
+        Object.keys(allQuarterRatings).forEach(goalId => {
+          if (kpiIds.has(goalId)) {
+            currentRatings[goalId] = allQuarterRatings[goalId];
+          }
+        });
 
         // Log period info for debugging
         console.log('Saving review with period info:', {
@@ -60,7 +72,9 @@ export function useEvaluationOperations({
           transitionId,
           periodStartDate,
           periodEndDate,
-          ratingsCount: Object.keys(currentRatings).length
+          totalRatingsCount: Object.keys(allQuarterRatings).length,
+          filteredRatingsCount: Object.keys(currentRatings).length,
+          kpiIdsCount: kpiIds.size
         });
 
         // Create or update quarterly self review
@@ -84,7 +98,7 @@ export function useEvaluationOperations({
           // Update the review in state - for transitions, this ensures we have the correct period-specific review
           setQuarterlyReviews(prev => ({ ...prev, [quarter]: review }));
 
-          // Save all goal self ratings in one bulk request
+          // Save all goal self ratings in one bulk request (only for KPIs in current period)
           const ratingsToSave = Object.values(currentRatings).map(rating => ({
             goal_id: rating.goal_id,
             achievement: rating.achievement,
@@ -97,6 +111,34 @@ export function useEvaluationOperations({
           if (ratingsToSave.length > 0 && review.id) {
             const bulkResult = await evaluationService.goalSelfRatings.bulkUpsert(review.id, ratingsToSave);
             console.log('Ratings saved successfully:', bulkResult);
+            
+            // After saving ratings, fetch the updated ratings to update the UI
+            try {
+              const ratingsResult = await evaluationService.goalSelfRatings.get(review.id);
+              if (ratingsResult.data && ratingsResult.data.length > 0) {
+                // Convert the fetched ratings to the KpiRating format
+                const fetchedRatings: Record<string, KpiRating> = {};
+                ratingsResult.data.forEach((r: any) => {
+                  fetchedRatings[r.goal_id] = {
+                    goal_id: r.goal_id,
+                    achievement: r.achievement || '',
+                    self_rating: r.self_rating || null,
+                    achieved_value: r.achieved_value,
+                    target_value: r.target_value,
+                    evidence: r.evidence || '',
+                  };
+                });
+                
+                // Update the ratings for this quarter
+                if (onRatingsUpdate) {
+                  onRatingsUpdate(quarter, fetchedRatings);
+                }
+                console.log('Updated ratings after save:', fetchedRatings);
+              }
+            } catch (error) {
+              console.error('Error fetching updated ratings:', error);
+              // Don't fail the save if this fetch fails
+            }
             
             // After saving ratings, fetch the updated review to ensure we have the latest data
             // This is especially important for transitions where we need the period-specific review
@@ -130,7 +172,7 @@ export function useEvaluationOperations({
         setSaving(false);
       }
     },
-    [employeeId, cycleId, quarterlyReviews, kpiRatings, periodType, transitionId, periodStartDate, periodEndDate, onSuccess]
+    [employeeId, cycleId, quarterlyReviews, kpiRatings, kpis, periodType, transitionId, periodStartDate, periodEndDate, onSuccess, onRatingsUpdate]
   );
 
   const submitEvaluation = useCallback(
@@ -142,7 +184,15 @@ export function useEvaluationOperations({
     ) => {
       if (!employeeId || !cycleId) return;
       
-      const currentRatings = kpiRatings[quarter] || {};
+      const allQuarterRatings = kpiRatings[quarter] || {};
+      // Filter ratings to only include ratings for KPIs in the current period
+      const kpiIds = new Set(kpis.map(k => k.id));
+      const currentRatings: Record<string, KpiRating> = {};
+      Object.keys(allQuarterRatings).forEach(goalId => {
+        if (kpiIds.has(goalId)) {
+          currentRatings[goalId] = allQuarterRatings[goalId];
+        }
+      });
       const missingRatings = kpis.filter(g => !currentRatings[g.id]?.self_rating);
 
       if (missingRatings.length > 0) {
