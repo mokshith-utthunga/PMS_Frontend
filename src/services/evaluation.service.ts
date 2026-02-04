@@ -19,6 +19,9 @@ export interface QuarterlySelfReviewData {
   submitted_at?: string;
   created_at?: string;
   updated_at?: string;
+  admin_override?: boolean;
+  admin_override_by?: string | null;
+  admin_override_at?: string | null;
 }
 
 // Quarterly KPI Progress Types (employee self-ratings)
@@ -313,9 +316,10 @@ export const evaluationService = {
         cycleId,
       }),
 
-    updateRating: (id: string, finalNormalizedRating: number) =>
+    updateRating: (id: string, finalNormalizedRating: number, calibratedRating?: number | null) =>
       api.put<{ data: any }>(`/api/evaluations/hr/normalized-rating/${id}`, {
         final_normalized_rating: finalNormalizedRating,
+        ...(calibratedRating !== undefined && { calibrated_rating: calibratedRating }),
       }),
 
     calibrate: (quarter: number, cycleId: string) =>
@@ -323,10 +327,12 @@ export const evaluationService = {
         `/api/evaluations/hr/calibrate?quarter=${quarter}&cycle_id=${cycleId}`
       ),
 
-    getEmployeeRating: (employeeId: string, quarter: number, cycleId: string) =>
-      api.get<{ data: { calibrated_rating: number | null; status: string } | null }>(
-        `/api/evaluations/employee/normalized-rating?employee_id=${employeeId}&quarter=${quarter}&cycle_id=${cycleId}`
-      ),
+    getEmployeeRating: (employeeId: string, quarter: number, cycleId: string, periodType?: PeriodType | null, transitionId?: string | null) => {
+      let url = `/api/evaluations/employee/normalized-rating?employee_id=${employeeId}&quarter=${quarter}&cycle_id=${cycleId}`;
+      if (periodType) url += `&period_type=${periodType}`;
+      if (transitionId) url += `&transition_id=${transitionId}`;
+      return api.get<{ data: { calibrated_rating: number | null; status: string; period_type?: PeriodType; transition_id?: string | null } | null }>(url);
+    },
   },
 
   // ========== Year-End Evaluation ==========

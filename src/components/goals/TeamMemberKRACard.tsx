@@ -122,37 +122,45 @@ export function TeamMemberKRACard({
                   }
                 }
 
-                // Sort calibrations by threshold descending
+                // Sort calibrations by threshold ascending for range generation
                 const sortedCalibrations = calibrationArray.length > 0
-                  ? [...calibrationArray].sort((a, b) => b.threshold - a.threshold)
+                  ? [...calibrationArray].sort((a, b) => a.threshold - b.threshold)
                   : [];
                 const unit = kpi.metric_type === 'percentage' ? '%' : '';
 
-                // Generate range descriptions similar to CalibrationDisplay
+                // Generate range descriptions in the new format
+                // Example: <50 rating 1, 51-60 rating 2, 61-75 rating 3, etc.
                 const rangeDescriptions: Array<{ range: string; rating: number }> = [];
                 if (sortedCalibrations.length > 0) {
-                  // Highest threshold: >= threshold
-                  rangeDescriptions.push({
-                    range: `≥ ${sortedCalibrations[0].threshold}${unit}`,
-                    rating: sortedCalibrations[0].rating,
-                  });
-
-                  // Middle ranges: >= next.threshold and < current.threshold
-                  for (let i = 0; i < sortedCalibrations.length - 1; i++) {
+                  for (let i = 0; i < sortedCalibrations.length; i++) {
                     const current = sortedCalibrations[i];
-                    const next = sortedCalibrations[i + 1];
-                    rangeDescriptions.push({
-                      range: `≥ ${next.threshold}${unit} and < ${current.threshold}${unit}`,
-                      rating: next.rating,
-                    });
+                    const previous = sortedCalibrations[i - 1];
+                    
+                    if (i === 0) {
+                      // First (lowest) threshold: < threshold
+                      rangeDescriptions.push({
+                        range: `< ${current.threshold}${unit}`,
+                        rating: current.rating,
+                      });
+                    } else {
+                      // Middle and last thresholds: previous_threshold+1 - current_threshold
+                      const startValue = previous.threshold + 1;
+                      const endValue = current.threshold;
+                      
+                      if (startValue === endValue) {
+                        // If start and end are the same, just show the value
+                        rangeDescriptions.push({
+                          range: `${startValue}${unit}`,
+                          rating: current.rating,
+                        });
+                      } else {
+                        rangeDescriptions.push({
+                          range: `${startValue}-${endValue}${unit}`,
+                          rating: current.rating,
+                        });
+                      }
+                    }
                   }
-
-                  // Below lowest threshold (fallback)
-                  const lowest = sortedCalibrations[sortedCalibrations.length - 1];
-                  rangeDescriptions.push({
-                    range: `< ${lowest.threshold}${unit}`,
-                    rating: lowest.rating,
-                  });
                 }
 
                 return (

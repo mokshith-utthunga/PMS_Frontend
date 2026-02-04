@@ -40,6 +40,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Users, CheckCircle2, XCircle, Clock, Loader2, UserCheck, UserX } from 'lucide-react';
 import type { PerformanceCycle } from '@/lib/evaluationPeriods';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 
 interface Employee {
   id: string;
@@ -66,6 +67,7 @@ export default function LateSubmissionManagement() {
   const { user } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { quarterlyCycles } = useActiveCycle();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedCycleId, setSelectedCycleId] = useState<string>('');
   const [selectedEmployees, setSelectedEmployees] = useState<Set<string>>(new Set());
@@ -73,17 +75,17 @@ export default function LateSubmissionManagement() {
   const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [targetEmployeeId, setTargetEmployeeId] = useState<string | null>(null);
-  const [submissionType, setSubmissionType] = useState<'goals' | 'evaluations'>('goals');
+  const [submissionType, setSubmissionType] = useState<'goals' | 'evaluations' | 'manager-evaluations'>('goals');
 
   // Get quarter and tab from URL - handle "year-end" as special case
   const urlQuarter = searchParams.get('quarter');
-  const urlTab = searchParams.get('tab') as 'goals' | 'evaluations' | null;
+  const urlTab = searchParams.get('tab') as 'goals' | 'evaluations' | 'manager-evaluations' | null;
   const isYearEnd = urlQuarter === 'year-end';
   const selectedQuarter = isYearEnd ? null : (urlQuarter ? parseInt(urlQuarter, 10) : null);
   
   // Sync submissionType with URL tab
   useEffect(() => {
-    if (urlTab && (urlTab === 'goals' || urlTab === 'evaluations')) {
+    if (urlTab && (urlTab === 'goals' || urlTab === 'evaluations' || urlTab === 'manager-evaluations')) {
       setSubmissionType(urlTab);
     }
   }, [urlTab]);
@@ -257,7 +259,7 @@ export default function LateSubmissionManagement() {
   }, [activeCycle]);
 
   // Fetch employees who missed deadline from API (includes submission status and permissions)
-  const { data: lateSubmissionEmployees = [], isLoading: employeesLoading, error: employeesError } = useQuery({
+  const { data: lateSubmissionEmployees = [], isLoading: employeesLoading, error: employeesError, refetch: refetchEmployees } = useQuery({
     queryKey: ['late-submission-employees', effectiveCycleId, effectiveSelectedQuarter, submissionType],
     enabled: !!effectiveCycleId,
     queryFn: async () => {
@@ -270,7 +272,8 @@ export default function LateSubmissionManagement() {
   const { 
     data: submissionDetails, 
     isLoading: detailsLoading,
-    error: detailsError 
+    error: detailsError,
+    refetch: refetchDetails
   } = useQuery({
     queryKey: ['late-submission-details', effectiveCycleId, effectiveSelectedQuarter, submissionType],
     enabled: !!effectiveCycleId,
@@ -280,8 +283,9 @@ export default function LateSubmissionManagement() {
     },
   });
 
-  // Use API data for stats - separate goals and evaluations
+  // Use API data for stats - separate goals, evaluations, and manager evaluations
   const totalEmployees = submissionDetails?.totalEmployees || 0;
+  const totalManagers = submissionDetails?.totalManagers || 0;
   const goalsStats = submissionDetails?.goals || {
     submitted: 0,
     missedDeadline: 0,
@@ -300,20 +304,87 @@ export default function LateSubmissionManagement() {
     hasStarted: false,
     startDate: null,
   };
+  const managerEvaluationsStats = submissionDetails?.managerEvaluations || {
+    submitted: 0,
+    missedDeadline: 0,
+    lateAccessGranted: 0,
+    quarter: null,
+    isPastDeadline: false,
+    hasStarted: false,
+    startDate: null,
+  };
   
   // Use stats based on selected type
-  const currentStats = submissionType === 'goals' ? goalsStats : evaluationsStats;
+  const currentStats = submissionType === 'goals' 
+    ? goalsStats 
+    : submissionType === 'evaluations' 
+    ? evaluationsStats 
+    : managerEvaluationsStats;
   const submittedCount = currentStats.submitted;
   const missedCount = currentStats.missedDeadline;
   const lateAccessCount = currentStats.lateAccessGranted;
   const isPastDeadline = currentStats.isPastDeadline;
   const hasStarted = currentStats.hasStarted ?? true; // Default to true for backwards compatibility
   const startDate = currentStats.startDate;
+  
+  // Check if manager evaluations tab is eligible (only show when manager review window has ended)
+  // This should be checked regardless of current tab selection
+  const isManagerEvaluationsEligible = useMemo(() => {
+    if (!selectedQuarter || !quarterlyCycles || isYearEnd) {
+      return false;
+    }
+    
+    const quarterlyCycle = quarterlyCycles.find(qc => {
+      const qcQuarter = typeof qc.quarter === 'string' ? parseInt(qc.quarter) : qc.quarter;
+      return qcQuarter === selectedQuarter;
+    });
+    
+    if (!quarterlyCycle?.quarterly_manager_review_end_date) {
+      return false;
+    }
+    
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const endDate = new Date(quarterlyCycle.quarterly_manager_review_end_date);
+    endDate.setHours(23, 59, 59, 999);
+    
+    return now > endDate;
+  }, [selectedQuarter, quarterlyCycles, isYearEnd]);
 
-  // Filter employees who missed the deadline (haven't submitted for the selected quarter)
+  // Filter employees/managers who missed the deadline (haven't submitted for the selected quarter)
   const missedDeadlineEmployees = lateSubmissionEmployees.filter(
     (emp: LateSubmissionEmployee) => !emp.has_submitted
   );
+  
+  // Group managers by pending reportees for manager-evaluations view
+  const managersByPendingReportees = useMemo(() => {
+    if (submissionType !== 'manager-evaluations') return new Map();
+    
+    const grouped = new Map<string, {
+      manager_id: string;
+      manager_emp_code: string;
+      manager_name: string;
+      reportees: Array<{
+        employee_id: string;
+        emp_code: string;
+        employee_name: string;
+        date_of_joining?: string;
+      }>;
+    }>();
+    
+    missedDeadlineEmployees.forEach((manager: any) => {
+      if (manager.pending_reportees && manager.pending_reportees.length > 0) {
+        grouped.set(manager.employee_id, {
+          manager_id: manager.employee_id,
+          manager_emp_code: manager.emp_code,
+          manager_name: manager.employee_name,
+          reportees: manager.pending_reportees
+        });
+      }
+    });
+    
+    return grouped;
+  }, [missedDeadlineEmployees, submissionType]);
 
   // Group employees by manager for year-end view
   const employeesByManager = useMemo(() => {
@@ -362,14 +433,19 @@ export default function LateSubmissionManagement() {
           granted_by: user?.id || '',
           reason: reason || undefined,
           quarter: effectiveSelectedQuarter,  // Quarter-specific permission or 'year-end'
+          type: submissionType,  // Include type (goals, evaluations, or manager-evaluations)
         });
       }
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       const periodLabel = isYearEnd ? 'Year-End Evaluation' : `Q${effectiveSelectedQuarter}`;
       toast({ title: `Late submission access granted for ${periodLabel}` });
-      queryClient.invalidateQueries({ queryKey: ['late-submission-employees', effectiveCycleId, effectiveSelectedQuarter] });
-      queryClient.invalidateQueries({ queryKey: ['late-submission-details', effectiveCycleId, effectiveSelectedQuarter] });
+      // Invalidate and refetch queries to immediately show updated permissions
+      await queryClient.invalidateQueries({ queryKey: ['late-submission-employees', effectiveCycleId, effectiveSelectedQuarter, submissionType] });
+      await queryClient.invalidateQueries({ queryKey: ['late-submission-details', effectiveCycleId, effectiveSelectedQuarter, submissionType] });
+      // Explicitly refetch to ensure UI updates immediately
+      await refetchEmployees();
+      await refetchDetails();
       setSelectedEmployees(new Set());
       setGrantDialogOpen(false);
       setReason('');
@@ -385,11 +461,14 @@ export default function LateSubmissionManagement() {
     mutationFn: async (employeeId: string) => {
       await permissionsService.lateSubmission.revoke(effectiveCycleId, employeeId, effectiveSelectedQuarter);
     },
-    onSuccess: () => {
+    onSuccess: async () => {
       const periodLabel = isYearEnd ? 'Year-End Evaluation' : `Q${effectiveSelectedQuarter}`;
       toast({ title: `Late submission access revoked for ${periodLabel}` });
-      queryClient.invalidateQueries({ queryKey: ['late-submission-employees', effectiveCycleId, effectiveSelectedQuarter] });
-      queryClient.invalidateQueries({ queryKey: ['late-submission-details', effectiveCycleId, effectiveSelectedQuarter] });
+      await queryClient.invalidateQueries({ queryKey: ['late-submission-employees', effectiveCycleId, effectiveSelectedQuarter, submissionType] });
+      await queryClient.invalidateQueries({ queryKey: ['late-submission-details', effectiveCycleId, effectiveSelectedQuarter, submissionType] });
+      // Explicitly refetch to ensure UI updates immediately
+      await refetchEmployees();
+      await refetchDetails();
       setRevokeDialogOpen(false);
       setTargetEmployeeId(null);
     },
@@ -524,10 +603,10 @@ export default function LateSubmissionManagement() {
           </TabsList>
         </Tabs>
 
-        {/* Goals vs Evaluations Tabs */}
+        {/* Goals vs Evaluations vs Manager Evaluations Tabs */}
         {!isYearEnd && (
           <Tabs value={submissionType} onValueChange={(value) => {
-            const newType = value as 'goals' | 'evaluations';
+            const newType = value as 'goals' | 'evaluations' | 'manager-evaluations';
             setSubmissionType(newType);
             // Update URL with tab parameter
             const newParams = new URLSearchParams(searchParams);
@@ -537,6 +616,13 @@ export default function LateSubmissionManagement() {
             <TabsList>
               <TabsTrigger value="goals">Goals</TabsTrigger>
               <TabsTrigger value="evaluations">Evaluations</TabsTrigger>
+              <TabsTrigger 
+                value="manager-evaluations"
+                disabled={!isManagerEvaluationsEligible}
+                aria-label="Manager Evaluations (only available after manager review window ends)"
+              >
+                Manager Evaluations
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         )}
@@ -545,11 +631,19 @@ export default function LateSubmissionManagement() {
         <div className="grid gap-4 md:grid-cols-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Employees</CardTitle>
+              <CardTitle className="text-sm font-medium">
+                {submissionType === 'manager-evaluations' ? 'Total Managers' : 'Total Employees'}
+              </CardTitle>
               <Users className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{(employeesLoading || detailsLoading) ? '-' : totalEmployees}</div>
+              <div className="text-2xl font-bold">
+                {(employeesLoading || detailsLoading) 
+                  ? '-' 
+                  : submissionType === 'manager-evaluations' 
+                    ? totalManagers 
+                    : totalEmployees}
+              </div>
             </CardContent>
           </Card>
           <Card>
@@ -560,7 +654,10 @@ export default function LateSubmissionManagement() {
             <CardContent>
               <div className="text-2xl font-bold text-green-600">{submittedCount}</div>
               <p className="text-xs text-muted-foreground mt-1">
-                {totalEmployees > 0 ? `${Math.round((submittedCount / totalEmployees) * 100)}%` : '0%'} of total
+                {submissionType === 'manager-evaluations' 
+                  ? (totalManagers > 0 ? `${Math.round((submittedCount / totalManagers) * 100)}%` : '0%')
+                  : (totalEmployees > 0 ? `${Math.round((submittedCount / totalEmployees) * 100)}%` : '0%')
+                } of total
               </p>
             </CardContent>
           </Card>
@@ -600,11 +697,15 @@ export default function LateSubmissionManagement() {
                 <CardTitle>
                   {isYearEnd 
                     ? `Managers with Pending Year-End Evaluations (${employeesByManager.size})`
+                    : submissionType === 'manager-evaluations'
+                    ? `Managers with Pending Reportee Reviews (${managersByPendingReportees.size})`
                     : `Employees Who Missed ${submissionType === 'goals' ? 'Goals' : 'Evaluations'} Deadline (${missedCount})`}
                 </CardTitle>
                 <CardDescription>
                   {isYearEnd
                     ? 'Managers with reportees who have not submitted their year-end evaluations'
+                    : submissionType === 'manager-evaluations'
+                    ? 'Managers who have not completed reviews for all their reportees'
                     : (isPastDeadline 
                       ? `These employees have not submitted their ${submissionType === 'goals' ? 'goals' : 'self-evaluations'} for this quarter`
                       : 'Deadline has not passed yet')}
@@ -619,7 +720,7 @@ export default function LateSubmissionManagement() {
             </div>
           </CardHeader>
           <CardContent>
-            {!hasStarted && !isYearEnd ? (
+            {!hasStarted && !isYearEnd && submissionType !== 'manager-evaluations' ? (
               <div className="text-center py-8 text-muted-foreground">
                 <p className="text-lg font-medium mb-2">
                   {submissionType === 'goals' ? 'Goal submission period' : 'Evaluation period'} has not started yet
@@ -630,13 +731,22 @@ export default function LateSubmissionManagement() {
                     : 'Start date is not configured for this quarter.'}
                 </p>
               </div>
-            ) : !isPastDeadline && !isYearEnd ? (
+            ) : !isPastDeadline && !isYearEnd && submissionType !== 'manager-evaluations' ? (
               <div className="text-center py-8 text-muted-foreground">
                 <p className="text-lg font-medium mb-2">
                   {submissionType === 'goals' ? 'Goal submission' : 'Evaluation'} period is still ongoing
                 </p>
                 <p className="text-sm">
                   The deadline has not passed yet. Employees can still submit their {submissionType === 'goals' ? 'goals' : 'self-evaluations'}.
+                </p>
+              </div>
+            ) : !isManagerEvaluationsEligible && submissionType === 'manager-evaluations' ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <p className="text-lg font-medium mb-2">
+                  Manager review window has not ended yet
+                </p>
+                <p className="text-sm">
+                  Manager evaluations late submission data will be available after the manager review deadline has passed.
                 </p>
               </div>
             ) : (isYearEnd ? (
@@ -748,6 +858,92 @@ export default function LateSubmissionManagement() {
                   })}
                 </Accordion>
               )
+            ) : submissionType === 'manager-evaluations' ? (
+              // Manager Evaluations Accordion View
+              managersByPendingReportees.size === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  All managers have completed reviews for all their reportees on time!
+                </div>
+              ) : (
+                <Accordion type="single" collapsible className="w-full">
+                  {Array.from(managersByPendingReportees.entries()).map(([managerId, managerData]) => {
+                    const pendingCount = managerData.reportees.length;
+                    const hasPermission = hasLatePermission(managerId);
+                    
+                    return (
+                      <AccordionItem key={managerId} value={managerId}>
+                        <AccordionTrigger className="hover:no-underline">
+                          <div className="flex items-center justify-between w-full pr-4">
+                            <div className="flex items-center gap-4">
+                              <div className="text-left">
+                                <div className="font-medium">
+                                  {managerData.manager_name} ({managerData.manager_emp_code})
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                  Pending: {pendingCount} reportee{pendingCount !== 1 ? 's' : ''}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {hasPermission ? (
+                                <>
+                                  <Badge className="bg-amber-500 hover:bg-amber-600">
+                                    <Clock className="mr-1 h-3 w-3" />
+                                    Granted
+                                  </Badge>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRevokeSingle(managerId);
+                                    }}
+                                  >
+                                    <UserX className="mr-1 h-3 w-3" />
+                                    Revoke
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTargetEmployeeId(managerId);
+                                    setGrantDialogOpen(true);
+                                  }}
+                                >
+                                  <UserCheck className="mr-1 h-3 w-3" />
+                                  Grant Access
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="space-y-2 pt-2">
+                            {managerData.reportees.map((reportee) => {
+                              return (
+                                <div
+                                  key={reportee.employee_id}
+                                  className="flex items-center justify-between p-3 border rounded-lg"
+                                >
+                                  <div className="flex-1">
+                                    <div className="font-medium">{reportee.employee_name || 'Unknown'}</div>
+                                    <div className="text-sm text-muted-foreground">
+                                      {reportee.emp_code} • Joined: {reportee.date_of_joining ? new Date(reportee.date_of_joining).toLocaleDateString() : 'N/A'}
+                                    </div>
+                                  </div>
+                                  <Badge variant="destructive">Review Pending</Badge>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    );
+                  })}
+                </Accordion>
+              )
             ) : missedDeadlineEmployees.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 All employees have submitted their {submissionType === 'goals' ? 'goals' : 'self-evaluations'} on time!
@@ -795,7 +991,7 @@ export default function LateSubmissionManagement() {
                           </div>
                         </TableCell>
                         <TableCell>{emp.department}</TableCell>
-                        <TableCell>-</TableCell>
+                        <TableCell>{emp.manager_name}</TableCell>
                         <TableCell>
                           <Badge variant={emp.has_submitted ? 'default' : 'destructive'}>
                             {emp.has_submitted ? 'Submitted' : 'Not Submitted'}

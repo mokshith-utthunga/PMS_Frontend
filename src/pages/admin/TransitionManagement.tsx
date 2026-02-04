@@ -51,6 +51,14 @@ export default function TransitionManagement() {
   const [searchPopoverOpen, setSearchPopoverOpen] = useState(false);
   const debounceTimer = useRef<NodeJS.Timeout | null>(null);
   
+  // Manager search state
+  const [managerSearchQuery, setManagerSearchQuery] = useState<string>('');
+  const [managerSearchResults, setManagerSearchResults] = useState<Employee[]>([]);
+  const [managerSearching, setManagerSearching] = useState(false);
+  const [managerPopoverOpen, setManagerPopoverOpen] = useState(false);
+  const [selectedManager, setSelectedManager] = useState<Employee | null>(null);
+  const managerDebounceTimer = useRef<NodeJS.Timeout | null>(null);
+  
   // Form state
   const [formData, setFormData] = useState<CreateTransitionData>({
     cycle_id: activeCycle?.id || '',
@@ -97,6 +105,41 @@ export default function TransitionManagement() {
       }
     };
   }, [searchQuery, toast]);
+  
+  // Debounced search for managers
+  useEffect(() => {
+    if (managerDebounceTimer.current) {
+      clearTimeout(managerDebounceTimer.current);
+    }
+
+    if (managerSearchQuery.length < 2) {
+      setManagerSearchResults([]);
+      return;
+    }
+
+    managerDebounceTimer.current = setTimeout(async () => {
+      setManagerSearching(true);
+      try {
+        const result = await employeeService.search(managerSearchQuery, 10);
+        setManagerSearchResults(result.data || []);
+      } catch (error: any) {
+        toast({
+          title: 'Error',
+          description: error.message || 'Failed to search managers',
+          variant: 'destructive',
+        });
+        setManagerSearchResults([]);
+      } finally {
+        setManagerSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      if (managerDebounceTimer.current) {
+        clearTimeout(managerDebounceTimer.current);
+      }
+    };
+  }, [managerSearchQuery, toast]);
   
   // Update formData when activeCycle changes
   useEffect(() => {
@@ -171,6 +214,10 @@ export default function TransitionManagement() {
         new_grade: null,
         new_project: null,
       });
+      // Reset manager search
+      setSelectedManager(null);
+      setManagerSearchQuery('');
+      setManagerSearchResults([]);
       // Refetch transitions after a short delay to ensure backend has processed
       setTimeout(() => {
         refetch();
@@ -323,28 +370,115 @@ export default function TransitionManagement() {
                     
                     <div className="space-y-2">
                       <Label>New Manager</Label>
-                      <Select
-                        value={formData.new_manager_id || undefined}
-                        onValueChange={(value) => setFormData({ ...formData, new_manager_id: value === 'none' ? null : value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select new manager (optional)" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">None</SelectItem>
-                          {searchResults.length > 0 ? (
-                            searchResults.map(emp => (
-                              <SelectItem key={emp.id} value={emp.id}>{emp.full_name}</SelectItem>
-                            ))
-                          ) : (
-                            <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                              Search for an employee first
-                            </div>
-                          )}
-                        </SelectContent>
-                      </Select>
+                      <Popover open={managerPopoverOpen} onOpenChange={setManagerPopoverOpen}>
+                        <PopoverTrigger asChild>
+                          <div className="relative">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input
+                              placeholder="Search by email or employee code..."
+                              value={selectedManager ? `${selectedManager.full_name} (${selectedManager.emp_code || selectedManager.email})` : managerSearchQuery}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setManagerSearchQuery(value);
+                                if (value.length >= 2) {
+                                  setManagerPopoverOpen(true);
+                                } else {
+                                  setManagerPopoverOpen(false);
+                                  setSelectedManager(null);
+                                  setFormData({ ...formData, new_manager_id: null });
+                                }
+                              }}
+                              onFocus={() => {
+                                if (managerSearchQuery.length >= 2 || managerSearchResults.length > 0) {
+                                  setManagerPopoverOpen(true);
+                                }
+                              }}
+                              className="pl-9 pr-10"
+                            />
+                            {selectedManager && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="absolute right-1 top-1/2 transform -translate-y-1/2 h-7 w-7"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedManager(null);
+                                  setManagerSearchQuery('');
+                                  setFormData({ ...formData, new_manager_id: null });
+                                  setManagerSearchResults([]);
+                                }}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[400px] p-0" align="start">
+                          <div className="p-2">
+                            {managerSearching && (
+                              <div className="flex items-center justify-center py-4">
+                                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                              </div>
+                            )}
+                            {!managerSearching && managerSearchQuery.length < 2 && (
+                              <div className="text-sm text-muted-foreground text-center py-4">
+                                Type at least 2 characters to search by email or employee code
+                              </div>
+                            )}
+                            {!managerSearching && managerSearchQuery.length >= 2 && managerSearchResults.length === 0 && (
+                              <div className="text-sm text-muted-foreground text-center py-4">
+                                No managers found
+                              </div>
+                            )}
+                            {!managerSearching && managerSearchResults.length > 0 && (
+                              <div className="max-h-60 overflow-y-auto space-y-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedManager(null);
+                                    setManagerSearchQuery('');
+                                    setFormData({ ...formData, new_manager_id: null });
+                                    setManagerPopoverOpen(false);
+                                  }}
+                                  className="w-full text-left px-3 py-2 rounded-md hover:bg-accent transition-colors"
+                                >
+                                  <div className="font-medium text-muted-foreground">None</div>
+                                </button>
+                                {managerSearchResults.map((manager) => (
+                                  <button
+                                    key={manager.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedManager(manager);
+                                      setFormData({ ...formData, new_manager_id: manager.id });
+                                      setManagerPopoverOpen(false);
+                                    }}
+                                    className={`w-full text-left px-3 py-2 rounded-md hover:bg-accent transition-colors ${
+                                      formData.new_manager_id === manager.id ? 'bg-accent' : ''
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <div>
+                                        <div className="font-medium">{manager.full_name}</div>
+                                        <div className="text-sm text-muted-foreground">
+                                          {manager.emp_code && <span>{manager.emp_code}</span>}
+                                          {manager.emp_code && manager.email && <span> • </span>}
+                                          {manager.email && <span>{manager.email}</span>}
+                                        </div>
+                                      </div>
+                                      {formData.new_manager_id === manager.id && (
+                                        <CheckCircle2 className="h-4 w-4 text-primary" />
+                                      )}
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
                       <p className="text-xs text-muted-foreground">
-                        You can search for managers in the employee search above
+                        Search by email or employee code to find the new manager
                       </p>
                     </div>
                     
@@ -500,16 +634,20 @@ export default function TransitionManagement() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Employee Code</TableHead>
                       <TableHead>Quarter</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead>Transition Date</TableHead>
-                      <TableHead>Status</TableHead>
+                      {/* <TableHead>Status</TableHead> */}
                       <TableHead>Details</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {transitions.map((transition) => (
                       <TableRow key={transition.id}>
+                        <TableCell>{transition.name || 'N/A'}</TableCell>
+                        <TableCell>{transition.emp_code || 'N/A'}</TableCell>
                         <TableCell>Q{transition.quarter}</TableCell>
                         <TableCell>
                           <Badge variant="outline">
@@ -525,7 +663,7 @@ export default function TransitionManagement() {
                             {formatDateShort(new Date(transition.transition_date))}
                           </div>
                         </TableCell>
-                        <TableCell>{getStatusBadge(transition)}</TableCell>
+                        {/* <TableCell>{getStatusBadge(transition)}</TableCell> */}
                         <TableCell>
                           <div className="space-y-1 text-sm">
                             {transition.old_manager_name && transition.new_manager_name && (

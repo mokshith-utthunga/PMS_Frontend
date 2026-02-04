@@ -1,10 +1,10 @@
 // Custom hook for Goals page data fetching
 import { useState, useEffect, useCallback } from 'react';
-import { goalsService } from '@/services';
+import { goalsService, transitionService } from '@/services';
 import { logError } from '@/errors';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 import { useCurrentEmployee } from './useCurrentEmployee';
-import type { KRA, Goal, BonusKRA, BonusKPI, PerformanceCycle } from '@/types';
+import type { KRA, Goal, PerformanceCycle } from '@/types';
 
 export interface GoalsData {
   employeeId: string | null;
@@ -12,9 +12,9 @@ export interface GoalsData {
   activeCycle: PerformanceCycle | null;
   kras: KRA[];
   kpis: Goal[];
-  bonusKras: BonusKRA[];
-  bonusKpis: BonusKPI[];
   hasLatePermission: boolean;
+  hasActiveTransition: boolean;
+  transition: any | null;
   loading: boolean;
 }
 
@@ -33,9 +33,9 @@ export function useGoalsData(userId: string | undefined, quarter?: number | null
     activeCycle: activeCycleFromContext,
     kras: [],
     kpis: [],
-    bonusKras: [],
-    bonusKpis: [],
     hasLatePermission: false,
+    hasActiveTransition: false,
+    transition: null,
     loading: true,
   });
 
@@ -80,27 +80,42 @@ export function useGoalsData(userId: string | undefined, quarter?: number | null
 
       const cycleId = activeCycle.id;
 
+      // Check for active transition for this employee/cycle/quarter
+      let transition = null;
+      let hasActiveTransition = false;
+      try {
+        const transitions = await transitionService.getByEmployee(employeeId, cycleId, quarter || null);
+        if (transitions.length > 0) {
+          transition = transitions[0];
+          hasActiveTransition = true;
+          // Check if we're past the transition date (post-transition period)
+          const transitionDate = new Date(transition.transition_date);
+          const now = new Date();
+          transitionDate.setHours(0, 0, 0, 0);
+          now.setHours(0, 0, 0, 0);
+          const isPostTransition = now >= transitionDate;
+          console.log('Active transition found:', {
+            transitionDate: transition.transition_date,
+            currentDate: now.toISOString().split('T')[0],
+            isPostTransition,
+            quarter: transition.quarter
+          });
+        }
+      } catch (error) {
+        // Transition check failed, continue without transition
+        console.warn('Failed to check transitions:', error);
+      }
+
       // Fetch all data in parallel with quarter filter
-      const [krasResult, kpisResult, bonusKrasResult, latePermResult] = await Promise.all([
+      // Don't filter by period_type - fetch all goals (pre-transition, post-transition, and full_quarter)
+      const [krasResult, kpisResult, latePermResult] = await Promise.all([
         goalsService.kras.getByEmployee(employeeId, cycleId, undefined, quarter),
         goalsService.kpis.getByEmployee(employeeId, cycleId, undefined, quarter),
-        goalsService.bonusKras.getByEmployee(employeeId, cycleId),
         goalsService.lateSubmission.check(cycleId, quarter || undefined).catch(() => ({ data: [], hasPermission: false })), // Handle 403 gracefully
       ]);
 
       const kras = krasResult.data || [];
       const kpis = (kpisResult.data || []).filter(g => g.kra_id) as Goal[];
-      const bonusKras = bonusKrasResult.data || [];
-
-      // Fetch bonus KPIs for all bonus KRAs
-      let bonusKpis: BonusKPI[] = [];
-      if (bonusKras.length > 0) {
-        const bonusKpiPromises = bonusKras.map(bkra => 
-          goalsService.bonusKpis.getByBonusKRA(bkra.id)
-        );
-        const bonusKpiResults = await Promise.all(bonusKpiPromises);
-        bonusKpis = bonusKpiResults.flatMap(r => r.data || []);
-      }
 
       setData({
         employeeId,
@@ -108,9 +123,9 @@ export function useGoalsData(userId: string | undefined, quarter?: number | null
         activeCycle: activeCycle,
         kras,
         kpis,
-        bonusKras,
-        bonusKpis,
         hasLatePermission: latePermResult.hasPermission ?? false,
+        hasActiveTransition,
+        transition,
         loading: false,
       });
     } catch (error) {

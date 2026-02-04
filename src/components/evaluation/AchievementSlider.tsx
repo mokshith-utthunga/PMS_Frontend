@@ -297,11 +297,11 @@ export function DualAchievementSlider({
 
   const getRatingColor = (rating: number) => {
     switch (rating) {
-      case 5: return 'text-purple-600 bg-purple-100 dark:bg-purple-900/30 dark:text-purple-400';
-      case 4: return 'text-green-600 bg-green-100 dark:bg-green-900/30 dark:text-green-400';
-      case 3: return 'text-blue-600 bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400';
-      case 2: return 'text-orange-600 bg-orange-100 dark:bg-orange-900/30 dark:text-orange-400';
-      case 1: return 'text-red-600 bg-red-100 dark:bg-red-900/30 dark:text-red-400';
+      case 5: return 'text-purple-600 bg-purple-100 ';
+      case 4: return 'text-green-600 bg-green-100 ';
+      case 3: return 'text-blue-600 bg-blue-100 ';
+      case 2: return 'text-orange-600 bg-orange-100 ';
+      case 1: return 'text-red-600 bg-red-100 ';
       default: return '';
     }
   };

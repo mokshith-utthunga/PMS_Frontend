@@ -11,23 +11,6 @@ export interface KRAForCalculation {
   weight: number;
 }
 
-// Bonus Rating to Points mapping
-export const BONUS_RATING_POINTS: Record<number, number> = {
-  5: 5,  // Exceeded
-  4: 3,  // Above expectations
-  3: 0,  // Meets expectations
-  2: -3, // Below expectations
-  1: -5, // Poor
-};
-
-export const BONUS_RATING_LABELS: Record<number, string> = {
-  5: 'Exceeded',
-  4: 'Above Expectations',
-  3: 'Meets Expectations',
-  2: 'Below Expectations',
-  1: 'Poor',
-};
-
 /**
  * Calculate KRA rating from KPI ratings (weighted average)
  * KRA Rating = Σ (KPI Rating × KPI Weight) / 100
@@ -137,50 +120,3 @@ export function formatRating(rating: number | string | null | undefined, maxRati
   return `${numRating.toFixed(2)}/${maxRating}`;
 }
 
-/**
- * Calculate total bonus points from bonus KRA ratings
- */
-export function calculateBonusPoints(
-  bonusKraRatings: { rating: number | null }[]
-): { totalPoints: number; breakdown: { rating: number; points: number }[] } {
-  const breakdown: { rating: number; points: number }[] = [];
-  let totalPoints = 0;
-
-  for (const item of bonusKraRatings) {
-    if (item.rating !== null && item.rating !== undefined) {
-      const points = BONUS_RATING_POINTS[item.rating] ?? 0;
-      breakdown.push({ rating: item.rating, points });
-      totalPoints += points;
-    }
-  }
-
-  return { totalPoints, breakdown };
-}
-
-/**
- * Get bonus points for a specific rating
- */
-export function getBonusPointsForRating(rating: number | null): number {
-  if (rating === null || rating === undefined) return 0;
-  return BONUS_RATING_POINTS[rating] ?? 0;
-}
-
-/**
- * Calculate final rating with bonus adjustment
- * Final = Base KRA Rating + (Bonus Points / 100)
- * Note: This converts bonus points to a decimal adjustment on the 5-point scale
- */
-export function calculateFinalRatingWithBonus(
-  baseRating: number | null,
-  bonusPoints: number,
-  maxRating: number = 5
-): number | null {
-  if (baseRating === null) return null;
-  
-  // Convert bonus points to rating scale adjustment
-  // e.g., +5 points = +0.05 on 5-point scale
-  const adjustment = bonusPoints / 100;
-  const finalRating = Math.min(maxRating, Math.max(0, baseRating + adjustment));
-  
-  return finalRating;
-}

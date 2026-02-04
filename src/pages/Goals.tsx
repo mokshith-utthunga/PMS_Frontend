@@ -1,5 +1,6 @@
 // Goals Page - Refactored with hooks and services
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -15,7 +16,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { PageLoader } from '@/loaders';
-import { useGoalsData, useKraOperations, useKpiOperations, useBonusOperations, useTemplateSelection, useCurrentEmployee } from '@/hooks';
+import { useGoalsData, useKraOperations, useKpiOperations, useTemplateSelection, useCurrentEmployee } from '@/hooks';
 import { useQuarterFromUrl } from '@/hooks/useQuarterFromUrl';
 import { getValidationIssues, hasDraftItems, isValidForSubmission } from '@/utils/goalsValidation';
 import {
@@ -38,11 +39,9 @@ import { KRACard } from '@/components/goals/KRACard';
 import { KRAForm } from '@/components/goals/KRAForm';
 import { KPIForm } from '@/components/goals/KPIForm';
 import { TemplateSelector } from '@/components/goals/TemplateSelector';
-import { BonusKRAForm } from '@/components/goals/BonusKRAForm';
-import { BonusKPIForm } from '@/components/goals/BonusKPIForm';
 import { employeeService, goalsService } from '@/services';
 import { toasts } from '@/toasts';
-import type { KRA, Goal, BonusKRA, BonusKPI, Employee } from '@/types';
+import type { KRA, Goal, Employee } from '@/types';
 import type { GoalsQuarterlyCycle } from '@/services/cycle.service';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 import PeriodClose from '@/components/evaluation/PeriodClose';
@@ -53,16 +52,103 @@ export default function Goals() {
 
   // URL-based quarter handling
   const { quarter, setQuarter, isValidQuarter } = useQuarterFromUrl();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Get current employee from cached hook (fetched once at app initialization)
   const { employee, isLoading: loadingEmployee } = useCurrentEmployee();
 
   // Get active cycle data from context (fetched once at app initialization)
-  const { activeCycle: activeCycleFromContext, goalsQuarterlyCycles: goalsQuarterlyCyclesFromContext } = useActiveCycle();
+  const { activeCycle: activeCycleFromContext, goalsQuarterlyCycles: goalsQuarterlyCyclesFromContext, goalSetting } = useActiveCycle();
 
-  // Fetch all goals data with quarter filter
-  const goalsData = useGoalsData(user?.id, quarter || null);
-  const { employeeId, employeeProfile, kras, kpis, bonusKras, bonusKpis, hasLatePermission, loading, refetch } = goalsData;
+  // State to track if we're viewing the transition tab - read from URL
+  const isTransitionTabFromUrl = searchParams.get('transition') === 'true';
+  const [isTransitionTab, setIsTransitionTab] = useState(isTransitionTabFromUrl);
+  
+  // Sync transition tab state with URL
+  useEffect(() => {
+    setIsTransitionTab(isTransitionTabFromUrl);
+  }, [isTransitionTabFromUrl]);
+  
+  // Fetch all goals data - fetch for transition quarter when in transition tab, otherwise use selected quarter
+  const currentQuarter = useMemo(() => {
+    if (isTransitionTab) {
+      // We'll get transition from goalsData, but for now fetch all quarters
+      return null; // Fetch all goals, we'll filter by transition
+    }
+    return quarter || null;
+  }, [isTransitionTab, quarter]);
+  
+  const goalsData = useGoalsData(user?.id, currentQuarter);
+  const { employeeId, employeeProfile, kras: allKras, kpis: allKpis, hasLatePermission, hasActiveTransition, transition, loading, refetch } = goalsData;
+  
+  // Clean up URL if transition parameter exists but no active transition
+  useEffect(() => {
+    if (isTransitionTabFromUrl && !hasActiveTransition) {
+      // Remove transition parameter if no active transition exists
+      setSearchParams(prev => {
+        const newParams = new URLSearchParams(prev);
+        newParams.delete('transition');
+        return newParams;
+      }, { replace: true });
+    }
+  }, [isTransitionTabFromUrl, hasActiveTransition, setSearchParams]);
+  
+  // When in transition tab, also fetch goals for the transition quarter specifically
+  const transitionQuarterForFetch = transition?.quarter || null;
+  const transitionGoalsData = useGoalsData(
+    user?.id, 
+    isTransitionTab && transitionQuarterForFetch ? transitionQuarterForFetch : null
+  );
+  
+  // Combined refetch function that refetches both data sources when needed
+  const refetchAllGoals = useCallback(() => {
+    goalsData.refetch();
+    if (isTransitionTab && transitionQuarterForFetch) {
+      transitionGoalsData.refetch();
+    }
+  }, [goalsData.refetch, transitionGoalsData.refetch, isTransitionTab, transitionQuarterForFetch]);
+  
+  // Filter goals for transition tab (only post-transition) or regular tabs (exclude post-transition)
+  const { kras, kpis } = useMemo(() => {
+    if (isTransitionTab && hasActiveTransition && transition) {
+      // In transition tab: use transition-specific goals data and show only post-transition goals
+      const transitionKras = (transitionGoalsData.kras || []).filter(kra => 
+        kra.period_type === 'post_transition' && kra.transition_id === transition.id
+      );
+      const transitionKpis = (transitionGoalsData.kpis || []).filter(kpi => 
+        kpi.period_type === 'post_transition' && kpi.transition_id === transition.id
+      );
+      return { kras: transitionKras, kpis: transitionKpis };
+    } else {
+      // In regular tabs: show pre-transition and full_quarter goals, exclude post-transition goals
+      // This ensures pre-transition goals (set before transition) are visible
+      const regularKras = allKras.filter(kra => {
+        // Include if no period_type (full_quarter) or if pre_transition
+        if (!kra.period_type || kra.period_type === 'full_quarter') {
+          return true;
+        }
+        // Include pre_transition goals (even if they have transition_id)
+        if (kra.period_type === 'pre_transition') {
+          return true;
+        }
+        // Exclude post_transition goals
+        return false;
+      });
+      const regularKpis = allKpis.filter(kpi => {
+        // Include if no period_type (full_quarter) or if pre_transition
+        if (!kpi.period_type || kpi.period_type === 'full_quarter') {
+          return true;
+        }
+        // Include pre_transition goals (even if they have transition_id)
+        if (kpi.period_type === 'pre_transition') {
+          return true;
+        }
+        // Exclude post_transition goals
+        return false;
+      });
+      return { kras: regularKras, kpis: regularKpis };
+    }
+  }, [isTransitionTab, hasActiveTransition, transition, allKras, allKpis, transitionGoalsData.kras, transitionGoalsData.kpis]);
 
   // Use active cycle from context (prefer context over hook data for consistency)
   const activeCycle = activeCycleFromContext || goalsData.activeCycle;
@@ -108,8 +194,31 @@ export default function Goals() {
     return now > end;
   };
 
+  // Helper to check if current date is within quarter date range
+  const isWithinQuarterDates = (quarter: number): boolean => {
+    const goalsCycle = goalsQuarterlyCycles.find((gqc: GoalsQuarterlyCycle) => gqc.quarter === quarter);
+    if (!goalsCycle?.quarterly_start_date || !goalsCycle?.quarterly_end_date) {
+      return false;
+    }
+    
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const quarterStart = new Date(goalsCycle.quarterly_start_date);
+    quarterStart.setHours(0, 0, 0, 0);
+    const quarterEnd = new Date(goalsCycle.quarterly_end_date);
+    quarterEnd.setHours(23, 59, 59, 999);
+    
+    return now >= quarterStart && now <= quarterEnd;
+  };
+
   // Helper to check if employee can work on goals for a quarter
   const canWorkOnGoalsForQuarter = (quarter: number): { canWork: boolean; reason: 'not_started' | 'ended' | 'ok' } => {
+    // If there's an active transition, NO validation needed - allow goal creation at any time
+    // This is per the workflow requirement: "transition employees can set goals at any day in the quarter, no validation needed"
+    if (hasActiveTransition && transition && transition.quarter === quarter) {
+        return { canWork: true, reason: 'ok' };
+    }
+    
     const started = hasGoalSubmissionStarted(quarter);
     const ended = hasGoalSubmissionEnded(quarter);
 
@@ -130,10 +239,17 @@ export default function Goals() {
     return getAvailableQuartersForEmployee(employee, activeCycle, goalsQuarterlyCycles);
   }, [employee, activeCycle, goalsQuarterlyCycles]);
 
-  // Set default quarter if not in URL - find first quarter where goal submission has started
-  // Always prefer Q1, Q2, Q3, Q4 in order (not based on availableQuarters order)
+
   useEffect(() => {
-    if (!loadingEmployee && !isValidQuarter && availableQuarters.length > 0 && activeCycle && goalsQuarterlyCycles.length > 0) {
+    if (!loadingEmployee && !isValidQuarter && availableQuarters.length > 0 && activeCycle) {
+      // Use backend response to determine default quarter for goal setting
+      if (goalSetting?.enabled && goalSetting?.quarter && availableQuarters.includes(goalSetting.quarter as 1 | 2 | 3 | 4)) {
+        setQuarter(goalSetting.quarter as 1 | 2 | 3 | 4);
+        return;
+      }
+      
+      // Fallback to date-based calculation if backend data not available
+      if (goalsQuarterlyCycles.length > 0) {
       // Iterate through quarters in order (1,2,3,4) to find first available and started quarter
       for (let q = 1; q <= 4; q++) {
         if (availableQuarters.includes(q as 1 | 2 | 3 | 4) && hasGoalSubmissionStarted(q)) {
@@ -148,7 +264,7 @@ export default function Goals() {
           return;
         }
       }
-    } else if (!loadingEmployee && !isValidQuarter && availableQuarters.length > 0 && activeCycle) {
+      } else {
       // Fallback if goalsQuarterlyCycles not loaded yet - find first available quarter in order
       for (let q = 1; q <= 4; q++) {
         if (availableQuarters.includes(q as 1 | 2 | 3 | 4)) {
@@ -157,7 +273,8 @@ export default function Goals() {
         }
       }
     }
-  }, [loadingEmployee, isValidQuarter, availableQuarters, activeCycle, goalsQuarterlyCycles, setQuarter, hasGoalSubmissionStarted]);
+    }
+  }, [loadingEmployee, isValidQuarter, availableQuarters, activeCycle, goalsQuarterlyCycles, setQuarter, hasGoalSubmissionStarted, goalSetting]);
 
   // Get previous quarters for clone dropdown
   const previousQuarters = useMemo(() => {
@@ -172,11 +289,6 @@ export default function Goals() {
   const [kpiFormOpen, setKpiFormOpen] = useState(false);
   const [editingKPI, setEditingKPI] = useState<Goal | null>(null);
   const [selectedKRAId, setSelectedKRAId] = useState<string | null>(null);
-  const [bonusKraFormOpen, setBonusKraFormOpen] = useState(false);
-  const [editingBonusKRA, setEditingBonusKRA] = useState<BonusKRA | null>(null);
-  const [bonusKpiFormOpen, setBonusKpiFormOpen] = useState(false);
-  const [editingBonusKPI, setEditingBonusKPI] = useState<BonusKPI | null>(null);
-  const [selectedBonusKRAId, setSelectedBonusKRAId] = useState<string | null>(null);
 
   // Clone goals handler
   const handleCloneGoals = async (sourceQuarter: number) => {
@@ -198,21 +310,24 @@ export default function Goals() {
           'Goals Cloned',
           `Successfully cloned ${result.data.kras.length} KRAs and ${result.data.kpis.length} KPIs from ${formatQuarterLabel(sourceQuarter)} to ${formatQuarterLabel(quarter)}`
         );
-        refetch();
+        refetchAllGoals();
       }
     } catch (error: any) {
       toasts.error('Clone Failed', error.message || 'Failed to clone goals');
     }
   };
 
+  // When in transition tab, use transition quarter and ensure goals are marked as post-transition
+  const transitionQuarter = isTransitionTab && transition ? transition.quarter : quarter;
+  
   // KRA Operations
   const kraOps = useKraOperations({
     employeeId,
     cycleId: activeCycle?.id || null,
     kras,
     kpis,
-    onSuccess: refetch,
-    quarter: quarter || null,
+    onSuccess: refetchAllGoals,
+    quarter: transitionQuarter || null,
   });
 
   // KPI Operations
@@ -220,17 +335,8 @@ export default function Goals() {
     employeeId,
     cycleId: activeCycle?.id || null,
     kpis,
-    onSuccess: refetch,
-    quarter: quarter || null,
-  });
-
-  // Bonus Operations
-  const bonusOps = useBonusOperations({
-    employeeId,
-    cycleId: activeCycle?.id || null,
-    bonusKras,
-    bonusKpis,
-    onSuccess: refetch,
+    onSuccess: refetchAllGoals,
+    quarter: transitionQuarter || null,
   });
 
   // Template Selection
@@ -239,7 +345,7 @@ export default function Goals() {
     cycleId: activeCycle?.id || null,
     krasCount: kras.length,
     availableKRAWeight: kraOps.availableKRAWeight,
-    onSuccess: refetch,
+    onSuccess: refetchAllGoals,
     quarter: quarter || null,
   });
 
@@ -280,10 +386,12 @@ export default function Goals() {
   const quarterWorkStatus = useMemo(() => {
     if (!quarter || !activeCycle) return { canWork: false, reason: 'not_started' as const };
     return canWorkOnGoalsForQuarter(quarter);
-  }, [quarter, activeCycle, hasLatePermission, goalsQuarterlyCycles]);
+  }, [quarter, activeCycle, hasLatePermission, goalsQuarterlyCycles, hasActiveTransition, transition]);
 
 
-  const canSubmit = quarterWorkStatus.canWork || (deadlineStatus?.canSubmit ?? false);
+  // Allow goal creation if there's an active transition AND we're within quarter dates
+  const canSubmitWithTransition = hasActiveTransition && transition && transition.quarter === quarter && isWithinQuarterDates(transition.quarter);
+  const canSubmit = quarterWorkStatus.canWork || (deadlineStatus?.canSubmit ?? false) || canSubmitWithTransition;
 
   const quarterHasStarted = useMemo(() => {
     if (!quarter || !activeCycle) return false;
@@ -295,10 +403,59 @@ export default function Goals() {
     return hasGoalSubmissionEnded(quarter);
   }, [quarter, activeCycle, goalsQuarterlyCycles]);
 
-  const showAddButton = activeCycle && employeeId && kras.length < 5 && canSubmit && quarterWorkStatus.canWork;
+  // Check if goals are submitted/approved
+  const hasSubmittedOrApprovedGoals = useMemo(() => {
+    if (kras.length === 0 && kpis.length === 0) return false;
+    // Check if at least one KRA is submitted/approved/locked
+    const hasSubmittedKRAs = kras.some(k => 
+      k.status === 'submitted' || k.status === 'approved' || k.status === 'locked'
+    );
+    // Check if at least one KPI is submitted/approved/locked
+    const hasSubmittedKPIs = kpis.some(k => 
+      k.status === 'submitted' || k.status === 'approved' || k.status === 'locked'
+    );
+    return hasSubmittedKRAs || hasSubmittedKPIs;
+  }, [kras, kpis]);
+
+  // For transition employees: NO validation needed - they can set goals at any time within the quarter
+  // For regular employees: 
+  // - If goals are submitted/approved: Can view but cannot add (unless late permission)
+  // - If goals are NOT submitted/approved: Can add only if within period OR has late permission
+  const canAddGoals = isTransitionTab 
+    ? (hasActiveTransition && transition) // No date validation for transition employees
+    : (
+        // Enable Add KRA only if:
+        // 1. Has late submission permission (always allowed)
+        // 2. OR within normal submission period AND goals not yet submitted/approved
+        (hasLatePermission) || 
+        (canSubmit && quarterWorkStatus.canWork && !hasSubmittedOrApprovedGoals)
+      );
+  const showAddButton = activeCycle && employeeId && kras.length < 5 && canAddGoals;
   const showCloneButton = previousQuarters.length > 0 && quarter && quarterWorkStatus.canWork;
   const hasDraft = hasDraftItems(kras, kpis);
   const isValid = isValidForSubmission(kras, kpis, kraOps.getKPIsForKRA);
+  
+  // Check if all KRAs/KPIs for this quarter are already submitted/approved (no draft items)
+  // Hide submit button if everything is already submitted/approved
+  // Note: kras and kpis are already filtered by transition tab vs regular tab
+  const allSubmittedOrApproved = useMemo(() => {
+    // If no items, not submitted
+    if (kras.length === 0 && kpis.length === 0) return false;
+    
+    // Check if all KRAs are submitted/approved/locked (not draft or returned)
+    // This means employee/manager has already submitted them
+    const allKRAsSubmitted = kras.every(k => 
+      k.status === 'submitted' || k.status === 'approved' || k.status === 'locked'
+    );
+    
+    // Check if all KPIs are submitted/approved/locked (not draft or returned)
+    // This means employee/manager has already submitted them
+    const allKPIsSubmitted = kpis.every(k => 
+      k.status === 'submitted' || k.status === 'approved' || k.status === 'locked'
+    );
+    
+    return allKRAsSubmitted && allKPIsSubmitted;
+  }, [kras, kpis]);
   const selectedKRA = selectedKRAId ? kras.find(k => k.id === selectedKRAId) : null;
 
 
@@ -354,20 +511,65 @@ export default function Goals() {
         {/* Quarter Tabs */}
         {activeCycle && availableQuarters.length > 0 && (
           <TooltipProvider>
-            <Tabs value={quarter ? `q${quarter}` : undefined} onValueChange={(value) => {
-              const q = parseInt(value.replace('q', ''));
-              if (q >= 1 && q <= 4) {
-                // Only allow changing to quarters where goal submission has started
-                const goalStarted = hasGoalSubmissionStarted(q);
-                if (goalStarted) {
-                  setQuarter(q as 1 | 2 | 3 | 4);
+            <Tabs value={isTransitionTab ? 'transition' : (quarter ? `q${quarter}` : undefined)} onValueChange={(value) => {
+              if (value === 'transition') {
+                setIsTransitionTab(true);
+                // Update URL to include transition parameter and set quarter to transition quarter
+                if (transition && transition.quarter) {
+                  setSearchParams(prev => {
+                    const newParams = new URLSearchParams(prev);
+                    newParams.set('quarter', `q${transition.quarter}`);
+                    newParams.set('transition', 'true');
+                    return newParams;
+                  }, { replace: true });
+                } else {
+                  setSearchParams(prev => {
+                    const newParams = new URLSearchParams(prev);
+                    newParams.set('transition', 'true');
+                    return newParams;
+                  }, { replace: true });
+                }
+              } else {
+                setIsTransitionTab(false);
+                // Remove transition parameter from URL
+                setSearchParams(prev => {
+                  const newParams = new URLSearchParams(prev);
+                  newParams.delete('transition');
+                  return newParams;
+                }, { replace: true });
+                
+                const q = parseInt(value.replace('q', ''));
+                if (q >= 1 && q <= 4) {
+                  // Only allow changing to quarters where goal submission has started
+                  const goalStarted = hasGoalSubmissionStarted(q);
+                  if (goalStarted) {
+                    setQuarter(q as 1 | 2 | 3 | 4);
+                  }
                 }
               }
             }}>
               <TabsList>
+                {/* Transition Tab - Only visible if employee has active transition */}
+                {hasActiveTransition && transition && (
+                  <TabsTrigger value="transition">
+                    Transition
+                  </TabsTrigger>
+                )}
                 {availableQuarters.map(q => {
-                  // Use goal submission dates for goals
-                  const goalStarted = hasGoalSubmissionStarted(q);
+                  // Use backend response to determine if goal setting is enabled for this quarter
+                  // Enable tab if: it's the current goal_setting quarter AND goal_setting.enabled is true
+                  // OR if goals have already been created for this quarter (allow viewing past quarters)
+                  const isCurrentGoalQuarter = goalSetting?.quarter === q;
+                  const isGoalSettingEnabled = isCurrentGoalQuarter && goalSetting?.enabled === true;
+                  
+                  // Check if goals exist for this quarter (to allow viewing past quarters)
+                  const hasGoalsForQuarter = allKras.some(kra => kra.quarter === q) || allKpis.some(kpi => kpi.quarter === q);
+                  
+                  // Enable tab if goal setting is enabled OR if goals already exist
+                  const isTabEnabled = isGoalSettingEnabled || hasGoalsForQuarter;
+                  
+                  // Fallback to date calculation if backend data not available
+                  const goalStarted = goalSetting ? isTabEnabled : hasGoalSubmissionStarted(q);
                   const startDate = getGoalSubmissionStartDate(q) || getQuarterStartDateFromCycle(activeCycle as CycleWithQuarterDates, q);
                   const endDate = getGoalSubmissionEndDate(q) || getQuarterEndDateFromCycle(activeCycle as CycleWithQuarterDates, q);
 
@@ -399,12 +601,84 @@ export default function Goals() {
                   }
 
                   return (
-                    <TabsTrigger key={q} value={`q${q}`}>
+                    <TabsTrigger 
+                      key={q} 
+                      value={`q${q}`}
+                      onClick={() => {
+                        setIsTransitionTab(false);
+                        // Remove transition parameter from URL when switching to regular quarter tab
+                        setSearchParams(prev => {
+                          const newParams = new URLSearchParams(prev);
+                          newParams.delete('transition');
+                          return newParams;
+                        }, { replace: true });
+                      }}
+                    >
                       {formatQuarterLabel(q)}
                     </TabsTrigger>
                   );
                 })}
               </TabsList>
+              {/* Transition Tab Content */}
+              {hasActiveTransition && transition && (
+                <TabsContent value="transition" className="space-y-6">
+                  <Card className="border-blue-200 bg-blue-50">
+                    <CardContent className="py-4">
+                      <div className="flex items-start gap-3">
+                        <div className="flex-1">
+                          <h3 className="font-semibold text-lg mb-1">Post-Transition Goals</h3>
+                          <p className="text-sm text-muted-foreground">
+                            You have a mid-quarter transition on {transition.transition_date ? new Date(transition.transition_date).toLocaleDateString() : 'N/A'}. 
+                            Create new goals for the post-transition period here. These goals will be reviewed by your new manager.
+                          </p>
+                          {transition.new_manager_name && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              New Manager: <span className="font-medium">{transition.new_manager_name}</span>
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {activeCycle && employeeId && (
+                    <>
+                      <GoalsProgressCard totalWeight={kraOps.totalKRAWeight} krasCount={kras.length} />
+
+                      {kras.length === 0 ? (
+                        <GoalsEmptyState />
+                      ) : (
+                        <div className="space-y-4">
+                          {kras.map(kra => (
+                            <KRACard
+                              key={kra.id}
+                              kra={kra}
+                              kpis={kraOps.getKPIsForKRA(kra.id)}
+                              canEdit={kraOps.canEdit(kra.status)}
+                              onEditKRA={k => { setEditingKRA(k); setKraFormOpen(true); }}
+                              onDeleteKRA={kraOps.deleteKRA}
+                              onAddKPI={kraId => { setSelectedKRAId(kraId); setKpiFormOpen(true); }}
+                              onEditKPI={kpi => { setEditingKPI(kpi); setSelectedKRAId(kpi.kra_id || null); setKpiFormOpen(true); }}
+                              onDeleteKPI={kpiOps.deleteKPI}
+                            />
+                          ))}
+
+                          {hasDraft && validationIssues.length > 0 && (
+                            <ValidationAlert issues={validationIssues} />
+                          )}
+
+                          {hasDraft && !allSubmittedOrApproved && (
+                            <Button onClick={kraOps.submitForApproval} className="w-full bg-blue-600 hover:bg-blue-700" disabled={!isValid}>
+                              <Send className="mr-2 h-4 w-4" />
+                              Submit KRAs & KPIs for Approval
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </TabsContent>
+              )}
               {availableQuarters.map(q => {
                 // Use goal submission dates for goals, not self-review dates
                 const qStarted = hasGoalSubmissionStarted(q);
@@ -438,35 +712,51 @@ export default function Goals() {
                           </p>
                         </CardContent>
                       </Card>
-                    ) : qEnded && !hasLatePermission ? (<>
-                          {/* <div className='flex flex-row items-start justify-start gap-2 bg-red-300 p-2'>
-                          <AlertTriangle className="h-12 w-12 text-amber-700 mr-2" />
-                          <h3 className="font-normal text-lg my-auto text-black">{formatQuarterLabel(q)} Goal Setting Period Has Ended</h3>
-                          </div> */}
+                    ) : qEnded && !hasLatePermission && !hasActiveTransition ? (
+                      <>
+                        {/* Show error if period ended, no late permission, and not transition employee */}
                           {endDate && (
                             <PeriodClose quarterNum={q} qEndDate={endDate} title="Goal Setting" />
                           )}
                   
-                        {/* <div>
-                          {kras.length > 0 && (
+                        {/* Check if goals for this specific quarter are submitted/approved */}
+                        {(() => {
+                          // Filter goals for this specific quarter
+                          const quarterKras = allKras.filter(kra => kra.quarter === q);
+                          const quarterKpis = allKpis.filter(kpi => kpi.quarter === q);
+                          
+                          // Check if at least one goal is submitted/approved
+                          const hasSubmittedGoals = quarterKras.some(k => 
+                            k.status === 'submitted' || k.status === 'approved' || k.status === 'locked'
+                          ) || quarterKpis.some(k => 
+                            k.status === 'submitted' || k.status === 'approved' || k.status === 'locked'
+                          );
+                          
+                          // Show submitted/approved goals even if period ended
+                          if (hasSubmittedGoals && quarterKras.length > 0) {
+                            return (
                             <div className="mt-6 w-full space-y-4">
-                              {kras.map(kra => (
+                                {quarterKras.map(kra => {
+                                  const kraKpis = quarterKpis.filter(kpi => kpi.kra_id === kra.id);
+                                  return (
                                 <KRACard
                                   key={kra.id}
                                   kra={kra}
-                                  kpis={kraOps.getKPIsForKRA(kra.id)}
-                                  canEdit={false}
+                                      kpis={kraKpis}
+                                      canEdit={false} // Read-only view for submitted/approved goals
                                   onEditKRA={() => {}}
                                   onDeleteKRA={() => {}}
                                   onAddKPI={() => {}}
                                   onEditKPI={() => {}}
                                   onDeleteKPI={() => {}}
                                 />
-                              ))}
+                                  );
+                                })}
                             </div>
-                          )}
-                        </div> */}
-             
+                            );
+                          }
+                          return null;
+                        })()}
                       </>
                     ) : (
                       <>
@@ -516,7 +806,7 @@ export default function Goals() {
                                   <ValidationAlert issues={validationIssues} />
                                 )}
 
-                                {hasDraft && (
+                                {hasDraft && !allSubmittedOrApproved && (
                                   <Button onClick={kraOps.submitForApproval} className="w-full bg-blue-600 hover:bg-blue-700" disabled={!isValid}>
                                     <Send className="mr-2 h-4 w-4" />
                                     Submit KRAs & KPIs for Approval
@@ -556,25 +846,6 @@ export default function Goals() {
         editingKPI={editingKPI}
         availableWeight={selectedKRAId ? kpiOps.getAvailableKPIWeight(selectedKRAId) : 100}
         kraTitle={selectedKRA?.title || ''}
-      />
-
-      <BonusKRAForm
-        open={bonusKraFormOpen}
-        onOpenChange={open => { setBonusKraFormOpen(open); if (!open) setEditingBonusKRA(null); }}
-        onSubmit={editingBonusKRA
-          ? data => bonusOps.updateBonusKRA(editingBonusKRA.id, data)
-          : bonusOps.createBonusKRA}
-        editingBonusKRA={editingBonusKRA}
-      />
-
-      <BonusKPIForm
-        open={bonusKpiFormOpen}
-        onOpenChange={open => { setBonusKpiFormOpen(open); if (!open) { setEditingBonusKPI(null); setSelectedBonusKRAId(null); } }}
-        onSubmit={editingBonusKPI
-          ? data => bonusOps.updateBonusKPI(editingBonusKPI.id, data)
-          : data => selectedBonusKRAId && bonusOps.createBonusKPI(selectedBonusKRAId, data)}
-        editingBonusKPI={editingBonusKPI}
-        bonusKraTitle={bonusKras.find(b => b.id === selectedBonusKRAId)?.title || ''}
       />
 
       {employeeProfile && (

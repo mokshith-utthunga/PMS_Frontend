@@ -4,19 +4,22 @@ import { employeeService, goalsService } from '@/services';
 import { logError } from '@/errors';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 import { useTransition } from './useTransition';
-import type { Employee, KRA, Goal, BonusKRA, BonusKPI } from '@/types';
+import type { Employee, KRA, Goal } from '@/types';
 import type { PeriodType } from '@/services/transition.service';
 
 export interface TeamMemberGoalsData {
   employee: Employee | null;
   kras: KRA[];
   kpis: Goal[];
-  bonusKras: BonusKRA[];
-  bonusKpis: BonusKPI[];
   loading: boolean;
 }
 
-export function useTeamMemberGoals(employeeId: string | undefined, quarter?: number | null, periodType?: PeriodType | null) {
+export function useTeamMemberGoals(
+  employeeId: string | undefined, 
+  quarter?: number | null, 
+  periodType?: PeriodType | null,
+  useTransitionId?: boolean // New parameter to control whether to use transition_id in API call
+) {
   // Get active cycle from context (fetched once at app initialization)
   const { activeCycle: activeCycleFromContext } = useActiveCycle();
   
@@ -32,13 +35,13 @@ export function useTeamMemberGoals(employeeId: string | undefined, quarter?: num
     employee: null,
     kras: [],
     kpis: [],
-    bonusKras: [],
-    bonusKpis: [],
     loading: true,
   });
 
-  // Memoize transition_id to avoid unnecessary re-fetches
-  const transitionId = useMemo(() => transition?.id || null, [transition]);
+  // Only use transition_id if useTransitionId is true (when in transition tab)
+  const transitionId = useMemo(() => {
+    return useTransitionId ? (transition?.id || null) : null;
+  }, [transition?.id, useTransitionId]);
 
   const fetchData = useCallback(async () => {
     if (!employeeId) return;
@@ -61,36 +64,16 @@ export function useTeamMemberGoals(employeeId: string | undefined, quarter?: num
       const cycleId = activeCycle.id;
 
       // Fetch all data in parallel with quarter and period filters
+      // Only include transition_id if useTransitionId is true
       const [krasResult, kpisResult] = await Promise.all([
         goalsService.kras.getByEmployee(employeeId, cycleId, undefined, quarter, periodType || null, transitionId),
         goalsService.kpis.getByEmployee(employeeId, cycleId, undefined, quarter, periodType || null, transitionId),
       ]);
 
-      // Fetch bonus KRAs via different endpoint used in manager view
-      let bonusKras: BonusKRA[] = [];
-      let bonusKpis: BonusKPI[] = [];
-      
-      try {
-        const bonusKrasResult = await goalsService.bonusKras.getByEmployee(employeeId, cycleId);
-        bonusKras = bonusKrasResult.data || [];
-        
-        if (bonusKras.length > 0) {
-          const bonusKpiPromises = bonusKras.map(bkra => 
-            goalsService.bonusKpis.getByBonusKRA(bkra.id)
-          );
-          const bonusKpiResults = await Promise.all(bonusKpiPromises);
-          bonusKpis = bonusKpiResults.flatMap(r => r.data || []);
-        }
-      } catch {
-        // Bonus KRAs might not be available
-      }
-
       setData({
         employee: empResult.data,
         kras: krasResult.data || [],
         kpis: (kpisResult.data || []).filter(g => g.kra_id) as Goal[],
-        bonusKras,
-        bonusKpis,
         loading: false,
       });
     } catch (error) {

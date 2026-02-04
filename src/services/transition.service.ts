@@ -26,6 +26,8 @@ export interface EmployeeQuarterTransition {
   created_by?: string | null;
   created_at: string;
   updated_at: string;
+  name?: string | null;
+  emp_code?: string | null;
   old_manager_name?: string | null;
   new_manager_name?: string | null;
   pre_period_start_date?: string | null;

@@ -88,44 +88,48 @@ export function CalibrationConfig({
     return [...rules].sort((a, b) => b.threshold - a.threshold);
   }, [rules]);
 
-  // Generate range descriptions for preview
+  // Generate range descriptions for preview in the new format
+  // Example: <50 rating 1, 51-60 rating 2, 61-75 rating 3, etc.
   const getRangeDescriptions = useMemo(() => {
-    if (sortedRulesPreview.length === 0) return [];
+    if (rules.length === 0) return [];
     
     const descriptions: { range: string; rating: number }[] = [];
     
-    for (let i = 0; i < sortedRulesPreview.length; i++) {
-      const current = sortedRulesPreview[i];
-      const next = sortedRulesPreview[i + 1];
+    // Sort by threshold ascending for range generation
+    const ascendingRules = [...rules].sort((a, b) => a.threshold - b.threshold);
+    
+    for (let i = 0; i < ascendingRules.length; i++) {
+      const current = ascendingRules[i];
+      const previous = ascendingRules[i - 1];
       
       if (i === 0) {
-        // Highest threshold: >= threshold
+        // First (lowest) threshold: < threshold
         descriptions.push({
-          range: `≥ ${current.threshold}`,
+          range: `< ${current.threshold}`,
           rating: current.rating,
         });
+      } else {
+        // Middle and last thresholds: previous_threshold+1 - current_threshold
+        const startValue = previous.threshold + 1;
+        const endValue = current.threshold;
+        
+        if (startValue === endValue) {
+          // If start and end are the same, just show the value
+          descriptions.push({
+            range: `${startValue}`,
+            rating: current.rating,
+          });
+        } else {
+          descriptions.push({
+            range: `${startValue}-${endValue}`,
+            rating: current.rating,
+          });
+        }
       }
-      
-      if (next) {
-        // Middle ranges: >= next.threshold and < current.threshold
-        descriptions.push({
-          range: `≥ ${next.threshold} and < ${current.threshold}`,
-          rating: next.rating,
-        });
-      }
-    }
-    
-    // Below lowest threshold
-    const lowestRule = sortedRulesPreview[sortedRulesPreview.length - 1];
-    if (lowestRule) {
-      descriptions.push({
-        range: `< ${lowestRule.threshold}`,
-        rating: lowestRule.rating, // Uses lowest threshold's rating as fallback
-      });
     }
     
     return descriptions;
-  }, [sortedRulesPreview]);
+  }, [rules]);
 
   // Determine threshold label based on metric type
   const getThresholdLabel = () => {

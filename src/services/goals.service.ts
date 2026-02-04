@@ -1,6 +1,6 @@
-// Goals Service - KRA, KPI, Bonus KRA/KPI API calls
+// Goals Service - KRA, KPI API calls
 import { api } from './api';
-import type { KRA, Goal, BonusKRA, BonusKPI, GoalStatus } from '@/types';
+import type { KRA, Goal, GoalStatus } from '@/types';
 import type { PeriodType } from './transition.service';
 
 // KRA Types for this service
@@ -55,26 +55,6 @@ export interface UpdateKPIData {
   quarter?: number | null;
 }
 
-// Bonus KRA Types
-export interface CreateBonusKRAData {
-  employee_id: string;
-  cycle_id: string;
-  title: string;
-  description?: string | null;
-  status?: GoalStatus;
-}
-
-// Bonus KPI Types
-export interface CreateBonusKPIData {
-  bonus_kra_id: string;
-  title: string;
-  description?: string | null;
-  metric_type: string;
-  target_value?: string | null;
-  due_date?: string | null;
-  status?: GoalStatus;
-}
-
 export const goalsService = {
   // ========== KRA Operations ==========
   kras: {
@@ -113,6 +93,10 @@ export const goalsService = {
 
     revoke: (id: string) => 
       api.post<{ message: string }>(`/api/kras/${id}/revoke`),
+
+    // Approve KRA (by updating status to approved)
+    approve: (id: string) => 
+      api.put<{ data: KRA }>(`/api/kras/${id}`, { status: 'approved' }),
   },
 
   // ========== KPI/Goals Operations ==========
@@ -152,38 +136,10 @@ export const goalsService = {
       api.get<{ data: Goal[]; count: number }>(
         `/api/goals/pending-approvals?cycle_id=${cycleId}`
       ),
-  },
 
-  // ========== Bonus KRA Operations ==========
-  bonusKras: {
-    getByEmployee: (employeeId: string, cycleId: string) => 
-      api.get<{ data: BonusKRA[] }>(
-        `/api/bonus-kras?employee_id=${employeeId}&cycle_id=${cycleId}`
-      ),
-
-    create: (data: CreateBonusKRAData) => 
-      api.post<{ data: BonusKRA }>('/api/bonus-kras', data),
-
-    update: (id: string, data: Partial<BonusKRA>) => 
-      api.put<{ data: BonusKRA }>(`/api/bonus-kras/${id}`, data),
-
-    delete: (id: string) => 
-      api.delete(`/api/bonus-kras/${id}`),
-  },
-
-  // ========== Bonus KPI Operations ==========
-  bonusKpis: {
-    getByBonusKRA: (bonusKraId: string) => 
-      api.get<{ data: BonusKPI[] }>(`/api/bonus-kpis?bonus_kra_id=${bonusKraId}`),
-
-    create: (data: CreateBonusKPIData) => 
-      api.post<{ data: BonusKPI }>('/api/bonus-kpis', data),
-
-    update: (id: string, data: Partial<BonusKPI>) => 
-      api.put<{ data: BonusKPI }>(`/api/bonus-kpis/${id}`, data),
-
-    delete: (id: string) => 
-      api.delete(`/api/bonus-kpis/${id}`),
+    // Approve goal
+    approve: (id: string) => 
+      api.post<{ data: Goal }>(`/api/goals/${id}/approve`),
   },
 
   // ========== Late Submission Permission ==========

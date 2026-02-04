@@ -66,45 +66,50 @@ export function CalibrationDisplay({
     }
   }
 
-  // Generate range descriptions
+  // Generate range descriptions in the new format
+  // Example: <50 rating 1, 51-60 rating 2, 61-75 rating 3, etc.
   const rangeDescriptions = useMemo(() => {
     const descriptions: { range: string; rating: number; isFallback?: boolean }[] = [];
     
-    for (let i = 0; i < sortedRules.length; i++) {
-      const current = sortedRules[i];
-      const next = sortedRules[i + 1];
-      const unit = metricType === 'percentage' ? '%' : '';
+    if (sortedRules.length === 0) return descriptions;
+    
+    // Sort by threshold ascending for range generation
+    const ascendingRules = [...calibration].sort((a, b) => a.threshold - b.threshold);
+    const unit = metricType === 'percentage' ? '%' : '';
+    
+    for (let i = 0; i < ascendingRules.length; i++) {
+      const current = ascendingRules[i];
+      const previous = ascendingRules[i - 1];
       
       if (i === 0) {
-        // Highest threshold: >= threshold
+        // First (lowest) threshold: < threshold
         descriptions.push({
-          range: `≥ ${current.threshold}${unit}`,
+          range: `< ${current.threshold}${unit}`,
           rating: current.rating,
+          isFallback: true,
         });
+      } else {
+        // Middle and last thresholds: previous_threshold+1 - current_threshold
+        const startValue = previous.threshold + 1;
+        const endValue = current.threshold;
+        
+        if (startValue === endValue) {
+          // If start and end are the same, just show the value
+          descriptions.push({
+            range: `${startValue}${unit}`,
+            rating: current.rating,
+          });
+        } else {
+          descriptions.push({
+            range: `${startValue}-${endValue}${unit}`,
+            rating: current.rating,
+          });
+        }
       }
-      
-      if (next) {
-        // Middle ranges: >= next.threshold and < current.threshold
-        descriptions.push({
-          range: `≥ ${next.threshold}${unit} and < ${current.threshold}${unit}`,
-          rating: next.rating,
-        });
-      }
-    }
-    
-    // Below lowest threshold (fallback)
-    const lowestRule = sortedRules[sortedRules.length - 1];
-    if (lowestRule) {
-      const unit = metricType === 'percentage' ? '%' : '';
-      descriptions.push({
-        range: `< ${lowestRule.threshold}${unit}`,
-        rating: lowestRule.rating,
-        isFallback: true,
-      });
     }
     
     return descriptions;
-  }, [sortedRules, metricType]);
+  }, [calibration, metricType]);
 
   const getRatingLabel = (rating: number) => {
     switch (rating) {
@@ -141,11 +146,34 @@ export function CalibrationDisplay({
   const isCurrentRange = (desc: { range: string; rating: number; isFallback?: boolean }) => {
     if (achievedValue === null || achievedValue === undefined || currentRating === null) return false;
     
-    if (desc.isFallback && matchedThreshold === null) return true;
-    
-    if (!desc.isFallback && currentRating === desc.rating) {
-      if (matchedThreshold !== null) {
-        return desc.range.includes(`≥ ${matchedThreshold}`);
+    // Check if the achieved value falls within this range
+    if (currentRating === desc.rating) {
+      if (desc.isFallback) {
+        // For fallback range (< threshold), check if value is below the lowest threshold
+        const ascendingRules = [...calibration].sort((a, b) => a.threshold - b.threshold);
+        if (ascendingRules.length > 0 && achievedValue < ascendingRules[0].threshold) {
+          return true;
+        }
+      } else {
+        // Parse the range (e.g., "51-60%" or "61-75" or "< 50%")
+        // Handle range format: "start-end" or "start-end%"
+        const rangeMatch = desc.range.match(/(\d+)-(\d+)/);
+        if (rangeMatch) {
+          const start = parseFloat(rangeMatch[1]);
+          const end = parseFloat(rangeMatch[2]);
+          if (achievedValue >= start && achievedValue <= end) {
+            return true;
+          }
+        } else {
+          // Single value range (e.g., "50" or "50%")
+          const valueMatch = desc.range.match(/(\d+)/);
+          if (valueMatch) {
+            const value = parseFloat(valueMatch[1]);
+            if (Math.abs(achievedValue - value) < 0.01) {
+              return true;
+            }
+          }
+        }
       }
     }
     

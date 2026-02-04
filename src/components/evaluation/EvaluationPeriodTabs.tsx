@@ -35,6 +35,12 @@ interface EvaluationPeriodTabsProps {
   yearEndContent?: React.ReactNode;
   showQuarterSubTabs?: boolean;
   className?: string;
+  // Backend response for tab enabling (optional - falls back to date calculation if not provided)
+  managerReview?: {
+    review_for_quarter: number | null;
+    present_quarter: number | null;
+    enabled: boolean;
+  };
 }
 
 export function EvaluationPeriodTabs({
@@ -50,13 +56,19 @@ export function EvaluationPeriodTabs({
   yearEndContent,
   showQuarterSubTabs = true,
   className,
+  managerReview,
 }: EvaluationPeriodTabsProps) {
-  const currentQuarter = getCurrentQuarter(cycle, quarterlyCycles);
+  // Use backend response for current quarter if available, otherwise fall back to date calculation
+  const backendCurrentQuarter = managerReview?.present_quarter;
+  const currentQuarter = backendCurrentQuarter || getCurrentQuarter(cycle, quarterlyCycles);
   const activeQuarter = controlledQuarter ?? currentQuarter;
   
-  // Determine default tab based on current period timing
+  // Determine default tab based on backend response or current period timing
   const yearEndStatus = getYearEndManagerEvalStatus(cycle);
-  const quarterStatus = getQuarterManagerReviewStatus(cycle, currentQuarter, quarterlyCycles);
+  // Use backend response for quarter status if available
+  const quarterStatus = managerReview?.enabled && managerReview?.review_for_quarter === currentQuarter
+    ? { timing: 'current' as const, message: 'Manager review period is open' }
+    : getQuarterManagerReviewStatus(cycle, currentQuarter, quarterlyCycles);
   
   const computedDefaultTab = defaultTab ?? (
     quarterStatus.timing === 'current' ? 'quarterly' :
@@ -106,7 +118,17 @@ export function EvaluationPeriodTabs({
           >
             <TabsList>
               {([1, 2, 3, 4] as Quarter[]).map((q) => {
-                const qStatus = getQuarterManagerReviewStatus(cycle, q, quarterlyCycles);
+                // Use backend response to determine if manager review is enabled for this quarter
+                const isReviewQuarter = managerReview?.review_for_quarter === q;
+                const isManagerReviewEnabled = isReviewQuarter && managerReview?.enabled === true;
+                
+                // Fallback to date calculation if backend data not available
+                const qStatus = managerReview && isReviewQuarter
+                  ? (isManagerReviewEnabled 
+                      ? { timing: 'current' as const, message: 'Manager review period is open' }
+                      : { timing: 'future' as const, message: 'Manager review period is not open' })
+                  : getQuarterManagerReviewStatus(cycle, q, quarterlyCycles);
+                
                 const selfSubmitted = quarterlySelfEvals[q]?.status === 'submitted';
                 
                 return (
@@ -124,7 +146,17 @@ export function EvaluationPeriodTabs({
             </TabsList>
 
             {([1, 2, 3, 4] as Quarter[]).map((q) => {
-              const qStatus = getQuarterManagerReviewStatus(cycle, q, quarterlyCycles);
+              // Use backend response to determine if manager review is enabled for this quarter
+              const isReviewQuarter = managerReview?.review_for_quarter === q;
+              const isManagerReviewEnabled = isReviewQuarter && managerReview?.enabled === true;
+              
+              // Fallback to date calculation if backend data not available
+              const qStatus = managerReview && isReviewQuarter
+                ? (isManagerReviewEnabled 
+                    ? { timing: 'current' as const, message: 'Manager review period is open' }
+                    : { timing: 'future' as const, message: 'Manager review period is not open' })
+                : getQuarterManagerReviewStatus(cycle, q, quarterlyCycles);
+              
               const selfSubmitted = quarterlySelfEvals[q]?.status === 'submitted';
 
               return (

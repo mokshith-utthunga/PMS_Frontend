@@ -1,6 +1,7 @@
 // Evaluations Page - Quarterly Self Evaluation
 // Uses quarterly_self_reviews and quarterly_kpi_progress tables
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,7 +11,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Save, Send, Target, AlertCircle, ChevronRight, Calendar, AlertTriangle, ArrowRight } from 'lucide-react';
 import { PageLoader } from '@/loaders';
 import { useAuth } from '@/contexts/AuthContext';
+import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 import { useEvaluationsData, useEvaluationOperations, useTransition, type KpiRating } from '@/hooks';
+import { evaluationService, transitionService } from '@/services';
 import { getPeriodLabel, getPeriodBadgeVariant, formatPeriodDateRange } from '@/utils/periodHelpers';
 import { useQuarterFromUrl } from '@/hooks/useQuarterFromUrl';
 import { isQuarterOpen, getQuarterTiming, formatQuarterDates } from '@/utils/quarterUtils';
@@ -34,15 +37,33 @@ import PeriodClose from '@/components/evaluation/PeriodClose';
 export default function Evaluations() {
   const { user, hasAnyRole } = useAuth();
   const isHR = hasAnyRole(['hr_admin', 'hrbp', 'system_admin']);
+  const { selfReview } = useActiveCycle();
 
   // URL-based quarter handling
   const { quarter, setQuarter, isValidQuarter } = useQuarterFromUrl();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Local state for form data - sync with URL quarter
-  const [selectedQuarter, setSelectedQuarter] = useState<string>(quarter ? String(quarter) : '1');
+  // Initialize with URL quarter if available, otherwise default to '1'
+  const [selectedQuarter, setSelectedQuarter] = useState<string>(() => {
+    if (quarter) return String(quarter);
+    return '1';
+  });
+  
+  // State to track if we're viewing the transition tab - read from URL
+  const isTransitionTabFromUrl = searchParams.get('transition') === 'true';
+  const [isTransitionTab, setIsTransitionTab] = useState(isTransitionTabFromUrl);
+  
+  // Sync transition tab state with URL
+  useEffect(() => {
+    setIsTransitionTab(isTransitionTabFromUrl);
+  }, [isTransitionTabFromUrl]);
 
   // Fetch evaluations data with selected quarter
-  const evalData = useEvaluationsData(user?.id, parseInt(selectedQuarter));
+  // Use URL quarter if available, otherwise use selectedQuarter
+  // Note: useEvaluationsData fetches all quarters, but we pass selectedQuarter for context
+  const quarterForFetch = quarter || parseInt(selectedQuarter) || 1;
+  const evalData = useEvaluationsData(user?.id, quarterForFetch);
   const {
     employeeId, activeCycle, quarterlyCycles, ratingScales,
     quarterlyReviews: initialQuarterlyReviews,
@@ -53,22 +74,60 @@ export default function Evaluations() {
   } = evalData;
   
   // Fetch transition data for the selected quarter
+  // Use URL quarter if available, otherwise use selectedQuarter
+  const quarterForTransition = quarter || parseInt(selectedQuarter) || null;
   const { transition, loading: transitionLoading } = useTransition({
     employeeId: employeeId || undefined,
     cycleId: activeCycle?.id,
-    quarter: parseInt(selectedQuarter),
-    enabled: !!employeeId && !!activeCycle && !!selectedQuarter,
+    quarter: quarterForTransition,
+    enabled: !!employeeId && !!activeCycle && !!quarterForTransition,
   });
   
-  // Sync selectedQuarter with URL quarter
+  // Fetch transitions for all quarters to know which quarters have transitions
+  const [transitions, setTransitions] = useState<Record<number, any>>({});
+  useEffect(() => {
+    if (employeeId && activeCycle?.id) {
+      transitionService.getByEmployee(employeeId, activeCycle.id)
+        .then(result => {
+          const transitionsMap: Record<number, any> = {};
+          const transitionsArray = Array.isArray(result) ? result : [];
+          transitionsArray.forEach((t: any) => {
+            transitionsMap[t.quarter] = t;
+          });
+          setTransitions(transitionsMap);
+        })
+        .catch(error => {
+          console.error('Error fetching transitions:', error);
+        });
+    }
+  }, [employeeId, activeCycle?.id]);
+  
+  // Clean up URL if transition parameter exists but no active transition
+  useEffect(() => {
+    if (isTransitionTabFromUrl && !transition) {
+      // Remove transition parameter if no active transition exists
+      setSearchParams(prev => {
+        const newParams = new URLSearchParams(prev);
+        newParams.delete('transition');
+        return newParams;
+      }, { replace: true });
+    }
+  }, [isTransitionTabFromUrl, transition, setSearchParams]);
+  
+  // Sync selectedQuarter with URL quarter - prioritize URL over currentQuarter
+  // URL is the single source of truth for quarter selection
   useEffect(() => {
     if (quarter) {
+      // URL has quarter, use it - this is the source of truth
+      console.log('[Evaluations] Syncing selectedQuarter from URL quarter:', quarter);
       setSelectedQuarter(String(quarter));
-    } else if (currentQuarter) {
+    } else if (currentQuarter && !isValidQuarter) {
+      // No URL quarter but we have currentQuarter and URL is invalid, use currentQuarter
+      console.log('[Evaluations] No URL quarter, using currentQuarter:', currentQuarter);
       setSelectedQuarter(String(currentQuarter));
       setQuarter(currentQuarter as 1 | 2 | 3 | 4);
     }
-  }, [quarter, currentQuarter, setQuarter]);
+  }, [quarter, currentQuarter, setQuarter, isValidQuarter]);
   const [quarterlyReviews, setQuarterlyReviews] = useState(initialQuarterlyReviews);
   const [kpiRatings, setKpiRatings] = useState(initialKpiRatings);
   const [overallComments, setOverallComments] = useState('');
@@ -79,8 +138,25 @@ export default function Evaluations() {
     setKpiRatings(initialKpiRatings);
   }, [initialQuarterlyReviews, initialKpiRatings]);
 
+  // Only auto-select quarter if URL doesn't have a valid quarter
+  // This should only run once on initial load, not when URL changes
   useEffect(() => {
-    if (activeCycle && !isValidQuarter) {
+    // If URL already has a valid quarter, don't override it
+    if (isValidQuarter && quarter) {
+      return;
+    }
+    
+    // Only auto-select if we don't have a valid quarter in URL
+    if (activeCycle && !isValidQuarter && !quarter) {
+      // Use backend response to determine default quarter
+      if (selfReview?.enabled && selfReview?.review_for_quarter) {
+        // If self review is enabled, select the review_for_quarter
+        setSelectedQuarter(String(selfReview.review_for_quarter));
+        setQuarter(selfReview.review_for_quarter as 1 | 2 | 3 | 4);
+        return;
+      }
+      
+      // Fallback to date-based calculation if backend data not available
       for (let q = 1; q <= 4; q++) {
         // Only select quarters that are current or past (not future)
         const timing = getQuarterTiming(activeCycle, q, quarterlyCycles);
@@ -108,12 +184,18 @@ export default function Evaluations() {
         }
       }
     }
-  }, [activeCycle, currentQuarter, isValidQuarter, setQuarter, quarterlyCycles]);
+  }, [activeCycle, currentQuarter, isValidQuarter, quarter, setQuarter, quarterlyCycles, selfReview]);
 
   useEffect(() => {
     const q = parseInt(selectedQuarter);
     if (q >= 1 && q <= 4) {
-      setQuarter(q as 1 | 2 | 3 | 4);
+      // Only update URL if selectedQuarter differs from URL quarter
+      // This prevents circular updates and ensures URL is the source of truth
+      // Don't update URL if it's already correct - this prevents overriding URL quarter
+      if (quarter !== q) {
+        console.log('[Evaluations] Updating URL quarter from selectedQuarter:', q, 'current URL quarter:', quarter);
+        setQuarter(q as 1 | 2 | 3 | 4);
+      }
     }
     const review = quarterlyReviews[q];
     if (review) {
@@ -128,11 +210,84 @@ export default function Evaluations() {
       }
       return prev;
     });
-  }, [selectedQuarter, quarterlyReviews, setQuarter]);
+  }, [selectedQuarter, quarterlyReviews, setQuarter, quarter]);
 
+  // Use URL quarter if available, otherwise use selectedQuarter
+  const activeQuarter = quarter || parseInt(selectedQuarter) || 1;
+  
+  // Debug logging
+  useEffect(() => {
+    console.log('[Evaluations] Quarter state:', {
+      urlQuarter: quarter,
+      selectedQuarter,
+      activeQuarter,
+      isValidQuarter,
+      currentQuarter,
+    });
+  }, [quarter, selectedQuarter, activeQuarter, isValidQuarter, currentQuarter]);
+  
   const currentQuarterKpis = useMemo(() => {
-    return quarterKpis[parseInt(selectedQuarter)] || [];
-  }, [quarterKpis, selectedQuarter]);
+    return quarterKpis[activeQuarter] || [];
+  }, [quarterKpis, activeQuarter]);
+
+  // Determine period info for the current quarter based on transition and KPIs being rated
+  // This determines which period-specific review to save to
+  const currentQuarterPeriodInfo = useMemo(() => {
+    const q = activeQuarter;
+    const qTransition = transition && transition.quarter === q ? transition : null;
+    
+    if (!qTransition) {
+      return { periodType: null, transitionId: null, periodStartDate: null, periodEndDate: null };
+    }
+    
+    // Calculate period dates if not provided in transition object
+    // Get quarter dates from quarterlyCycles
+    const quarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === q);
+    const quarterStart = quarterlyCycle?.quarter_start_date ? new Date(quarterlyCycle.quarter_start_date) : null;
+    const quarterEnd = quarterlyCycle?.quarter_end_date ? new Date(quarterlyCycle.quarter_end_date) : null;
+    
+    // Determine current date vs transition date
+    const transitionDate = new Date(qTransition.transition_date);
+    transitionDate.setHours(0, 0, 0, 0);
+    
+    // Calculate post-transition period dates if not provided
+    const calculatedPostStartDate = qTransition.post_period_start_date 
+      ? qTransition.post_period_start_date 
+      : (transitionDate && quarterEnd ? transitionDate.toISOString().split('T')[0] : null);
+    const calculatedPostEndDate = qTransition.post_period_end_date 
+      ? qTransition.post_period_end_date 
+      : (quarterEnd ? quarterEnd.toISOString().split('T')[0] : null);
+    
+    // Calculate pre-transition period dates if not provided
+    const calculatedPreStartDate = qTransition.pre_period_start_date 
+      ? qTransition.pre_period_start_date 
+      : (quarterStart ? quarterStart.toISOString().split('T')[0] : null);
+    // Pre-transition ends on the transition date itself (not transition date - 1)
+    const calculatedPreEndDate = qTransition.pre_period_end_date 
+      ? qTransition.pre_period_end_date 
+      : (transitionDate ? transitionDate.toISOString().split('T')[0] : null);
+    
+    // Determine period info based on active tab
+    // If we're in transition tab, always use post-transition
+    // If we're in regular tab, always use pre-transition
+    if (isTransitionTab) {
+      // Transition tab: always post-transition
+      return {
+        periodType: 'post_transition' as const,
+        transitionId: qTransition.id,
+        periodStartDate: calculatedPostStartDate,
+        periodEndDate: calculatedPostEndDate,
+      };
+    } else {
+      // Regular tab: always pre-transition
+      return {
+        periodType: 'pre_transition' as const,
+        transitionId: qTransition.id,
+        periodStartDate: calculatedPreStartDate,
+        periodEndDate: calculatedPreEndDate,
+      };
+    }
+  }, [activeQuarter, transition, quarterlyCycles, isTransitionTab]);
 
   const evalOps = useEvaluationOperations({
     employeeId,
@@ -141,12 +296,16 @@ export default function Evaluations() {
     kpiRatings,
     kpis: currentQuarterKpis,
     onSuccess: refetch,
+    periodType: currentQuarterPeriodInfo.periodType,
+    transitionId: currentQuarterPeriodInfo.transitionId,
+    periodStartDate: currentQuarterPeriodInfo.periodStartDate,
+    periodEndDate: currentQuarterPeriodInfo.periodEndDate,
   });
 
 
   const handleKpiRatingChange = useCallback(
     (goalId: string, field: keyof KpiRating, value: unknown) => {
-      const q = parseInt(selectedQuarter);
+      const q = activeQuarter;
       setKpiRatings(prev => ({
         ...prev,
         [q]: {
@@ -158,7 +317,7 @@ export default function Evaluations() {
         },
       }));
     },
-    [selectedQuarter]
+    [activeQuarter]
   );
 
   const calculateOverallRatingForQuarter = useCallback((quarterNum: number) => {
@@ -189,30 +348,30 @@ export default function Evaluations() {
   }, [quarterKras, quarterKpis, kpiRatings]);
 
   const handleSave = useCallback(() => {
-    const q = parseInt(selectedQuarter);
+    const q = activeQuarter;
     const calculatedRating = calculateOverallRatingForQuarter(q);
     evalOps.saveProgress(q, overallComments, calculatedRating ?? undefined, setQuarterlyReviews);
-  }, [selectedQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
+  }, [activeQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
 
   const handleSubmit = useCallback(() => {
-    const q = parseInt(selectedQuarter);
+    const q = activeQuarter;
     const calculatedRating = calculateOverallRatingForQuarter(q);
     evalOps.submitEvaluation(q, overallComments, calculatedRating ?? undefined, setQuarterlyReviews);
-  }, [selectedQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
+  }, [activeQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
 
   const handleNext = useCallback(async () => {
-    const q = parseInt(selectedQuarter);
+    const q = activeQuarter;
     const calculatedRating = calculateOverallRatingForQuarter(q);
     await evalOps.saveProgress(q, overallComments, calculatedRating ?? undefined, setQuarterlyReviews);
     setEvaluationTab(prev => ({ ...prev, [q]: 'overall' }));
-  }, [selectedQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
+  }, [activeQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
 
   const handleTabChange = useCallback((quarter: number, value: string) => {
     setEvaluationTab(prev => ({ ...prev, [quarter]: value }));
   }, []);
 
-  // Computed values
-  const q = parseInt(selectedQuarter);
+  // Computed values - use URL quarter if available, otherwise use selectedQuarter
+  const q = activeQuarter;
 
   // Loading state
   if (loading) {
@@ -265,7 +424,7 @@ export default function Evaluations() {
 
 
   // Determine what content to render for the selected quarter
-  const renderQuarterContent = (quarterNum: number) => {
+  const renderQuarterContent = (quarterNum: number, isTransition: boolean = false) => {
     const qTiming = getQuarterTiming(activeCycle, quarterNum, quarterlyCycles);
     const qHasGoals = (quarterKras[quarterNum] || []).length > 0 && (quarterKpis[quarterNum] || []).length > 0;
     const qKras = quarterKras[quarterNum] || [];
@@ -324,8 +483,32 @@ export default function Evaluations() {
       );
     }
 
-    // If quarter has ended and no late permission, show message
-    if (qEnded && !qHasLatePermission) {
+    // Check if employee has transition for this quarter
+    const hasTransitionForQuarter = qTransition && qTransition.employee_id === employeeId;
+    
+    // Helper to check if current date is within quarter date range
+    // Note: Using regular function, not useMemo, since this is inside a function that can return early
+    const isWithinQuarterDates = (() => {
+      if (!activeCycle || !quarterlyCycles) return false;
+      
+      // Find the quarterly cycle for this quarter
+      const quarterlyCycle = quarterlyCycles.find(qc => qc.quarter === quarterNum);
+      if (!quarterlyCycle?.quarter_start_date || !quarterlyCycle?.quarter_end_date) {
+        return false;
+      }
+      
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+      const quarterStart = new Date(quarterlyCycle.quarter_start_date);
+      quarterStart.setHours(0, 0, 0, 0);
+      const quarterEnd = new Date(quarterlyCycle.quarter_end_date);
+      quarterEnd.setHours(23, 59, 59, 999);
+      
+      return now >= quarterStart && now <= quarterEnd;
+    })();
+    
+    // If quarter has ended and no late permission AND no transition, show message
+    if (qEnded && !qHasLatePermission && !(hasTransitionForQuarter && isWithinQuarterDates)) {
       return <PeriodClose quarterNum={quarterNum} qEndDate={qEndDate} title="Self-Review" />
  
     }
@@ -352,9 +535,40 @@ export default function Evaluations() {
 
     // Quarter has goals and is accessible (or has late permission) - show evaluation content
     const qIsOpen = isQuarterOpen(activeCycle, quarterNum, quarterlyCycles);
-    const qReview = quarterlyReviews[quarterNum];
+    
+    // For transitions, we need to get the correct review based on period_type
+    // If working on post-transition KPIs, get post-transition review
+    // If working on pre-transition KPIs, get pre-transition review
+    // Otherwise, use the primary review (which defaults to post-transition if available)
+    let qReview = quarterlyReviews[quarterNum];
+    if (qTransition) {
+      // Fetch the specific review for the period we're working on
+      const periodInfo = currentQuarterPeriodInfo;
+      if (periodInfo.periodType && periodInfo.transitionId) {
+        // Try to find the review matching the current period
+        // We'll need to fetch it or get it from the reviews array
+        // For now, use the primary review and let the backend handle period-specific saves
+        // The issue is that quarterlyReviews only stores one review per quarter
+        // We'll need to update useEvaluationsData to return all reviews, then select the right one here
+      }
+    }
     const qIsSubmitted = qReview?.status === 'submitted';
-    const qCanEdit = (qIsOpen || qHasLatePermission) && !qIsSubmitted;
+    
+    // For post-transition period, we should allow editing even if pre-transition review is submitted
+    // because they are separate reviews. The backend creates separate reviews for each period_type.
+    // For now, if we're in post-transition period and have transition, allow editing regardless of review status
+    // (The backend will handle creating/updating the correct period-specific review)
+    const isPostTransitionPeriod = hasTransitionForQuarter && postTransitionKras.length > 0;
+    
+    // Allow editing if:
+    // 1. Quarter is open OR
+    // 2. Has late permission OR
+    // 3. Has transition AND within quarter dates (bypass deadline check)
+    // AND:
+    // - For post-transition period: always allow (backend handles period-specific reviews)
+    // - For other periods: only allow if review not submitted
+    const qCanEdit = (qIsOpen || qHasLatePermission || (hasTransitionForQuarter && isWithinQuarterDates)) && 
+                     (isPostTransitionPeriod ? true : !qIsSubmitted);
     const qKpiRatings = kpiRatings[quarterNum] || {};
 
     const qKpisWithKra: KPIForCalculation[] = qKpis
@@ -379,8 +593,11 @@ export default function Evaluations() {
     const qOverallCalc = calculateQuarterRating(qKras, qKraRatings);
     
     // Determine which KRAs and KPIs to display
-    const displayKras = qTransition ? [...preTransitionKras, ...postTransitionKras] : fullQuarterKras;
-    const displayKpis = qTransition ? [...preTransitionKpis, ...postTransitionKpis] : fullQuarterKpis;
+    // Determine which KRAs/KPIs to display based on tab
+    const displayKras = isTransition ? postTransitionKras : 
+                       (qTransition ? preTransitionKras : fullQuarterKras);
+    const displayKpis = isTransition ? postTransitionKpis : 
+                        (qTransition ? preTransitionKpis : fullQuarterKpis);
     
     return (
       <>
@@ -443,8 +660,8 @@ export default function Evaluations() {
           <TabsContent value="goals" className="space-y-6">
             {qTransition ? (
               <>
-                {/* Pre-Transition Period */}
-                {preTransitionKras.length > 0 && (
+                {/* Show pre-transition in regular tab, post-transition in transition tab */}
+                {!isTransition && preTransitionKras.length > 0 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 pb-2 border-b">
                       <Badge variant={getPeriodBadgeVariant('pre_transition')}>
@@ -471,18 +688,7 @@ export default function Evaluations() {
                   </div>
                 )}
                 
-                {/* Transition Separator */}
-                {preTransitionKras.length > 0 && postTransitionKras.length > 0 && (
-                  <div className="flex items-center gap-2 py-2">
-                    <div className="flex-1 border-t"></div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                    <Badge variant="outline">{formatDateShort(new Date(qTransition.transition_date))}</Badge>
-                    <div className="flex-1 border-t"></div>
-                  </div>
-                )}
-                
-                {/* Post-Transition Period */}
-                {postTransitionKras.length > 0 && (
+                {isTransition && postTransitionKras.length > 0 && (
                   <div className="space-y-4">
                     <div className="flex items-center gap-2 pb-2 border-b">
                       <Badge variant={getPeriodBadgeVariant('post_transition')}>
@@ -526,7 +732,7 @@ export default function Evaluations() {
             )}
             
 
-            {qCanEdit && (
+            {qCanEdit && !qIsSubmitted && (
               <div className="flex justify-end gap-3 pt-4 border-t">
                 <Button 
                   variant="outline" 
@@ -557,7 +763,7 @@ export default function Evaluations() {
             />
             
             {/* Action Buttons for Overall Assessment Tab */}
-            {qCanEdit && (
+            {qCanEdit && !qIsSubmitted && (
               <div className="flex justify-end gap-3 pt-4 border-t">
                 <Button 
                   variant="outline" 
@@ -592,31 +798,96 @@ export default function Evaluations() {
           <p className="text-muted-foreground">{activeCycle.name}</p>
         </div>
 
-        <QuarterTabs
-          selectedQuarter={selectedQuarter}
-          onQuarterChange={(qStr) => {
-            setSelectedQuarter(qStr);
-            const quarterNum = parseInt(qStr);
-            if (quarterNum >= 1 && quarterNum <= 4) {
+        <Tabs 
+          value={isTransitionTab ? `q${activeQuarter}-transition` : String(activeQuarter)} 
+          onValueChange={(value) => {
+            if (value.endsWith('-transition')) {
+              // Transition tab selected
+              const quarterNum = parseInt(value.replace('-transition', '').replace('q', ''));
+              setSelectedQuarter(String(quarterNum));
               setQuarter(quarterNum as 1 | 2 | 3 | 4);
+              setSearchParams(prev => {
+                const newParams = new URLSearchParams(prev);
+                newParams.set('quarter', String(quarterNum));
+                newParams.set('transition', 'true');
+                return newParams;
+              }, { replace: true });
+            } else {
+              // Regular quarter tab selected
+              const quarterNum = parseInt(value);
+              setSelectedQuarter(String(quarterNum));
+              setQuarter(quarterNum as 1 | 2 | 3 | 4);
+              setSearchParams(prev => {
+                const newParams = new URLSearchParams(prev);
+                newParams.set('quarter', String(quarterNum));
+                newParams.delete('transition');
+                return newParams;
+              }, { replace: true });
             }
           }}
-          cycle={activeCycle}
-          quarterlyCycles={quarterlyCycles}
-          quarterlyEvaluations={Object.fromEntries(
-            Object.entries(quarterlyReviews).map(([qKey, review]) => [
-              qKey,
-              review ? { status: review.status || 'in_progress' } : undefined
-            ])
-          )}
-          restrictToOpenQuarters={true}
+          className="space-y-4"
         >
+          <TabsList className="grid w-full" style={{ 
+            gridTemplateColumns: `repeat(${4 + Object.keys(transitions).length}, 1fr)` 
+          }}>
+            {[1, 2, 3, 4].map(quarterNum => {
+              // Use backend response to determine if self review is enabled for this quarter
+              // Enable tab if: it's the review_for_quarter AND self_review.enabled is true
+              // OR if self evaluation already exists for this quarter (allow viewing past reviews)
+              const isReviewQuarter = selfReview?.review_for_quarter === quarterNum;
+              const isSelfReviewEnabled = isReviewQuarter && selfReview?.enabled === true;
+              
+              // Check if self evaluation exists for this quarter (to allow viewing past reviews)
+              const hasSelfEvalForQuarter = initialQuarterlyReviews && 
+                Object.values(initialQuarterlyReviews).some((review: any) => 
+                  review && review.quarter === quarterNum
+                );
+              
+              // Enable tab if self review is enabled OR if self evaluation already exists
+              // Fallback to date calculation if backend data not available
+              const isTabEnabled = selfReview 
+                ? (isSelfReviewEnabled || hasSelfEvalForQuarter)
+                : (getQuarterTiming(activeCycle, quarterNum, quarterlyCycles) !== 'future');
+              
+              const hasTransition = !!transitions[quarterNum];
+              
+              return (
+                <React.Fragment key={quarterNum}>
+                  <TabsTrigger 
+                    value={String(quarterNum)} 
+                    disabled={!isTabEnabled}
+                    className="flex items-center gap-2"
+                  >
+                    Q{quarterNum}
+                  </TabsTrigger>
+                  {hasTransition && (
+                    <TabsTrigger 
+                      key={`${quarterNum}-transition`}
+                      value={`q${quarterNum}-transition`}
+                      disabled={!isTabEnabled}
+                      className="flex items-center gap-2"
+                    >
+                      Transition
+                    </TabsTrigger>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </TabsList>
+          
           {[1, 2, 3, 4].map(quarterNum => (
-            <TabsContent key={quarterNum} value={String(quarterNum)} className="space-y-4">
-              {renderQuarterContent(quarterNum)}
-            </TabsContent>
+            <React.Fragment key={quarterNum}>
+              <TabsContent value={String(quarterNum)} className="space-y-4">
+                {renderQuarterContent(quarterNum, false)}
+              </TabsContent>
+              {transitions[quarterNum] && (
+                <TabsContent value={`q${quarterNum}-transition`} className="space-y-4">
+                  {renderQuarterContent(quarterNum, true)}
+                </TabsContent>
+              )}
+            </React.Fragment>
           ))}
-        </QuarterTabs>
+        </Tabs>
       </div>
     </MainLayout>
   );

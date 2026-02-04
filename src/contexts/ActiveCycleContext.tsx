@@ -12,6 +12,9 @@ interface ActiveCycleContextType {
   quarterlyCycles: ActiveCycleResponse['quarterly_cycles'] | undefined;
   goalsQuarterlyCycles: ActiveCycleResponse['goals_quarterly_cycles'] | undefined;
   dashboard: ActiveCycleResponse['dashboard'] | null;
+  goalSetting: ActiveCycleResponse['goal_setting'] | undefined;
+  selfReview: ActiveCycleResponse['self_review'] | undefined;
+  managerReview: ActiveCycleResponse['manager_review'] | undefined;
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
@@ -62,6 +65,9 @@ export function ActiveCycleProvider({ children }: { children: React.ReactNode })
     quarterlyCycles: activeCycleData?.quarterly_cycles,
     goalsQuarterlyCycles: activeCycleData?.goals_quarterly_cycles,
     dashboard: activeCycleData?.dashboard || null,
+    goalSetting: activeCycleData?.goal_setting,
+    selfReview: activeCycleData?.self_review,
+    managerReview: activeCycleData?.manager_review,
     isLoading: isLoading || authLoading, // Include auth loading state
     isError,
     error: error as Error | null,

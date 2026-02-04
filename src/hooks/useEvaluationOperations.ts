@@ -19,6 +19,10 @@ interface UseEvaluationOperationsProps {
   kpiRatings: Record<number, Record<string, KpiRating>>;
   kpis: { id: string }[];
   onSuccess: () => void;
+  periodType?: 'full_quarter' | 'pre_transition' | 'post_transition' | null;
+  transitionId?: string | null;
+  periodStartDate?: string | null;
+  periodEndDate?: string | null;
 }
 
 export function useEvaluationOperations({
@@ -28,6 +32,10 @@ export function useEvaluationOperations({
   kpiRatings,
   kpis,
   onSuccess,
+  periodType,
+  transitionId,
+  periodStartDate,
+  periodEndDate,
 }: UseEvaluationOperationsProps) {
   const [saving, setSaving] = useState(false);
 
@@ -45,6 +53,16 @@ export function useEvaluationOperations({
         let review = quarterlyReviews[quarter];
         const currentRatings = kpiRatings[quarter] || {};
 
+        // Log period info for debugging
+        console.log('Saving review with period info:', {
+          quarter,
+          periodType,
+          transitionId,
+          periodStartDate,
+          periodEndDate,
+          ratingsCount: Object.keys(currentRatings).length
+        });
+
         // Create or update quarterly self review
         const result = await evaluationService.selfReviews.upsert({
           employee_id: employeeId,
@@ -53,10 +71,17 @@ export function useEvaluationOperations({
           overall_rating: overallRating,
           overall_comments: overallComments,
           status: review?.status === 'submitted' ? 'submitted' : 'in_progress',
+          period_type: periodType || undefined,
+          transition_id: transitionId || undefined,
+          period_start_date: periodStartDate || undefined,
+          period_end_date: periodEndDate || undefined,
         });
+
+        console.log('Review save result:', result.data);
 
         if (result.data) {
           review = result.data;
+          // Update the review in state - for transitions, this ensures we have the correct period-specific review
           setQuarterlyReviews(prev => ({ ...prev, [quarter]: review }));
 
           // Save all goal self ratings in one bulk request
@@ -70,19 +95,42 @@ export function useEvaluationOperations({
           }));
 
           if (ratingsToSave.length > 0 && review.id) {
-            await evaluationService.goalSelfRatings.bulkUpsert(review.id, ratingsToSave);
+            const bulkResult = await evaluationService.goalSelfRatings.bulkUpsert(review.id, ratingsToSave);
+            console.log('Ratings saved successfully:', bulkResult);
+            
+            // After saving ratings, fetch the updated review to ensure we have the latest data
+            // This is especially important for transitions where we need the period-specific review
+            if (periodType && transitionId) {
+              try {
+                const updatedReviewResult = await evaluationService.selfReviews.getByQuarter(
+                  employeeId,
+                  cycleId,
+                  quarter,
+                  periodType,
+                  transitionId
+                );
+                if (updatedReviewResult.data) {
+                  console.log('Fetched updated review:', updatedReviewResult.data);
+                  setQuarterlyReviews(prev => ({ ...prev, [quarter]: updatedReviewResult.data }));
+                }
+              } catch (error) {
+                console.error('Error fetching updated review:', error);
+                // Don't fail the save if this fetch fails
+              }
+            }
           }
         }
 
         toasts.success('Progress saved');
         onSuccess();
       } catch (error) {
+        console.error('Error saving review:', error);
         toasts.error(error);
       } finally {
         setSaving(false);
       }
     },
-    [employeeId, cycleId, quarterlyReviews, kpiRatings, onSuccess]
+    [employeeId, cycleId, quarterlyReviews, kpiRatings, periodType, transitionId, periodStartDate, periodEndDate, onSuccess]
   );
 
   const submitEvaluation = useCallback(
@@ -115,6 +163,10 @@ export function useEvaluationOperations({
           overall_rating: overallRating,
           overall_comments: overallComments,
           status: 'submitted',
+          period_type: periodType || undefined,
+          transition_id: transitionId || undefined,
+          period_start_date: periodStartDate || undefined,
+          period_end_date: periodEndDate || undefined,
         });
 
         toasts.success(`Q${quarter} Self review submitted`);
@@ -125,7 +177,7 @@ export function useEvaluationOperations({
         setSaving(false);
       }
     },
-    [employeeId, cycleId, kpiRatings, kpis, saveProgress, onSuccess]
+    [employeeId, cycleId, kpiRatings, kpis, saveProgress, periodType, transitionId, periodStartDate, periodEndDate, onSuccess]
   );
 
   return {

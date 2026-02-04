@@ -162,11 +162,7 @@ export default function TemplateForm() {
   // Show toast when KPI weights don't total 100%
   useEffect(() => {
     const hasKPIs = formData.kpi_templates.some(kpi => kpi.title.trim());
-    
-    // Only show toast if:
-    // 1. There are KPIs with titles
-    // 2. Total is not 100%
-    // 3. The total has changed (not on initial render)
+
     if (hasKPIs && totalKPIWeight !== 100 && prevTotalWeightRef.current !== null) {
       if (prevTotalWeightRef.current !== totalKPIWeight) {
         toast.error(`KPI weights total ${totalKPIWeight}%. They must total exactly 100%.`, {
@@ -503,7 +499,7 @@ export default function TemplateForm() {
                   />
                 </div>
 
-                <div className="space-y-2">
+                {/* <div className="space-y-2">
                   <Label htmlFor="active">Active</Label>
                   <div className="flex items-center gap-2 h-10">
                     <Switch
@@ -517,7 +513,7 @@ export default function TemplateForm() {
                       {formData.is_active ? 'Available to employees' : 'Hidden from employees'}
                     </span>
                   </div>
-                </div>
+                </div> */}
               </div>
             </CardContent>
           </Card>

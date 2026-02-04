@@ -190,33 +190,6 @@ export interface Goal {
   updated_at: string;
 }
 
-export interface BonusKRA {
-  id: string;
-  employee_id: string;
-  cycle_id: string;
-  title: string;
-  description?: string;
-  weight: number;
-  order_index: number;
-  status: GoalStatus;
-  manager_comments?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface BonusKPI {
-  id: string;
-  bonus_kra_id: string;
-  employee_id: string;
-  cycle_id: string;
-  title: string;
-  description?: string;
-  metric_type: MetricType;
-  target_value?: string;
-  weight: number;
-  due_date?: string | null;
-  status: GoalStatus;
-  manager_comments?: string | null;
   created_at: string;
   updated_at: string;
 }

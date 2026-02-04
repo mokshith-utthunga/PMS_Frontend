@@ -101,15 +101,24 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
       const ratingScales = (scalesResult.data || []).sort((a, b) => b.value - a.value);
 
       // Fetch goals for all 4 quarters in parallel
+      // Note: Pre-transition goals have status='locked', so we fetch without status filter
+      // to include both 'approved' and 'locked' statuses
       const quarterPromises = [1, 2, 3, 4].map(async (q) => {
         const [krasResult, kpisResult] = await Promise.all([
-          goalsService.kras.getByEmployee(employeeId, cycleId, 'approved', q),
-          goalsService.kpis.getByEmployee(employeeId, cycleId, 'approved', q),
+          goalsService.kras.getByEmployee(employeeId, cycleId, undefined, q), // No status filter - include both 'approved' and 'locked'
+          goalsService.kpis.getByEmployee(employeeId, cycleId, undefined, q), // No status filter - include both 'approved' and 'locked'
         ]);
+        // Filter to only include KRAs/KPIs with status='approved' or 'locked'
+        const filteredKras = (krasResult.data || []).filter((kra: KRA) => 
+          kra.status === 'approved' || kra.status === 'locked'
+        );
+        const filteredKpis = (kpisResult.data || []).filter((g: Goal) => 
+          g.kra_id && (g.status === 'approved' || g.status === 'locked')
+        ) as Goal[];
         return {
           quarter: q,
-          kras: krasResult.data || [],
-          kpis: (kpisResult.data || []).filter((g: Goal) => g.kra_id) as Goal[],
+          kras: filteredKras,
+          kpis: filteredKpis,
         };
       });
 
@@ -128,37 +137,77 @@ export function useEvaluationsData(userId: string | undefined, selectedQuarter?:
         allKpis = [...allKpis, ...kpis];
       });
 
-      // Process quarterly self reviews
+      // Process quarterly self reviews - handle multiple reviews per quarter (pre-transition, post-transition)
+      // Store all reviews, but for backward compatibility, also store the "primary" review per quarter
+      // Primary review priority: post_transition > pre_transition > full_quarter
       const reviewsMap: Record<number, QuarterlySelfReviewData | null> = {
         1: null, 2: null, 3: null, 4: null
       };
+      const allReviewsByQuarter: Record<number, QuarterlySelfReviewData[]> = {
+        1: [], 2: [], 3: [], 4: []
+      };
+      
       (selfReviewsResult.data || []).forEach((review: QuarterlySelfReviewData) => {
         if (review.quarter) {
-          reviewsMap[review.quarter] = review;
+          const q = review.quarter;
+          allReviewsByQuarter[q].push(review);
+          
+          // Determine primary review: prefer post_transition, then pre_transition, then full_quarter
+          const currentPrimary = reviewsMap[q];
+          if (!currentPrimary) {
+            reviewsMap[q] = review;
+          } else {
+            const currentPriority = currentPrimary.period_type === 'post_transition' ? 3 
+              : currentPrimary.period_type === 'pre_transition' ? 2 
+              : 1;
+            const newPriority = review.period_type === 'post_transition' ? 3 
+              : review.period_type === 'pre_transition' ? 2 
+              : 1;
+            if (newPriority > currentPriority) {
+              reviewsMap[q] = review;
+            }
+          }
         }
       });
 
       // Fetch goal self ratings for all quarterly reviews
+      // For transitions, we need to merge ratings from both pre and post-transition reviews
       const ratingsMap: Record<number, Record<string, KpiRating>> = {};
       
-      for (const [quarter, review] of Object.entries(reviewsMap)) {
+      for (const [quarter, reviews] of Object.entries(allReviewsByQuarter)) {
         const q = parseInt(quarter);
         const quarterRatings: Record<string, KpiRating> = {};
         const qKpis = quarterKpis[q] || [];
 
-        if (review?.id) {
-          const ratingsResult = await evaluationService.goalSelfRatings.get(review.id);
-          
-          (ratingsResult.data || []).forEach((r: GoalSelfRatingData) => {
-            quarterRatings[r.goal_id] = {
-              goal_id: r.goal_id,
-              achievement: r.achievement || '',
-              self_rating: r.self_rating || null,
-              achieved_value: r.achieved_value,
-              target_value: r.target_value,
-              evidence: r.evidence || '',
-            };
-          });
+        // Fetch ratings from all reviews for this quarter (pre-transition, post-transition, full_quarter)
+        for (const review of reviews) {
+          if (review?.id) {
+            const ratingsResult = await evaluationService.goalSelfRatings.get(review.id);
+            
+            (ratingsResult.data || []).forEach((r: GoalSelfRatingData) => {
+              // Only add rating if it matches the KPI's period_type and transition_id
+              const kpi = qKpis.find((k: Goal) => k.id === r.goal_id);
+              if (kpi) {
+                const kpiPeriodType = kpi.period_type || 'full_quarter';
+                const kpiTransitionId = kpi.transition_id || null;
+                const reviewPeriodType = review.period_type || 'full_quarter';
+                const reviewTransitionId = review.transition_id || null;
+                
+                // Match rating to KPI if period_type and transition_id match
+                if (kpiPeriodType === reviewPeriodType && 
+                    (kpiTransitionId === reviewTransitionId || (!kpiTransitionId && !reviewTransitionId))) {
+                  quarterRatings[r.goal_id] = {
+                    goal_id: r.goal_id,
+                    achievement: r.achievement || '',
+                    self_rating: r.self_rating || null,
+                    achieved_value: r.achieved_value,
+                    target_value: r.target_value,
+                    evidence: r.evidence || '',
+                  };
+                }
+              }
+            });
+          }
         }
 
         // Initialize missing goals for this quarter

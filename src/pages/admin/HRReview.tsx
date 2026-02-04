@@ -24,7 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { evaluationService, goalsService, employeeService } from '@/services';
+import { evaluationService, goalsService, employeeService, settingsService } from '@/services';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
@@ -151,6 +151,7 @@ export default function HRReview() {
   const [calibrating, setCalibrating] = useState(false);
   const [editingRating, setEditingRating] = useState<string | null>(null);
   const [editedRatingValue, setEditedRatingValue] = useState<number>(0);
+  const [editedCalibratedRatingValue, setEditedCalibratedRatingValue] = useState<number | null>(null);
   const [expandedRatings, setExpandedRatings] = useState<Set<string>>(new Set());
 
   const isHR = hasAnyRole(['hr_admin', 'hrbp', 'system_admin']);
@@ -255,29 +256,48 @@ export default function HRReview() {
       
       toast({
         title: 'Normalization Complete',
-        description: result.data?.message || `Normalized ${result.data?.processed || 0} ratings for Q${quarter}. Starting calibration...`,
+        description: result.data?.message || `Normalized ${result.data?.processed || 0} ratings for Q${quarter}.`,
       });
       
-      // Automatically run calibration after normalization
+      // Check if calibration is enabled before auto-running
       try {
-        console.log(`Calibrating ratings for Q${quarter}, cycle: ${activeCycle.id}`);
-        const calibrationResult = await evaluationService.normalization.calibrate(quarter, activeCycle.id);
-        console.log('Calibration result:', calibrationResult);
+        const calibrationSettings = await settingsService.calibration.get();
+        const isCalibrationEnabled = calibrationSettings.data?.is_enabled ?? true; // Default to true for backward compatibility
         
-        const distribution = calibrationResult.data?.distribution;
-        const distText = distribution 
-          ? ` (5★: ${distribution[5] || 0}, 4★: ${distribution[4] || 0}, 3★: ${distribution[3] || 0}, 2★: ${distribution[2] || 0}, 1★: ${distribution[1] || 0})`
-          : '';
-        
-        toast({
-          title: 'Success',
-          description: (calibrationResult.data?.message || `Normalized and calibrated ${calibrationResult.data?.processed || 0} ratings for Q${quarter}`) + distText,
-        });
+        if (isCalibrationEnabled) {
+          // Automatically run calibration after normalization
+          console.log(`Calibrating ratings for Q${quarter}, cycle: ${activeCycle.id}`);
+          const calibrationResult = await evaluationService.normalization.calibrate(quarter, activeCycle.id);
+          console.log('Calibration result:', calibrationResult);
+          
+          // Check if calibration was actually disabled (returned from backend)
+          if (!isCalibrationEnabled) {
+            toast({
+              title: 'Normalization Complete',
+              description: `Normalized ${result.data?.processed || 0} ratings for Q${quarter}. Calibration is disabled.`,
+            });
+          } else {
+            const distribution = calibrationResult.data?.distribution;
+            const distText = distribution 
+              ? ` (5★: ${distribution[5] || 0}, 4★: ${distribution[4] || 0}, 3★: ${distribution[3] || 0}, 2★: ${distribution[2] || 0}, 1★: ${distribution[1] || 0})`
+              : '';
+            
+            toast({
+              title: 'Success',
+              description: (calibrationResult.data?.message || `Normalized and calibrated ${calibrationResult.data?.processed || 0} ratings for Q${quarter}`) + distText,
+            });
+          }
+        } else {
+          toast({
+            title: 'Normalization Complete',
+            description: `Normalized ${result.data?.processed || 0} ratings for Q${quarter}. Calibration is disabled.`,
+          });
+        }
       } catch (calibrationError: any) {
         console.error('Calibration error:', calibrationError);
         toast({
           title: 'Calibration Warning',
-          description: calibrationError.message || 'Normalization completed but calibration failed. You can try calibrating manually.',
+          description: calibrationError.message || 'Normalization completed but calibration check failed. You can try calibrating manually.',
           variant: 'destructive',
         });
       }
@@ -421,14 +441,15 @@ export default function HRReview() {
     }
   }, [activeCycle, selectedQuarter, toast, fetchNormalizedRatings]);
 
-  const handleUpdateRating = useCallback(async (id: string, newValue: number) => {
+  const handleUpdateRating = useCallback(async (id: string, normalizedValue: number, calibratedValue: number | null) => {
     try {
-      await evaluationService.normalization.updateRating(id, newValue);
+      await evaluationService.normalization.updateRating(id, normalizedValue, calibratedValue);
       toast({
         title: 'Success',
         description: 'Rating updated successfully',
       });
       setEditingRating(null);
+      setEditedCalibratedRatingValue(null);
       await fetchNormalizedRatings(selectedQuarter);
     } catch (error: any) {
       toast({
@@ -918,11 +939,9 @@ export default function HRReview() {
                                     {review.employee_name}
                                     <Badge variant="outline">{review.employee_code}</Badge>
                                   </CardTitle>
-                                  <CardDescription className="mt-2">
-                                    <div className="flex items-center gap-4">
-                                      <span>Q{review.quarter} • {review.cycle_name}</span>
-                                      <span>Manager: {review.manager_name}</span>
-                                    </div>
+                                  <CardDescription className="mt-2 flex items-center gap-4">
+                                    <span>Q{review.quarter} • {review.cycle_name}</span>
+                                    <span>Manager: {review.manager_name}</span>
                                   </CardDescription>
                                 </div>
                                 <div className="text-right">
@@ -996,13 +1015,11 @@ export default function HRReview() {
                               Year-End
                             </Badge>
                           </CardTitle>
-                          <CardDescription className="mt-2">
-                            <div className="flex flex-wrap items-center gap-4">
-                              <span>{review.cycle_name}</span>
-                              <span>Manager: {review.manager_name}</span>
-                              <span>Joined: {formatJoinDate(review.date_of_joining)}</span>
-                              <span>{review.completed_quarters}/4 Quarters</span>
-                            </div>
+                          <CardDescription className="mt-2 flex flex-wrap items-center gap-4">
+                            <span>{review.cycle_name}</span>
+                            <span>Manager: {review.manager_name}</span>
+                            <span>Joined: {formatJoinDate(review.date_of_joining)}</span>
+                            <span>{review.completed_quarters}/4 Quarters</span>
                           </CardDescription>
                         </div>
                         <div className="text-right">
@@ -1188,7 +1205,7 @@ export default function HRReview() {
               </div>
 
               {/* Explanation Card */}
-              <Card className="bg-blue-50 border-blue-200">
+              {/* <Card className="bg-blue-50 border-blue-200">
                 <CardContent className="pt-6">
                   <div className="space-y-2">
                     <h4 className="font-semibold text-sm flex items-center gap-2">
@@ -1219,7 +1236,7 @@ export default function HRReview() {
                     </div>
                   </div>
                 </CardContent>
-              </Card>
+              </Card> */}
 
               {normalizedRatingsLoading ? (
                 <div className="flex items-center justify-center h-64">
@@ -1307,6 +1324,32 @@ export default function HRReview() {
                                               ↓ {(parseFloat(rating.final_normalized_rating) - parseFloat(rating.raw_rating)).toFixed(2)}
                                             </span>
                                           )}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="pt-2 border-t">
+                                      <div className="text-xs text-muted-foreground mb-1">Calibrated Rating (Bell Curve)</div>
+                                      {editingRating === rating.id ? (
+                                        <input
+                                          type="number"
+                                          min="1"
+                                          max="5"
+                                          step="1"
+                                          value={editedCalibratedRatingValue ?? ''}
+                                          onChange={(e) => setEditedCalibratedRatingValue(e.target.value ? parseInt(e.target.value) : null)}
+                                          className="w-20 px-2 py-1 border rounded"
+                                          placeholder="1-5"
+                                        />
+                                      ) : rating.calibrated_rating !== null && rating.calibrated_rating !== undefined ? (
+                                        <div className="text-2xl font-bold text-purple-600">
+                                          {'★'.repeat(rating.calibrated_rating)} ({rating.calibrated_rating})
+                                        </div>
+                                      ) : (
+                                        <div className="text-sm text-muted-foreground">Not calibrated</div>
+                                      )}
+                                      {rating.calibrated_rating !== null && rating.calibrated_rating !== undefined && !editingRating && (
+                                        <div className="text-xs text-muted-foreground mt-1">
+                                          Based on final_normalized_rating within grade
                                         </div>
                                       )}
                                     </div>
@@ -1438,14 +1481,17 @@ export default function HRReview() {
                                 {editingRating === rating.id ? (
                                   <>
                                     <Button
-                                      onClick={() => handleUpdateRating(rating.id, editedRatingValue)}
+                                      onClick={() => handleUpdateRating(rating.id, editedRatingValue, editedCalibratedRatingValue)}
                                       size="sm"
                                     >
                                       Save
                                     </Button>
                                     <Button
                                       variant="outline"
-                                      onClick={() => setEditingRating(null)}
+                                      onClick={() => {
+                                        setEditingRating(null);
+                                        setEditedCalibratedRatingValue(null);
+                                      }}
                                       size="sm"
                                     >
                                       Cancel
@@ -1459,6 +1505,7 @@ export default function HRReview() {
                                         onClick={() => {
                                           setEditingRating(rating.id);
                                           setEditedRatingValue(rating.final_normalized_rating);
+                                          setEditedCalibratedRatingValue(rating.calibrated_rating ?? null);
                                         }}
                                         size="sm"
                                       >
@@ -1589,17 +1636,32 @@ export default function HRReview() {
                                         </div>
                                       )}
                                     </div>
-                                    {rating.calibrated_rating !== null && rating.calibrated_rating !== undefined && (
-                                      <div className="pt-2 border-t">
-                                        <div className="text-xs text-muted-foreground mb-1">Calibrated Rating (Bell Curve)</div>
+                                    <div className="pt-2 border-t">
+                                      <div className="text-xs text-muted-foreground mb-1">Calibrated Rating (Bell Curve)</div>
+                                      {editingRating === rating.id ? (
+                                        <input
+                                          type="number"
+                                          min="1"
+                                          max="5"
+                                          step="1"
+                                          value={editedCalibratedRatingValue ?? ''}
+                                          onChange={(e) => setEditedCalibratedRatingValue(e.target.value ? parseInt(e.target.value) : null)}
+                                          className="w-20 px-2 py-1 border rounded"
+                                          placeholder="1-5"
+                                        />
+                                      ) : rating.calibrated_rating !== null && rating.calibrated_rating !== undefined ? (
                                         <div className="text-2xl font-bold text-purple-600">
                                           {'★'.repeat(rating.calibrated_rating)} ({rating.calibrated_rating})
                                         </div>
+                                      ) : (
+                                        <div className="text-sm text-muted-foreground">Not calibrated</div>
+                                      )}
+                                      {rating.calibrated_rating !== null && rating.calibrated_rating !== undefined && !editingRating && (
                                         <div className="text-xs text-muted-foreground mt-1">
                                           Based on final_normalized_rating within grade
                                         </div>
-                                      </div>
-                                    )}
+                                      )}
+                                    </div>
                                     <div className="pt-2 border-t text-xs text-muted-foreground space-y-1">
                                       {/* <div className="font-semibold mb-1">Intermediate Ratings:</div> */}
                                       {/* <div className="grid grid-cols-2 gap-2"> */}
@@ -1764,14 +1826,17 @@ export default function HRReview() {
                                     {editingRating === rating.id ? (
                                       <>
                                         <Button
-                                          onClick={() => handleUpdateRating(rating.id, editedRatingValue)}
+                                          onClick={() => handleUpdateRating(rating.id, editedRatingValue, editedCalibratedRatingValue)}
                                           size="sm"
                                         >
                                           Save
                                         </Button>
                                         <Button
                                           variant="outline"
-                                          onClick={() => setEditingRating(null)}
+                                          onClick={() => {
+                                            setEditingRating(null);
+                                            setEditedCalibratedRatingValue(null);
+                                          }}
                                           size="sm"
                                         >
                                           Cancel
@@ -1784,6 +1849,7 @@ export default function HRReview() {
                                           onClick={() => {
                                             setEditingRating(rating.id);
                                             setEditedRatingValue(rating.final_normalized_rating);
+                                            setEditedCalibratedRatingValue(rating.calibrated_rating ?? null);
                                           }}
                                           size="sm"
                                         >

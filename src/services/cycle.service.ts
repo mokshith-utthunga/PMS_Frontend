@@ -47,6 +47,21 @@ export interface ActiveCycleResponse {
     year_end_pending: number;
     quarterly_open_pending: number;
   } | null;
+  goal_setting?: {
+    quarter: number | null;
+    present_quarter: number | null;
+    enabled: boolean;
+  };
+  self_review?: {
+    review_for_quarter: number | null;
+    present_quarter: number | null;
+    enabled: boolean;
+  };
+  manager_review?: {
+    review_for_quarter: number | null;
+    present_quarter: number | null;
+    enabled: boolean;
+  };
 }
 
 export const cycleService = {

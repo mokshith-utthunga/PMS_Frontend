@@ -14,9 +14,59 @@ export interface CycleWithQuarterDates extends PerformanceCycle {
   q4_self_review_end?: string | null;
 }
 
-/**
- * Get the quarter number (1-4) for a given date
- */
+export type FormData = {
+    name: string;
+    description: string;
+    year: number;
+    goal_submission_start: string;
+    goal_submission_end: string;
+    goal_approval_end: string;
+    manager_evaluation_start: string;
+    manager_evaluation_end: string;
+    calibration_start: string;
+    calibration_end: string;
+    release_date: string;
+    allow_late_goal_submission: boolean;
+    // Q1 Quarterly Review
+    q1_quarter_start_date: string;
+    q1_quarter_end_date: string;
+    q1_self_review_start: string;
+    q1_self_review_end: string;
+    q1_manager_review_start: string;
+    q1_manager_review_end: string;
+    // Q2 Quarterly Review
+    q2_quarter_start_date: string;
+    q2_quarter_end_date: string;
+    q2_self_review_start: string;
+    q2_self_review_end: string;
+    q2_manager_review_start: string;
+    q2_manager_review_end: string;
+    // Q3 Quarterly Review
+    q3_quarter_start_date: string;
+    q3_quarter_end_date: string;
+    q3_self_review_start: string;
+    q3_self_review_end: string;
+    q3_manager_review_start: string;
+    q3_manager_review_end: string;
+    // Q4 Quarterly Review
+    q4_quarter_start_date: string;
+    q4_quarter_end_date: string;
+    q4_self_review_start: string;
+    q4_self_review_end: string;
+    q4_manager_review_start: string;
+    q4_manager_review_end: string;
+  };
+// export type quarterIds = {
+//   q1_quarter_start_date: string;
+//   q1_quarter_end_date: string;
+//   q2_quarter_start_date: string;
+//   q2_quarter_end_date: string;
+//   q3_quarter_start_date: string;
+//   q3_quarter_end_date: string;
+//   q4_quarter_start_date: string;
+//   q4_quarter_end_date: string;
+// };
+
 export function getQuarterForDate(date: Date): 1 | 2 | 3 | 4 {
   const month = date.getMonth(); // 0-11
   if (month < 3) return 1; // Jan-Mar
@@ -25,9 +75,7 @@ export function getQuarterForDate(date: Date): 1 | 2 | 3 | 4 {
   return 4; // Oct-Dec
 }
 
-/**
- * Get the start date of a quarter for a given year
- */
+
 export function getQuarterStartDate(year: number, quarter: 1 | 2 | 3 | 4): Date {
   const month = (quarter - 1) * 3; // 0, 3, 6, 9
   return new Date(year, month, 1);

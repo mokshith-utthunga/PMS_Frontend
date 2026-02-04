@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
-import { employeeService, goalsService, evaluationService, settingsService, delegationService } from '@/services';
+import { employeeService, goalsService, evaluationService, settingsService, delegationService, permissionsService, transitionService } from '@/services';
 import { useAuth } from '@/contexts/AuthContext';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
 import { useCurrentEmployee } from '@/hooks/useCurrentEmployee';
@@ -33,6 +33,7 @@ import {
   CheckCircle2,
   XCircle,
   ArrowRight,
+  Clock,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DualAchievementSlider, parseNumericTarget } from '@/components/evaluation/AchievementSlider';
@@ -166,6 +167,8 @@ interface QuarterlySelfEval {
   overall_rating: number | null;
   overall_comments: string | null;
   calculated_overall_rating: number | null;
+  period_type?: string | null;
+  transition_id?: string | null;
 }
 
 export default function ManagerEvaluation() {
@@ -177,7 +180,7 @@ export default function ManagerEvaluation() {
   const { toast } = useToast();
 
   // Get active cycle data from context (fetched once at app initialization)
-  const { activeCycle: activeCycleFromContext, quarterlyCycles: quarterlyCyclesFromContext, isLoading: isLoadingActiveCycle } = useActiveCycle();
+  const { activeCycle: activeCycleFromContext, quarterlyCycles: quarterlyCyclesFromContext, isLoading: isLoadingActiveCycle, managerReview } = useActiveCycle();
   // Get current employee from cached hook (fetched once at app initialization)
   const { employee: currentEmployee } = useCurrentEmployee();
   
@@ -201,6 +204,8 @@ export default function ManagerEvaluation() {
   const [goalSelfRatings, setGoalSelfRatings] = useState<Record<string, GoalSelfRating>>({});
   
   const [managerEvaluation, setManagerEvaluation] = useState<any>(null);
+  const [preTransitionReview, setPreTransitionReview] = useState<any>(null);
+  const [postTransitionReview, setPostTransitionReview] = useState<any>(null);
   const [yearEndManagerEvaluation, setYearEndManagerEvaluation] = useState<any>(null);
   const [goalManagerRatings, setGoalManagerRatings] = useState<Record<string, GoalManagerRating>>({});
   const [overallRating, setOverallRating] = useState<number | null>(null);
@@ -225,6 +230,9 @@ export default function ManagerEvaluation() {
   const [hrReviewRatings, setHrReviewRatings] = useState<any[]>([]);
   const [hrReviewLoading, setHrReviewLoading] = useState(false);
   
+  // Late submission permission state for manager evaluations
+  const [hasLatePermission, setHasLatePermission] = useState(false);
+  
   // Fetch transition data for the selected quarter
   const { transition, loading: transitionLoading } = useTransition({
     employeeId: employeeId || undefined,
@@ -240,25 +248,69 @@ export default function ManagerEvaluation() {
     quarter: selectedQuarter,
     enabled: !!employeeId && !!activeCycle,
   });
-  
-  // Determine current quarter from cycle
-  const currentQuarter = useMemo(() => {
-    if (!activeCycle) return 1; // Default to Q1 if no active cycle
-    return getCurrentQuarter(activeCycle, quarterlyCycles);
-  }, [activeCycle, quarterlyCycles]);
 
-  // Initialize selected quarter based on URL or current quarter
+  // Determine manager role for transition filtering
+  // Case 1: If old_manager_id ≠ new_manager_id (different managers)
+  //   - Old manager: see only pre-transition data
+  //   - New manager: see only post-transition data
+  // Case 2: If new_manager_id is null/empty OR equals old_manager_id (same manager)
+  //   - Manager: see both pre and post-transition data
+  const managerRole = useMemo(() => {
+    if (!transition || !currentEmployee || !transition.old_manager_id) {
+      return null; // No transition or no current manager
+    }
+
+    const isOldManager = transition.old_manager_id === currentEmployee.id;
+    const isNewManager = transition.new_manager_id && transition.new_manager_id === currentEmployee.id;
+    const managersAreDifferent = transition.new_manager_id && 
+                                  transition.new_manager_id !== transition.old_manager_id;
+
+    if (managersAreDifferent) {
+      // Different managers: show only relevant period
+      if (isOldManager) {
+        return 'old_manager'; // See only pre-transition
+      } else if (isNewManager) {
+        return 'new_manager'; // See only post-transition
+      } else {
+        return null; // Not involved in this transition
+      }
+    } else {
+      // Same manager (new_manager_id is null/empty or equals old_manager_id)
+      if (isOldManager || isNewManager) {
+        return 'same_manager'; // See both pre and post-transition
+      } else {
+        return null; // Not involved in this transition
+      }
+    }
+  }, [transition, currentEmployee]);
+  
+  // Determine current quarter from backend response or cycle
+  const currentQuarter = useMemo(() => {
+    if (!activeCycle) return 1 as Quarter; // Default to Q1 if no active cycle
+    // Use backend response if available, otherwise fall back to date calculation
+    const backendQuarter = managerReview?.present_quarter;
+    if (backendQuarter && backendQuarter >= 1 && backendQuarter <= 4) {
+      return backendQuarter as Quarter;
+    }
+    return getCurrentQuarter(activeCycle, quarterlyCycles);
+  }, [activeCycle, quarterlyCycles, managerReview]);
+
   useEffect(() => {
     if (activeCycle) {
       if (initialQuarter && parseInt(initialQuarter) >= 1 && parseInt(initialQuarter) <= 4) {
         setSelectedQuarter(parseInt(initialQuarter) as Quarter);
         setEvaluationMode('quarterly');
       } else {
-        setSelectedQuarter(currentQuarter);
+        // Use backend response to determine default quarter for manager review
+        if (managerReview?.enabled && managerReview?.review_for_quarter) {
+          setSelectedQuarter(managerReview.review_for_quarter as Quarter);
+        } else {
+          setSelectedQuarter(currentQuarter);
+        }
         setEvaluationMode('quarterly');
       }
     }
-  }, [activeCycle, initialQuarter, currentQuarter]);
+  }, [activeCycle, initialQuarter, currentQuarter, managerReview]);
 
   // Update managerId when employee data changes
   useEffect(() => {
@@ -307,7 +359,34 @@ export default function ManagerEvaluation() {
         }
       }
       
-      if (!isDirectManager && !isDelegate) {
+      // Check if user is the new manager in a transition (for any quarter in the cycle)
+      let isTransitionManager = false;
+      if (!isDirectManager && !isDelegate && activeCycleFromContext?.id) {
+        try {
+          // Check if there's a transition where current user is the new manager
+          // We need to check all quarters since we don't know which quarter yet
+          const transitions = await transitionService.getByEmployee(
+            employeeId,
+            activeCycleFromContext.id,
+            null // Check all quarters
+          );
+          
+          if (transitions && Array.isArray(transitions)) {
+            // Check if any transition has current user as new_manager_id
+            isTransitionManager = transitions.some((t: any) => 
+              t.new_manager_id === currentEmployee.id
+            );
+            
+            if (isTransitionManager) {
+              console.log('[Authorization] User is new manager in transition for employee', employeeId);
+            }
+          }
+        } catch (error) {
+          console.error('Error checking transition authorization:', error);
+        }
+      }
+      
+      if (!isDirectManager && !isDelegate && !isTransitionManager) {
         toast({ title: 'Not authorized to evaluate this employee', variant: 'destructive' });
         navigate('/team');
         setLoading(false);
@@ -336,25 +415,49 @@ export default function ManagerEvaluation() {
       }));
       setRatingScales(scales);
 
-      // Fetch approved KRAs for this employee - include quarter, period_type, and transition_id
+      // Fetch KRAs for this employee - fetch for all quarters initially
+      // We'll filter by quarter in useMemo based on selectedQuarter
+      // For transitions, we need to fetch both pre and post-transition data
+      // Note: Pre-transition KRAs have status='locked', so we fetch without status filter
       // activeCycleFromContext is already checked above, so it's safe to use .id
-      const krasResult = await goalsService.kras.getByEmployee(employeeId, activeCycleFromContext!.id, 'approved');
-      const mappedKras = (krasResult.data || []).map((kra: any) => ({
-        id: kra.id,
-        title: kra.title,
-        description: kra.description,
-        weight: kra.weight,
-        quarter: kra.quarter || null,
-        period_type: kra.period_type || null,
-        transition_id: kra.transition_id || null,
-      }));
+      const krasResult = await goalsService.kras.getByEmployee(
+        employeeId, 
+        activeCycleFromContext!.id, 
+        undefined // No status filter - we want both 'approved' and 'locked' (for pre-transition)
+
+      );
+      const mappedKras = (krasResult.data || [])
+        .filter((kra: any) => kra.status === 'approved' || kra.status === 'locked')
+        .map((kra: any) => ({
+          id: kra.id,
+          title: kra.title,
+          description: kra.description,
+          weight: kra.weight,
+          quarter: kra.quarter || null,
+          period_type: kra.period_type || null,
+          transition_id: kra.transition_id || null,
+        }));
+      console.log('ManagerEvaluation - All KRAs fetched (approved/locked only):', mappedKras.length, mappedKras.map(k => ({ 
+        id: k.id, 
+        quarter: k.quarter, 
+        period_type: k.period_type, 
+        transition_id: k.transition_id 
+      })));
       setKras(mappedKras);
 
-      // Fetch approved KPIs (goals with kra_id) - include calibration, quarter, period_type, and transition_id
+      // Fetch KPIs (goals with kra_id) - fetch for all quarters initially
+      // Note: Pre-transition KPIs have status='locked', so we fetch without status filter
       // activeCycleFromContext is already checked above, so it's safe to use .id
-      const kpisResult = await goalsService.kpis.getByEmployee(employeeId, activeCycleFromContext!.id, 'approved');
+      const kpisResult = await goalsService.kpis.getByEmployee(
+        employeeId, 
+        activeCycleFromContext!.id, 
+        undefined // No status filter - we want both 'approved' and 'locked' (for pre-transition)
+        // Don't filter by quarter here - fetch all quarters, filter in useMemo
+        // Don't filter by period_type - fetch all periods (pre, post, full_quarter)
+      );
+      // Filter to only include KPIs with kra_id and status='approved' or 'locked'
       const filteredKpis = (kpisResult.data || [])
-        .filter((kpi: any) => kpi.kra_id)
+        .filter((kpi: any) => kpi.kra_id && (kpi.status === 'approved' || kpi.status === 'locked'))
         .map((kpi: any) => ({
           id: kpi.id,
           kra_id: kpi.kra_id as string,
@@ -368,24 +471,125 @@ export default function ManagerEvaluation() {
           period_type: kpi.period_type || null,
           transition_id: kpi.transition_id || null,
         }));
+      console.log('ManagerEvaluation - All KPIs fetched (approved/locked only):', filteredKpis.length, filteredKpis.map(k => ({ 
+        id: k.id, 
+        quarter: k.quarter, 
+        period_type: k.period_type, 
+        transition_id: k.transition_id 
+      })));
       setKpis(filteredKpis);
 
       // Fetch quarterly self reviews (from quarterly_self_reviews table)
+      // For transition employees, fetch period-specific self-reviews based on manager role
       // activeCycleFromContext is already checked above, so it's safe to use .id
-      const allQuarterlySelfResult = await evaluationService.selfReviews.get(employeeId, activeCycleFromContext!.id);
-      console.log('allQuarterlySelfResult',allQuarterlySelfResult)
+      
+      // Compute manager role for transition filtering (inside fetchData to have access to transition)
+      let computedManagerRole: 'old_manager' | 'new_manager' | 'same_manager' | null = null;
+      if (transition && transition.quarter === selectedQuarter && currentEmployee) {
+        const isOldManager = transition.old_manager_id === currentEmployee.id;
+        const isNewManager = transition.new_manager_id && transition.new_manager_id === currentEmployee.id;
+        const managersAreDifferent = transition.new_manager_id && 
+                                    transition.new_manager_id !== transition.old_manager_id;
+
+        if (managersAreDifferent) {
+          if (isOldManager) {
+            computedManagerRole = 'old_manager';
+          } else if (isNewManager) {
+            computedManagerRole = 'new_manager';
+          }
+        } else {
+          if (isOldManager || isNewManager) {
+            computedManagerRole = 'same_manager';
+          }
+        }
+      }
+      
+      let allQuarterlySelfResult;
+      
+      // Check if we have a transition for the selected quarter
+      if (transition && transition.quarter === selectedQuarter) {
+        // For transition employees, fetch the correct period-specific self-review
+        // New manager should see post-transition, old manager should see pre-transition
+        const periodType = computedManagerRole === 'new_manager' ? 'post_transition' : 
+                          computedManagerRole === 'old_manager' ? 'pre_transition' : 
+                          null; // same_manager or no role - fetch all
+        
+        if (periodType) {
+          // Fetch specific period self-review
+          allQuarterlySelfResult = await evaluationService.selfReviews.get(
+            employeeId, 
+            activeCycleFromContext!.id,
+            selectedQuarter,
+            periodType,
+            transition.id
+          );
+          console.log(`[ManagerEvaluation] Fetched ${periodType} self-review for transition employee (managerRole: ${computedManagerRole}):`, allQuarterlySelfResult);
+        } else {
+          // Fetch all self-reviews for the quarter (for same_manager or no transition)
+          allQuarterlySelfResult = await evaluationService.selfReviews.get(employeeId, activeCycleFromContext!.id);
+        }
+      } else {
+        // No transition for this quarter, fetch all self-reviews normally
+        allQuarterlySelfResult = await evaluationService.selfReviews.get(employeeId, activeCycleFromContext!.id);
+      }
+      
+      console.log('allQuarterlySelfResult', allQuarterlySelfResult);
 
       const qSelfEvalsMap: Record<number, QuarterlySelfEval> = {};
       (allQuarterlySelfResult.data || []).forEach((e: any) => {
         if (e.quarter) {
-          qSelfEvalsMap[e.quarter] = {
-            id: e.id,
-            quarter: e.quarter,
-            status: e.status,
-            overall_rating: e.overall_rating ?? null,
-            overall_comments: e.overall_comments,
-            calculated_overall_rating: null, // Not stored in quarterly_self_reviews
-          };
+          // For transition employees, only include the relevant period self-review
+          if (transition && transition.quarter === e.quarter) {
+            const isPostTransition = e.period_type === 'post_transition';
+            const isPreTransition = e.period_type === 'pre_transition';
+            
+            // Filter based on manager role
+            if (computedManagerRole === 'new_manager' && isPostTransition) {
+              qSelfEvalsMap[e.quarter] = {
+                id: e.id,
+                quarter: e.quarter,
+                status: e.status,
+                overall_rating: e.overall_rating ?? null,
+                overall_comments: e.overall_comments,
+                calculated_overall_rating: null, // Not stored in quarterly_self_reviews
+                period_type: e.period_type,
+                transition_id: e.transition_id,
+              };
+            } else if (computedManagerRole === 'old_manager' && isPreTransition) {
+              qSelfEvalsMap[e.quarter] = {
+                id: e.id,
+                quarter: e.quarter,
+                status: e.status,
+                overall_rating: e.overall_rating ?? null,
+                overall_comments: e.overall_comments,
+                calculated_overall_rating: null, // Not stored in quarterly_self_reviews
+                period_type: e.period_type,
+                transition_id: e.transition_id,
+              };
+            } else if (computedManagerRole === 'same_manager' || !computedManagerRole) {
+              // Same manager or no role - include all periods
+              qSelfEvalsMap[e.quarter] = {
+                id: e.id,
+                quarter: e.quarter,
+                status: e.status,
+                overall_rating: e.overall_rating ?? null,
+                overall_comments: e.overall_comments,
+                calculated_overall_rating: null, // Not stored in quarterly_self_reviews
+                period_type: e.period_type,
+                transition_id: e.transition_id,
+              };
+            }
+          } else {
+            // No transition for this quarter, include normally
+            qSelfEvalsMap[e.quarter] = {
+              id: e.id,
+              quarter: e.quarter,
+              status: e.status,
+              overall_rating: e.overall_rating ?? null,
+              overall_comments: e.overall_comments,
+              calculated_overall_rating: null, // Not stored in quarterly_self_reviews
+            };
+          }
         }
       });
       setQuarterlySelfEvals(qSelfEvalsMap);
@@ -400,7 +604,7 @@ export default function ManagerEvaluation() {
         
         try {
           const qRatingsResult = await evaluationService.goalSelfRatings.get(qEval.id);
-          console.log('qRatingsResult',qRatingsResult)
+          console.log(`[ManagerEvaluation] Fetched goal self ratings for Q${quarter} (self-review ID: ${qEval.id}, period_type: ${qEval.period_type}, transition_id: ${qEval.transition_id}):`, qRatingsResult);
 
           const ratingsMap: Record<string, GoalSelfRating> = {};
           (qRatingsResult.data || []).forEach((r: any) => {
@@ -413,6 +617,11 @@ export default function ManagerEvaluation() {
               target_value: r.target_value,
               metric_type: r.metric_type || '',
             };
+          });
+          console.log(`[ManagerEvaluation] Mapped goal self ratings for Q${quarter}:`, {
+            ratingsCount: Object.keys(ratingsMap).length,
+            goalIds: Object.keys(ratingsMap),
+            ratingsMap
           });
           qGoalRatingsMap[parseInt(quarter)] = ratingsMap;
         } catch (error) {
@@ -429,17 +638,190 @@ export default function ManagerEvaluation() {
       }
 
       // Fetch or create quarterly manager review (instead of manager_evaluations)
+      // For transition employees, fetch period-specific manager review based on manager role
       // activeCycleFromContext is already checked above, so it's safe to use .id
-      const mgrReviewsResult = await evaluationService.managerReviews.get(employeeId, activeCycleFromContext!.id);
+      let mgrReviewsResult;
       
-      // Create a map of manager reviews by quarter
+      // For transition employees, we need to fetch ALL manager reviews to check submission status
+      // This allows us to check if pre-transition review has been submitted (by old manager)
+      // and if post-transition review has been submitted (by new manager)
+      if (transition && transition.quarter === selectedQuarter) {
+        // Fetch pre-transition and post-transition reviews separately to bypass manager role filtering
+        // This ensures we can check submission status for both periods
+        const [preTransitionResult, postTransitionResult, allReviewsResult] = await Promise.all([
+          evaluationService.managerReviews.get(
+            employeeId, 
+            activeCycleFromContext!.id,
+            selectedQuarter,
+            'pre_transition',
+            transition.id
+          ),
+          evaluationService.managerReviews.get(
+            employeeId, 
+            activeCycleFromContext!.id,
+            selectedQuarter,
+            'post_transition',
+            transition.id
+          ),
+          // Also fetch all reviews to get the one for current manager role
+          evaluationService.managerReviews.get(
+            employeeId, 
+            activeCycleFromContext!.id,
+            selectedQuarter
+          )
+        ]);
+        
+        // Combine all reviews
+        const allReviews = [
+          ...(preTransitionResult.data || []),
+          ...(postTransitionResult.data || []),
+          ...(allReviewsResult.data || [])
+        ];
+        
+        // Remove duplicates based on review ID
+        const uniqueReviews = Array.from(
+          new Map(allReviews.map((r: any) => [r.id, r])).values()
+        );
+        
+        mgrReviewsResult = { data: uniqueReviews };
+        console.log(`[ManagerEvaluation] Fetched all manager reviews for transition employee (quarter ${selectedQuarter}):`, {
+          preTransition: preTransitionResult.data,
+          postTransition: postTransitionResult.data,
+          allReviews: allReviewsResult.data,
+          combined: uniqueReviews
+        });
+      } else {
+        // No transition for this quarter, fetch all manager reviews normally
+        mgrReviewsResult = await evaluationService.managerReviews.get(employeeId, activeCycleFromContext!.id);
+      }
+      
+      // Create maps for both pre and post-transition reviews
+      const preTransitionReview: any = null;
+      const postTransitionReview: any = null;
       const mgrReviewsByQuarter: Record<number, any> = {};
+      
       (mgrReviewsResult.data || []).forEach((r: any) => {
-        mgrReviewsByQuarter[r.quarter] = r;
+        // For transition employees, separate pre and post-transition reviews
+        if (transition && transition.quarter === r.quarter && r.transition_id === transition.id) {
+          if (r.period_type === 'pre_transition') {
+            // Store pre-transition review separately
+            if (!preTransitionReview || (r.status === 'submitted' && preTransitionReview.status !== 'submitted')) {
+              // Prefer submitted review if multiple exist
+            }
+          } else if (r.period_type === 'post_transition') {
+            // Store post-transition review separately
+            if (!postTransitionReview || (r.status === 'submitted' && postTransitionReview.status !== 'submitted')) {
+              // Prefer submitted review if multiple exist
+            }
+          }
+        }
+        
+        // Filter based on manager role for the main review to display
+        if (transition && transition.quarter === r.quarter) {
+          const isPostTransition = r.period_type === 'post_transition';
+          const isPreTransition = r.period_type === 'pre_transition';
+          
+          // Filter based on manager role
+          if (computedManagerRole === 'new_manager' && isPostTransition && r.transition_id === transition.id) {
+            mgrReviewsByQuarter[r.quarter] = r;
+          } else if (computedManagerRole === 'old_manager' && isPreTransition && r.transition_id === transition.id) {
+            mgrReviewsByQuarter[r.quarter] = r;
+          } else if (computedManagerRole === 'same_manager' || !computedManagerRole) {
+            // Same manager or no role - use the most recent or submitted review
+            if (!mgrReviewsByQuarter[r.quarter] || (r.status === 'submitted' && mgrReviewsByQuarter[r.quarter].status !== 'submitted')) {
+              mgrReviewsByQuarter[r.quarter] = r;
+            }
+          }
+        } else {
+          // No transition for this quarter, include normally
+          mgrReviewsByQuarter[r.quarter] = r;
+        }
       });
 
-      // Use the first found manager review or create one
-      const existingReview = mgrReviewsByQuarter[selectedQuarter] || Object.values(mgrReviewsByQuarter)[0];
+      // Find pre and post-transition reviews separately for submission status checking
+      let preTransitionReviewForStatus: any = null;
+      let postTransitionReviewForStatus: any = null;
+      
+      if (transition && transition.quarter === selectedQuarter) {
+        console.log(`[ManagerEvaluation] Checking manager reviews for transition (quarter ${selectedQuarter}, transition_id: ${transition.id}):`, mgrReviewsResult.data);
+        (mgrReviewsResult.data || []).forEach((r: any) => {
+          if (r.quarter === selectedQuarter && r.transition_id === transition.id) {
+            if (r.period_type === 'pre_transition') {
+              if (!preTransitionReviewForStatus || (r.status === 'submitted' && preTransitionReviewForStatus.status !== 'submitted')) {
+                preTransitionReviewForStatus = r;
+              }
+            } else if (r.period_type === 'post_transition') {
+              if (!postTransitionReviewForStatus || (r.status === 'submitted' && postTransitionReviewForStatus.status !== 'submitted')) {
+                postTransitionReviewForStatus = r;
+              }
+            }
+          }
+        });
+        console.log(`[ManagerEvaluation] Pre-transition review found:`, preTransitionReviewForStatus);
+        console.log(`[ManagerEvaluation] Post-transition review found:`, postTransitionReviewForStatus);
+      }
+
+      // Use the manager review for selected quarter (filtered by period_type if transition exists)
+      const existingReview = mgrReviewsByQuarter[selectedQuarter];
+      
+      // If we didn't find pre/post-transition reviews separately, use existingReview as fallback
+      // This handles the case where the separate fetch didn't return the review but managerEvaluation has it
+      if (transition && transition.quarter === selectedQuarter) {
+        if (!preTransitionReviewForStatus && existingReview && existingReview.period_type === 'pre_transition' && existingReview.transition_id === transition.id) {
+          preTransitionReviewForStatus = existingReview;
+          console.log(`[ManagerEvaluation] Using existingReview as pre-transition review fallback:`, {
+            existingReview: {
+              id: existingReview.id,
+              status: existingReview.status,
+              period_type: existingReview.period_type,
+              transition_id: existingReview.transition_id
+            }
+          });
+        }
+        if (!postTransitionReviewForStatus && existingReview && existingReview.period_type === 'post_transition' && existingReview.transition_id === transition.id) {
+          postTransitionReviewForStatus = existingReview;
+          console.log(`[ManagerEvaluation] Using existingReview as post-transition review fallback:`, {
+            existingReview: {
+              id: existingReview.id,
+              status: existingReview.status,
+              period_type: existingReview.period_type,
+              transition_id: existingReview.transition_id
+            }
+          });
+        }
+        
+        // Also check all reviews in mgrReviewsResult.data for fallback
+        // This ensures we catch reviews that might not be in mgrReviewsByQuarter
+        if (!preTransitionReviewForStatus || !postTransitionReviewForStatus) {
+          (mgrReviewsResult.data || []).forEach((r: any) => {
+            if (r.quarter === selectedQuarter && r.transition_id === transition.id) {
+              if (!preTransitionReviewForStatus && r.period_type === 'pre_transition') {
+                preTransitionReviewForStatus = r;
+                console.log(`[ManagerEvaluation] Found pre-transition review in all reviews:`, {
+                  id: r.id,
+                  status: r.status,
+                  period_type: r.period_type,
+                  transition_id: r.transition_id
+                });
+              }
+              if (!postTransitionReviewForStatus && r.period_type === 'post_transition') {
+                postTransitionReviewForStatus = r;
+                console.log(`[ManagerEvaluation] Found post-transition review in all reviews:`, {
+                  id: r.id,
+                  status: r.status,
+                  period_type: r.period_type,
+                  transition_id: r.transition_id
+                });
+              }
+            }
+          });
+        }
+      }
+      
+      // Store pre and post-transition reviews for submission status checking
+      setPreTransitionReview(preTransitionReviewForStatus);
+      setPostTransitionReview(postTransitionReviewForStatus);
+   
 
       if (existingReview) {
         setManagerEvaluation(existingReview);
@@ -452,6 +834,7 @@ export default function ManagerEvaluation() {
         if (existingReview.id) {
           try {
             const mgrFeedbackResult = await evaluationService.kpiManagerFeedback.getByReview(existingReview.id);
+         
             (mgrFeedbackResult.data || []).forEach((r: any) => {
               // Calculate manager_achieved_value from progress_percentage if available
               let managerAchievedValue = null;
@@ -532,8 +915,7 @@ export default function ManagerEvaluation() {
           if (yearEndResult.data.potential_rating !== null && yearEndResult.data.potential_rating !== undefined) {
             setPotentialRating(yearEndResult.data.potential_rating);
           }
-          // ALWAYS populate quarterly ratings from the year-end record (these contain calibrated ratings after HR approval)
-          // This overrides the raw manager ratings from quarterly_manager_reviews
+        
           setQuarterlyRatings({
             q1: yearEndResult.data.q1_rating ?? null,
             q2: yearEndResult.data.q2_rating ?? null,
@@ -560,6 +942,29 @@ export default function ManagerEvaluation() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    const checkLatePermission = async () => {
+      if (!activeCycle?.id || !currentEmployee?.id || evaluationMode !== 'quarterly') {
+        setHasLatePermission(false);
+        return;
+      }
+      try {
+        const result = await permissionsService.lateSubmission.check(activeCycle.id, selectedQuarter);
+        const permissions = result.data || [];
+        const hasPermission = permissions.some((p: any) => {
+          const isActive = !p.revoked_at;
+          const quarterMatch = p.quarter === selectedQuarter || p.quarter === null;    
+          return isActive && quarterMatch;
+        });
+        setHasLatePermission(hasPermission);
+      } catch (error) {
+        console.error('Error checking late permission:', error);
+        setHasLatePermission(false);
+      }
+    };
+    checkLatePermission();
+  }, [activeCycle?.id, currentEmployee?.id, selectedQuarter, evaluationMode]);
 
   // Auto-calculate ratings from achievement values using calibration
   useEffect(() => {
@@ -915,7 +1320,40 @@ export default function ManagerEvaluation() {
 
     setSaving(true);
     try {
-    
+      // Determine period_type and transition_id for transition employees
+      let periodType: 'full_quarter' | 'pre_transition' | 'post_transition' | undefined = undefined;
+      let transitionId: string | undefined = undefined;
+      
+      if (transition && transition.quarter === selectedQuarter) {
+        // Determine period type based on manager role
+        if (managerRole === 'new_manager') {
+          periodType = 'post_transition';
+          transitionId = transition.id;
+        } else if (managerRole === 'old_manager') {
+          periodType = 'pre_transition';
+          transitionId = transition.id;
+        } else if (managerRole === 'same_manager') {
+          // For same manager, we need to determine which period they're reviewing
+          // Check if we have pre-transition or post-transition KPIs being rated
+          const hasPreTransitionKPIs = quarterKpis.some((kpi: any) => 
+            kpi.period_type === 'pre_transition' && kpi.transition_id === transition.id
+          );
+          const hasPostTransitionKPIs = quarterKpis.some((kpi: any) => 
+            kpi.period_type === 'post_transition' && kpi.transition_id === transition.id
+          );
+          
+          // If both exist, we need to check which one the manager is currently reviewing
+          // For now, prioritize post-transition if both exist (manager reviews post-transition after pre-transition)
+          if (hasPostTransitionKPIs) {
+            periodType = 'post_transition';
+            transitionId = transition.id;
+          } else if (hasPreTransitionKPIs) {
+            periodType = 'pre_transition';
+            transitionId = transition.id;
+          }
+        }
+      }
+      
       const mgrReviewResult = await evaluationService.managerReviews.upsert({
         employee_id: employeeId,
         cycle_id: activeCycle.id,
@@ -925,9 +1363,14 @@ export default function ManagerEvaluation() {
         guidance: developmentRecommendations,
         calculated_overall_rating: calculatedQuarterRating,
         status: 'submitted',
+        period_type: periodType,
+        transition_id: transitionId,
       });
 
       if (mgrReviewResult.data) {
+        // Update managerEvaluation state with submitted review
+        setManagerEvaluation(mgrReviewResult.data);
+        
         // Save KPI manager feedback
         const ratingsToSave = Object.values(goalManagerRatings).map(rating => {
           // Calculate progress_percentage from manager_achieved_value
@@ -956,7 +1399,8 @@ export default function ManagerEvaluation() {
       }
 
       toast({ title: `Q${selectedQuarter} Manager review submitted` });
-      navigate('/team');
+      // Don't navigate away - let the user see the submitted state
+      // The buttons will be hidden because isSubmitted will be true
     } catch (error: any) {
       toast({
         title: 'Error',
@@ -966,7 +1410,7 @@ export default function ManagerEvaluation() {
     } finally {
       setSaving(false);
     }
-  }, [activeCycle, managerId, employeeId, goalManagerRatings, quarterKpis, overallComments, yearEndOverallComments, developmentRecommendations, overallRating, potentialRating, evaluationMode, selectedQuarter, quarterlyRatings, calculatedQuarterRating, calculatedYearEndRating, managerEvaluation, toast, navigate]);
+  }, [activeCycle, managerId, employeeId, goalManagerRatings, quarterKpis, kpis, overallComments, yearEndOverallComments, developmentRecommendations, overallRating, potentialRating, evaluationMode, selectedQuarter, quarterlyRatings, calculatedQuarterRating, calculatedYearEndRating, transition, managerRole, toast]);
 
   const getRatingLabel = (value: number | null) => {
     if (!value) return 'Not rated';
@@ -1197,6 +1641,125 @@ export default function ManagerEvaluation() {
     );
   }, [expandedKRAs, toggleKRA, calculatedKRARatings, goalManagerRatings, handleGoalRatingChange, ratingScales, getRatingLabel]);
 
+  // ALL HOOKS AND COMPUTED VALUES MUST BE CALLED BEFORE ANY EARLY RETURNS
+  // This ensures React Rules of Hooks are followed (hooks must be called in the same order every render)
+  
+  const quarterNumber = evaluationMode === 'quarterly' ? selectedQuarter : null;
+
+  const relevantSelfEval = quarterNumber 
+    ? quarterlySelfEvals[quarterNumber]
+    : selfEvaluation;
+
+  // Compute displayed KPIs based on manager role and transition (for filtering ratings)
+  const displayedKpis = useMemo(() => {
+    if (!transition || transition.quarter !== selectedQuarter || !quarterNumber) {
+      // No transition, return all quarter KPIs
+      return quarterKpis;
+    }
+    
+    // Filter KPIs by period_type and transition_id
+    const preTransitionKpis = quarterKpis.filter(k => 
+      k.period_type === 'pre_transition' && k.transition_id === transition.id
+    );
+    const postTransitionKpis = quarterKpis.filter(k => 
+      k.period_type === 'post_transition' && k.transition_id === transition.id
+    );
+    
+    console.log('[ManagerEvaluation] Computing displayed KPIs:', {
+      managerRole,
+      transitionId: transition.id,
+      quarter: selectedQuarter,
+      allQuarterKpis: quarterKpis.length,
+      preTransitionKpis: preTransitionKpis.length,
+      postTransitionKpis: postTransitionKpis.length,
+      preTransitionKpiIds: preTransitionKpis.map(k => k.id),
+      postTransitionKpiIds: postTransitionKpis.map(k => k.id)
+    });
+    
+    // Apply manager role filtering
+    if (managerRole === 'old_manager') {
+      // Old manager: only pre-transition
+      return preTransitionKpis;
+    } else if (managerRole === 'new_manager') {
+      // New manager: only post-transition
+      return postTransitionKpis;
+    } else if (managerRole === 'same_manager') {
+      // Same manager: both pre and post-transition
+      return [...preTransitionKpis, ...postTransitionKpis];
+    }
+    
+    // No manager role or no transition: return all quarter KPIs
+    return quarterKpis;
+  }, [transition, selectedQuarter, quarterNumber, quarterKpis, managerRole]);
+
+  // Get the appropriate goal self ratings based on quarterly or year-end view
+  // For transition employees, filter ratings to match the displayed KPIs (by period_type and transition_id)
+  const relevantGoalSelfRatings = useMemo(() => {
+    const baseRatings = quarterNumber 
+      ? quarterlyGoalSelfRatings[quarterNumber] || {}
+      : goalSelfRatings;
+    
+    // If there's a transition for this quarter, filter ratings to match displayed KPIs
+    if (transition && transition.quarter === selectedQuarter && quarterNumber) {
+      // Get the KPIs that are being displayed (filtered by manager role)
+      const displayedKpiIds = new Set(displayedKpis.map(kpi => kpi.id));
+      
+      // Filter ratings to only include those for displayed KPIs
+      const filteredRatings: Record<string, GoalSelfRating> = {};
+      Object.entries(baseRatings).forEach(([kpiId, rating]) => {
+        if (displayedKpiIds.has(kpiId)) {
+          filteredRatings[kpiId] = rating;
+        }
+      });
+      
+      console.log('[ManagerEvaluation] Filtered goal self ratings for transition:', {
+        baseRatingsCount: Object.keys(baseRatings).length,
+        displayedKpiIds: Array.from(displayedKpiIds),
+        displayedKpisCount: displayedKpis.length,
+        displayedKpis: displayedKpis.map(k => ({ id: k.id, title: k.title, period_type: k.period_type, transition_id: k.transition_id })),
+        filteredRatingsCount: Object.keys(filteredRatings).length,
+        filteredRatings
+      });
+      
+      return filteredRatings;
+    }
+    
+    return baseRatings;
+  }, [quarterNumber, quarterlyGoalSelfRatings, goalSelfRatings, transition, selectedQuarter, displayedKpis]);
+
+  // These are computed after null checks, but add safety checks just in case
+  const quarterPeriodStatus = activeCycle 
+    ? getQuarterManagerReviewStatus(activeCycle, selectedQuarter, quarterlyCycles)
+    : { timing: 'future' as const, startDate: null, endDate: null, message: 'No active performance cycle.' };
+  const yearEndPeriodStatus = activeCycle 
+    ? getYearEndManagerEvalStatus(activeCycle)
+    : { timing: 'future' as const, startDate: null, endDate: null, message: 'No active performance cycle.' };
+  
+  // Check if employee has transition for this quarter
+  const hasTransitionForQuarter = transition && transition.employee_id === employeeId;
+  
+  // Helper to check if current date is within quarter date range
+  // NOTE: This hook must be called before any early returns to comply with React Rules of Hooks
+  const isWithinQuarterDates = useMemo(() => {
+    if (!activeCycle || !quarterlyCycles) return false;
+    
+    // Find the quarterly cycle for this quarter
+    const quarterlyCycle = quarterlyCycles.find(qc => qc.quarter === selectedQuarter);
+    if (!quarterlyCycle?.quarter_start_date || !quarterlyCycle?.quarter_end_date) {
+      return false;
+    }
+    
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const quarterStart = new Date(quarterlyCycle.quarter_start_date);
+    quarterStart.setHours(0, 0, 0, 0);
+    const quarterEnd = new Date(quarterlyCycle.quarter_end_date);
+    quarterEnd.setHours(23, 59, 59, 999);
+    
+    return now >= quarterStart && now <= quarterEnd;
+  }, [activeCycle, quarterlyCycles, selectedQuarter]);
+
+  // Early returns must come AFTER all hooks
   // Show loading state while fetching or if active cycle is still loading
   if (loading || isLoadingActiveCycle) {
     return (
@@ -1230,6 +1793,7 @@ export default function ManagerEvaluation() {
     );
   }
 
+  // Early returns must come AFTER all hooks
   if (kras.length === 0 || kpis.length === 0) {
     return (
       <MainLayout>
@@ -1251,25 +1815,6 @@ export default function ManagerEvaluation() {
       </MainLayout>
     );
   }
-
-  const quarterNumber = evaluationMode === 'quarterly' ? selectedQuarter : null;
-
-  const relevantSelfEval = quarterNumber 
-    ? quarterlySelfEvals[quarterNumber]
-    : selfEvaluation;
-
-  // Get the appropriate goal self ratings based on quarterly or year-end view
-  const relevantGoalSelfRatings = quarterNumber 
-    ? quarterlyGoalSelfRatings[quarterNumber] || {}
-    : goalSelfRatings;
-
-  // These are computed after null checks, but add safety checks just in case
-  const quarterPeriodStatus = activeCycle 
-    ? getQuarterManagerReviewStatus(activeCycle, selectedQuarter, quarterlyCycles)
-    : { timing: 'future' as const, startDate: null, endDate: null, message: 'No active performance cycle.' };
-  const yearEndPeriodStatus = activeCycle 
-    ? getYearEndManagerEvalStatus(activeCycle)
-    : { timing: 'future' as const, startDate: null, endDate: null, message: 'No active performance cycle.' };
   
   const handleEvaluationTabChange = (tab: 'quarterly' | 'year-end', quarter?: Quarter) => {
     setEvaluationMode(tab);
@@ -1284,14 +1829,136 @@ export default function ManagerEvaluation() {
   const handleQuarterChange = (quarter: Quarter) => {
     setSelectedQuarter(quarter);
     setSearchParams({ quarter: quarter.toString() });
+    // Refetch data when quarter changes to ensure we have the correct data for the selected quarter
+    fetchData();
   };
 
+  // Allow evaluation if:
+  // 1. Normal case: manager review period is current AND self-eval is submitted
+  // 2. Transition case: has transition AND within quarter dates AND self-eval is submitted (bypass manager review date restrictions)
+  // 3. Late permission case: manager has late permission AND self-eval is submitted (bypass deadline restrictions)
   const canEvaluate = evaluationMode === 'quarterly'
-    ? quarterPeriodStatus.timing === 'current' && relevantSelfEval?.status === 'submitted'
+    ? (hasTransitionForQuarter && isWithinQuarterDates 
+        ? relevantSelfEval?.status === 'submitted'  // For transitions, only check self-eval status, bypass date restrictions
+        : (quarterPeriodStatus.timing === 'current' || hasLatePermission) && relevantSelfEval?.status === 'submitted')  // Normal case: check period OR late permission
     : true;
 
+  // Debug logging for canEvaluate
+  console.log('[canEvaluate Debug]', {
+    evaluationMode,
+    hasTransitionForQuarter,
+    isWithinQuarterDates,
+    quarterPeriodStatus: quarterPeriodStatus.timing,
+    hasLatePermission,
+    relevantSelfEvalStatus: relevantSelfEval?.status,
+    canEvaluate
+  });
+
+  // For transition employees, check submission status based on which period is being viewed
+  // If viewing pre-transition KPIs and pre-transition review is submitted, hide buttons
+  // If viewing post-transition KPIs and post-transition review is submitted, hide buttons
+  // Determine which period's review to check based on manager role and displayed KPIs
   const isSubmitted = evaluationMode === 'quarterly' 
-    ? managerEvaluation?.status === 'submitted'
+    ? (() => {
+        if (transition && transition.quarter === selectedQuarter) {
+          // Determine which period is being viewed based on manager role
+          // Old manager views pre-transition, new manager views post-transition
+          console.log(`[ManagerEvaluation] Checking isSubmitted for transition employee:`, {
+            managerRole,
+            selectedQuarter,
+            transitionId: transition.id,
+            preTransitionReview: preTransitionReview ? { 
+              id: preTransitionReview.id, 
+              status: preTransitionReview.status,
+              period_type: preTransitionReview.period_type,
+              transition_id: preTransitionReview.transition_id
+            } : null,
+            postTransitionReview: postTransitionReview ? { 
+              id: postTransitionReview.id, 
+              status: postTransitionReview.status,
+              period_type: postTransitionReview.period_type,
+              transition_id: postTransitionReview.transition_id
+            } : null,
+            managerEvaluation: managerEvaluation ? { 
+              id: managerEvaluation.id, 
+              status: managerEvaluation.status, 
+              period_type: managerEvaluation.period_type,
+              transition_id: managerEvaluation.transition_id
+            } : null,
+          });
+          
+          if (managerRole === 'old_manager') {
+            // Old manager: check if pre-transition review is submitted
+            // Must match the transition_id to ensure it's for this specific transition
+            // Use preTransitionReview if available, otherwise fallback to managerEvaluation if it's pre_transition
+            let review = preTransitionReview && preTransitionReview.transition_id === transition.id 
+              ? preTransitionReview 
+              : null;
+            
+            // Fallback: if preTransitionReview is null but managerEvaluation is pre_transition, use it
+            if (!review && managerEvaluation && managerEvaluation.period_type === 'pre_transition' && managerEvaluation.transition_id === transition.id) {
+              review = managerEvaluation;
+              console.log(`[ManagerEvaluation] Using managerEvaluation as pre-transition review for old manager`);
+            }
+            
+            const submitted = review?.status === 'submitted';
+            console.log(`[ManagerEvaluation] Old manager - isSubmitted: ${submitted}`, {
+              reviewExists: !!review,
+              reviewStatus: review?.status,
+              reviewPeriodType: review?.period_type,
+              reviewTransitionId: review?.transition_id,
+              expectedTransitionId: transition.id,
+              usingFallback: !preTransitionReview && !!managerEvaluation
+            });
+            return submitted;
+          } else if (managerRole === 'new_manager') {
+            // New manager: check if post-transition review is submitted
+            // Must match the transition_id to ensure it's for this specific transition
+            // Use postTransitionReview if available, otherwise fallback to managerEvaluation if it's post_transition
+            let review = postTransitionReview && postTransitionReview.transition_id === transition.id 
+              ? postTransitionReview 
+              : null;
+            
+            // Fallback: if postTransitionReview is null but managerEvaluation is post_transition, use it
+            if (!review && managerEvaluation && managerEvaluation.period_type === 'post_transition' && managerEvaluation.transition_id === transition.id) {
+              review = managerEvaluation;
+              console.log(`[ManagerEvaluation] Using managerEvaluation as post-transition review for new manager`);
+            }
+            
+            const submitted = review?.status === 'submitted';
+            console.log(`[ManagerEvaluation] New manager - isSubmitted: ${submitted}`, {
+              reviewExists: !!review,
+              reviewStatus: review?.status,
+              reviewPeriodType: review?.period_type,
+              reviewTransitionId: review?.transition_id,
+              expectedTransitionId: transition.id,
+              usingFallback: !postTransitionReview && !!managerEvaluation
+            });
+            return submitted;
+          } else if (managerRole === 'same_manager') {
+            // Same manager: check if current manager's review is submitted
+            // This will be the review that matches managerEvaluation
+            const submitted = managerEvaluation?.status === 'submitted';
+            console.log(`[ManagerEvaluation] Same manager - isSubmitted: ${submitted}`, {
+              managerEvaluationStatus: managerEvaluation?.status,
+              managerEvaluationPeriodType: managerEvaluation?.period_type
+            });
+            return submitted;
+          }
+          // Fallback to managerEvaluation status
+          const submitted = managerEvaluation?.status === 'submitted';
+          console.log(`[ManagerEvaluation] Fallback - isSubmitted: ${submitted}`, {
+            managerEvaluationStatus: managerEvaluation?.status
+          });
+          return submitted;
+        }
+        // No transition, use normal check
+        const submitted = managerEvaluation?.status === 'submitted';
+        console.log(`[ManagerEvaluation] No transition - isSubmitted: ${submitted}`, {
+          managerEvaluationStatus: managerEvaluation?.status
+        });
+        return submitted;
+      })()
     : Boolean(yearEndManagerEvaluation && yearEndManagerEvaluation.status === 'submitted');
   const hasHRRejection = evaluationMode === 'quarterly'
     ? managerEvaluation?.hr_rejection_reason && managerEvaluation?.status === 'pending'
@@ -1300,29 +1967,106 @@ export default function ManagerEvaluation() {
   // Render KRA/KPI rating content (quarterly only)
   const renderQuarterlyRatingContent = () => {
     // Debug logging
-    console.log('ManagerEvaluation - Transition:', transition);
-    console.log('ManagerEvaluation - Quarter KRAs:', quarterKras.map(k => ({ id: k.id, quarter: k.quarter, period_type: k.period_type, transition_id: k.transition_id })));
-    console.log('ManagerEvaluation - Quarter KPIs:', quarterKpis.map(k => ({ id: k.id, quarter: k.quarter, period_type: k.period_type, transition_id: k.transition_id })));
+    console.log('=== ManagerEvaluation - renderQuarterlyRatingContent ===');
+    console.log('Selected Quarter:', selectedQuarter);
+    console.log('Transition:', transition);
+    console.log('Transition ID:', transition?.id);
+    console.log('All KRAs count:', kras.length);
+    console.log('All KPIs count:', kpis.length);
+    console.log('Quarter KRAs count:', quarterKras.length);
+    console.log('Quarter KPIs count:', quarterKpis.length);
+    console.log('Quarter KRAs:', quarterKras.map(k => ({ 
+      id: k.id, 
+      title: k.title,
+      quarter: k.quarter, 
+      period_type: k.period_type, 
+      transition_id: k.transition_id 
+    })));
+    console.log('Quarter KPIs:', quarterKpis.map(k => ({ 
+      id: k.id, 
+      title: k.title,
+      quarter: k.quarter, 
+      period_type: k.period_type, 
+      transition_id: k.transition_id,
+      kra_id: k.kra_id
+    })));
     
     // Separate KRAs/KPIs by period if transition exists
-    const preTransitionKras = transition
-      ? quarterKras.filter(k => k.period_type === 'pre_transition' && k.transition_id === transition.id)
+    // Apply manager role filtering based on transition manager IDs
+    const preTransitionKras = transition && transition.id
+      ? quarterKras.filter(k => {
+          const matches = k.period_type === 'pre_transition' && k.transition_id === transition.id;
+          if (!matches && k.period_type === 'pre_transition') {
+            console.log('Pre-transition KRA filtered out:', {
+              kra_id: k.id,
+              kra_transition_id: k.transition_id,
+              expected_transition_id: transition.id,
+              match: k.transition_id === transition.id
+            });
+          }
+          return matches;
+        })
       : [];
-    const preTransitionKpis = transition
-      ? quarterKpis.filter(k => k.period_type === 'pre_transition' && k.transition_id === transition.id)
+    const preTransitionKpis = transition && transition.id
+      ? quarterKpis.filter(k => {
+          const matches = k.period_type === 'pre_transition' && k.transition_id === transition.id;
+          if (!matches && k.period_type === 'pre_transition') {
+            console.log('Pre-transition KPI filtered out:', {
+              kpi_id: k.id,
+              kpi_transition_id: k.transition_id,
+              expected_transition_id: transition.id,
+              match: k.transition_id === transition.id
+            });
+          }
+          return matches;
+        })
       : [];
-    const postTransitionKras = transition
+    const postTransitionKras = transition && transition.id
       ? quarterKras.filter(k => k.period_type === 'post_transition' && k.transition_id === transition.id)
       : [];
-    const postTransitionKpis = transition
+    const postTransitionKpis = transition && transition.id
       ? quarterKpis.filter(k => k.period_type === 'post_transition' && k.transition_id === transition.id)
       : [];
     const fullQuarterKras = transition ? [] : quarterKras.filter(k => !k.period_type || k.period_type === 'full_quarter');
     const fullQuarterKpis = transition ? [] : quarterKpis.filter(k => !k.period_type || k.period_type === 'full_quarter');
     
-    console.log('ManagerEvaluation - Pre-transition KRAs:', preTransitionKras.length, 'KPIs:', preTransitionKpis.length);
-    console.log('ManagerEvaluation - Post-transition KRAs:', postTransitionKras.length, 'KPIs:', postTransitionKpis.length);
-    console.log('ManagerEvaluation - Full quarter KRAs:', fullQuarterKras.length, 'KPIs:', fullQuarterKpis.length);
+    // Apply manager role filtering
+    // Case 1: Different managers (old_manager_id ≠ new_manager_id)
+    //   - Old manager: show only pre-transition
+    //   - New manager: show only post-transition
+    // Case 2: Same manager (new_manager_id is null/empty or equals old_manager_id)
+    //   - Show both pre and post-transition
+    let displayPreTransitionKras = preTransitionKras;
+    let displayPreTransitionKpis = preTransitionKpis;
+    let displayPostTransitionKras = postTransitionKras;
+    let displayPostTransitionKpis = postTransitionKpis;
+    
+    if (transition && managerRole) {
+      const managersAreDifferent = transition.new_manager_id && 
+                                    transition.new_manager_id !== transition.old_manager_id;
+      
+      if (managersAreDifferent) {
+        // Different managers: filter by role
+        if (managerRole === 'old_manager') {
+          // Old manager: only pre-transition
+          displayPostTransitionKras = [];
+          displayPostTransitionKpis = [];
+        } else if (managerRole === 'new_manager') {
+          // New manager: only post-transition
+          displayPreTransitionKras = [];
+          displayPreTransitionKpis = [];
+        }
+      }
+      // If managerRole === 'same_manager', show both (no filtering needed)
+    }
+    
+    console.log('Pre-transition KRAs:', preTransitionKras.length, preTransitionKras.map(k => ({ id: k.id, title: k.title })));
+    console.log('Pre-transition KPIs:', preTransitionKpis.length, preTransitionKpis.map(k => ({ id: k.id, title: k.title })));
+    console.log('Post-transition KRAs:', postTransitionKras.length);
+    console.log('Post-transition KPIs:', postTransitionKpis.length);
+    console.log('Full quarter KRAs:', fullQuarterKras.length);
+    console.log('Full quarter KPIs:', fullQuarterKpis.length);
+    console.log('==================================================');
     
     // Get period ratings
     const prePeriodRating = periodRatings.find(p => p.period_type === 'pre_transition');
@@ -1360,7 +2104,7 @@ export default function ManagerEvaluation() {
         </Alert>
       )}
       
-      {/* Period Ratings Display */}
+      {/* Period Ratings Display - Only show ratings for periods the manager can see */}
       {transition && (prePeriodRating || postPeriodRating || finalRating) && (
         <Card className="border-2 border-blue-200 bg-blue-50">
           <CardHeader>
@@ -1368,21 +2112,24 @@ export default function ManagerEvaluation() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-3 gap-4">
-              {prePeriodRating && (
+              {/* Pre-transition rating - only show if manager should see pre-transition */}
+              {prePeriodRating && (managerRole === 'old_manager' || managerRole === 'same_manager') && (
                 <div>
                   <div className="text-sm text-muted-foreground mb-1">Pre-Transition Rating</div>
                   <div className="text-2xl font-bold">{prePeriodRating.weighted_avg_rating?.toFixed(2) || '-'}</div>
                   <div className="text-xs text-muted-foreground">{prePeriodRating.period_days} days</div>
                 </div>
               )}
-              {postPeriodRating && (
+              {/* Post-transition rating - only show if manager should see post-transition */}
+              {postPeriodRating && (managerRole === 'new_manager' || managerRole === 'same_manager') && (
                 <div>
                   <div className="text-sm text-muted-foreground mb-1">Post-Transition Rating</div>
                   <div className="text-2xl font-bold">{postPeriodRating.weighted_avg_rating?.toFixed(2) || '-'}</div>
                   <div className="text-xs text-muted-foreground">{postPeriodRating.period_days} days</div>
                 </div>
               )}
-              {finalRating && (
+              {/* Final rating - show if manager can see both periods or if it's available */}
+              {finalRating && (managerRole === 'same_manager' || (!managerRole || managerRole === 'old_manager' || managerRole === 'new_manager')) && (
                 <div>
                   <div className="text-sm text-muted-foreground mb-1">Final Quarterly Rating</div>
                   <div className="text-2xl font-bold text-primary">{finalRating.final_quarterly_rating?.toFixed(2) || '-'}</div>
@@ -1448,79 +2195,84 @@ export default function ManagerEvaluation() {
 
           {transition ? (
             <>
-              {/* Pre-Transition Period */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-2 pb-2 border-b">
-                  <Badge variant={getPeriodBadgeVariant('pre_transition')}>
-                    {getPeriodLabel('pre_transition')}
-                  </Badge>
-                  {transition.pre_period_start_date && transition.pre_period_end_date && (
-                    <span className="text-sm text-muted-foreground">
-                      {formatPeriodDateRange(transition.pre_period_start_date, transition.pre_period_end_date)}
-                    </span>
-                  )}
-                  {transition.old_manager_name && (
-                    <span className="text-sm text-muted-foreground ml-auto">
-                      Manager: {transition.old_manager_name}
-                    </span>
+              {/* Pre-Transition Period - Only show if manager should see it */}
+              {(managerRole === 'old_manager' || managerRole === 'same_manager') && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 pb-2 border-b">
+                    <Badge variant={getPeriodBadgeVariant('pre_transition')}>
+                      {getPeriodLabel('pre_transition')}
+                    </Badge>
+                    {transition.pre_period_start_date && transition.pre_period_end_date && (
+                      <span className="text-sm text-muted-foreground">
+                        {formatPeriodDateRange(transition.pre_period_start_date, transition.pre_period_end_date)}
+                      </span>
+                    )}
+                    {transition.old_manager_name && (
+                      <span className="text-sm text-muted-foreground ml-auto">
+                        Manager: {transition.old_manager_name}
+                      </span>
+                    )}
+                  </div>
+                  {displayPreTransitionKras.length > 0 ? (
+                    displayPreTransitionKras.map((kra) => {
+                      const kraKpis = displayPreTransitionKpis.filter(k => k.kra_id === kra.id);
+                      return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+                    })
+                  ) : (
+                    <Card>
+                      <CardContent className="py-8 text-center text-muted-foreground">
+                        <p>No KRAs/KPIs found for the pre-transition period.</p>
+                        <p className="text-sm mt-2">Goals from before the transition date should appear here.</p>
+                      </CardContent>
+                    </Card>
                   )}
                 </div>
-                {preTransitionKras.length > 0 ? (
-                  preTransitionKras.map((kra) => {
-                    const kraKpis = preTransitionKpis.filter(k => k.kra_id === kra.id);
-                    return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
-                  })
-                ) : (
-                  <Card>
-                    <CardContent className="py-8 text-center text-muted-foreground">
-                      <p>No KRAs/KPIs found for the pre-transition period.</p>
-                      <p className="text-sm mt-2">Goals from before the transition date should appear here.</p>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
+              )}
               
-              {/* Transition Separator */}
-              {(preTransitionKras.length > 0 || postTransitionKras.length > 0) && (
+              {/* Transition Separator - Only show if both periods are visible */}
+              {((managerRole === 'old_manager' || managerRole === 'same_manager') && displayPreTransitionKras.length > 0) ||
+               ((managerRole === 'new_manager' || managerRole === 'same_manager') && displayPostTransitionKras.length > 0) ? (
                 <div className="flex items-center gap-2 py-2">
                   <div className="flex-1 border-t"></div>
                   <ArrowRight className="h-4 w-4 text-muted-foreground" />
                   <Badge variant="outline">{formatDateShort(new Date(transition.transition_date))}</Badge>
                   <div className="flex-1 border-t"></div>
                 </div>
-              )}
+              ) : null}
               
-              {/* Post-Transition Period */}
-              <div className="space-y-4">
-                <div className="flex items-center gap-2 pb-2 border-b">
-                  <Badge variant={getPeriodBadgeVariant('post_transition')}>
-                    {getPeriodLabel('post_transition')}
-                  </Badge>
-                  {transition.post_period_start_date && transition.post_period_end_date && (
-                    <span className="text-sm text-muted-foreground">
-                      {formatPeriodDateRange(transition.post_period_start_date, transition.post_period_end_date)}
-                    </span>
-                  )}
-                  {transition.new_manager_name && (
-                    <span className="text-sm text-muted-foreground ml-auto">
-                      Manager: {transition.new_manager_name}
-                    </span>
+              {/* Post-Transition Period - Only show if manager should see it */}
+              {(managerRole === 'new_manager' || managerRole === 'same_manager') && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 pb-2 border-b">
+                    <Badge variant={getPeriodBadgeVariant('post_transition')}>
+                      {getPeriodLabel('post_transition')}
+                    </Badge>
+                    {transition.post_period_start_date && transition.post_period_end_date && (
+                      <span className="text-sm text-muted-foreground">
+                        {formatPeriodDateRange(transition.post_period_start_date, transition.post_period_end_date)}
+                      </span>
+                    )}
+                    {transition.new_manager_name && (
+                      <span className="text-sm text-muted-foreground ml-auto">
+                        Manager: {transition.new_manager_name}
+                      </span>
+                    )}
+                  </div>
+                  {displayPostTransitionKras.length > 0 ? (
+                    displayPostTransitionKras.map((kra) => {
+                      const kraKpis = displayPostTransitionKpis.filter(k => k.kra_id === kra.id);
+                      return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+                    })
+                  ) : (
+                    <Card>
+                      <CardContent className="py-8 text-center text-muted-foreground">
+                        <p>No KRAs/KPIs found for the post-transition period.</p>
+                        <p className="text-sm mt-2">New goals can be created for the post-transition period.</p>
+                      </CardContent>
+                    </Card>
                   )}
                 </div>
-                {postTransitionKras.length > 0 ? (
-                  postTransitionKras.map((kra) => {
-                    const kraKpis = postTransitionKpis.filter(k => k.kra_id === kra.id);
-                    return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
-                  })
-                ) : (
-                  <Card>
-                    <CardContent className="py-8 text-center text-muted-foreground">
-                      <p>No KRAs/KPIs found for the post-transition period.</p>
-                      <p className="text-sm mt-2">New goals can be created for the post-transition period.</p>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
+              )}
             </>
           ) : (
             /* Full Quarter (No Transition) */
@@ -1532,22 +2284,32 @@ export default function ManagerEvaluation() {
             
             {/* Action Buttons for KRA/KPI Ratings Tab */}
             {!isSubmitted && canEvaluate && (
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                <Button 
-                  variant="outline" 
-                  onClick={handleSave} 
-                  disabled={saving}
-                >
-                  <Save className="mr-2 h-4 w-4" />
-                  Save
-                </Button>
-                <Button 
-                  onClick={handleNext}
-                  disabled={saving}
-                >
-                  Next
-                  <ChevronRight className="ml-2 h-4 w-4" />
-                </Button>
+              <div className="space-y-3 pt-4 border-t">
+                {hasLatePermission && quarterPeriodStatus.timing === 'past' && (
+                  <Alert>
+                    <Clock className="h-4 w-4" />
+                    <AlertDescription>
+                      You have been granted late submission access. You can submit this evaluation even though the deadline has passed.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                <div className="flex justify-end gap-3">
+                  <Button 
+                    variant="outline" 
+                    onClick={handleSave} 
+                    disabled={saving}
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    Save
+                  </Button>
+                  <Button 
+                    onClick={handleNext}
+                    disabled={saving}
+                  >
+                    Next
+                    <ChevronRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             )}
           </TabsContent>
@@ -1651,23 +2413,33 @@ export default function ManagerEvaluation() {
             
             {/* Action Buttons for Overall Assessment Tab */}
             {!isSubmitted && canEvaluate && (
-              <div className="flex justify-end gap-3 pt-4 border-t">
-                <Button 
-                  variant="outline" 
-                  onClick={handleSave} 
-                  disabled={saving}
-                >
-                  <Save className="mr-2 h-4 w-4" />
-                  Save
-                </Button>
-                <Button 
-                  onClick={handleSubmit}
-                  disabled={saving}
-                  variant="primary"
-                >
-                  <Send className="mr-2 h-4 w-4" />
-                  Submit
-                </Button>
+              <div className="space-y-3 pt-4 border-t">
+                {hasLatePermission && quarterPeriodStatus.timing === 'past' && (
+                  <Alert>
+                    <Clock className="h-4 w-4" />
+                    <AlertDescription>
+                      You have been granted late submission access. You can submit this evaluation even though the deadline has passed.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                <div className="flex justify-end gap-3">
+                  <Button 
+                    variant="outline" 
+                    onClick={handleSave} 
+                    disabled={saving}
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    Save
+                  </Button>
+                  <Button 
+                    onClick={handleSubmit}
+                    disabled={saving}
+                    variant="primary"
+                  >
+                    <Send className="mr-2 h-4 w-4" />
+                    Submit
+                  </Button>
+                </div>
               </div>
             )}
           </TabsContent>
@@ -2086,6 +2858,7 @@ export default function ManagerEvaluation() {
           selectedQuarter={selectedQuarter}
           onTabChange={handleEvaluationTabChange}
           onQuarterChange={handleQuarterChange}
+          managerReview={managerReview}
           quarterlyContent={
             canEvaluate || isSubmitted ? (
               renderQuarterlyRatingContent()
@@ -2095,9 +2868,23 @@ export default function ManagerEvaluation() {
                   <User className="h-12 w-12 text-muted-foreground mb-4" />
                   <h3 className="font-semibold text-lg">Cannot evaluate yet</h3>
                   <p className="text-muted-foreground text-center">
-                    {quarterPeriodStatus.timing !== 'current' 
-                      ? quarterPeriodStatus.message
-                      : `${getEmployeeFirstName(employee)} must complete their Q${selectedQuarter} self-review first`}
+                    {(() => {
+                      // Priority 1: If manager has late permission and period is past, show late permission message
+                      if (hasLatePermission && quarterPeriodStatus.timing === 'past') {
+                        console.log('[Message] Showing late permission message');
+                        return `You have late submission access. ${getEmployeeFirstName(employee)} must complete their Q${selectedQuarter} self-review first before you can evaluate.`;
+                      }
+                      
+                      // Priority 2: If period is past and no late permission, show period closed message
+                      if (!(hasTransitionForQuarter && isWithinQuarterDates) && quarterPeriodStatus.timing !== 'current' && !hasLatePermission) {
+                        console.log('[Message] Showing period closed message');
+                        return quarterPeriodStatus.message;
+                      }
+                      
+                      // Priority 3: Default - show self-review requirement
+                      console.log('[Message] Showing self-review requirement message');
+                      return `${getEmployeeFirstName(employee)} must complete their Q${selectedQuarter} self-review first`;
+                    })()}
                   </p>
                 </CardContent>
               </Card>

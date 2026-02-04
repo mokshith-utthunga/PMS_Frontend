@@ -158,9 +158,45 @@ export function KRACard({
             ) : (
               kpis.map((kpi) => {
                 const hasCalibration = kpi.calibration && kpi.calibration.length > 0;
+                // Sort by threshold ascending for range generation
                 const sortedCalibration = hasCalibration 
-                  ? [...kpi.calibration!].sort((a, b) => b.threshold - a.threshold)
+                  ? [...kpi.calibration!].sort((a, b) => a.threshold - b.threshold)
                   : [];
+                
+                // Generate range descriptions in the new format
+                const calibrationRanges: Array<{ range: string; rating: number }> = [];
+                if (sortedCalibration.length > 0) {
+                  const unit = kpi.metric_type === 'percentage' ? '%' : '';
+                  for (let i = 0; i < sortedCalibration.length; i++) {
+                    const current = sortedCalibration[i];
+                    const previous = sortedCalibration[i - 1];
+                    
+                    if (i === 0) {
+                      // First (lowest) threshold: < threshold
+                      calibrationRanges.push({
+                        range: `< ${current.threshold}${unit}`,
+                        rating: current.rating,
+                      });
+                    } else {
+                      // Middle and last thresholds: previous_threshold+1 - current_threshold
+                      const startValue = previous.threshold + 1;
+                      const endValue = current.threshold;
+                      
+                      if (startValue === endValue) {
+                        // If start and end are the same, just show the value
+                        calibrationRanges.push({
+                          range: `${startValue}${unit}`,
+                          rating: current.rating,
+                        });
+                      } else {
+                        calibrationRanges.push({
+                          range: `${startValue}-${endValue}${unit}`,
+                          rating: current.rating,
+                        });
+                      }
+                    }
+                  }
+                }
                 
                 return (
                   <div
@@ -174,7 +210,7 @@ export function KRACard({
                           <Badge variant="secondary" className="text-xs">KPI</Badge>
                           <span className="text-xs text-muted-foreground">Weight: {kpi.weight}%</span>
                           {hasCalibration && (
-                            <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400">
+                            <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700">
                               <Settings2 className="h-3 w-3 mr-1" />
                               Calibrated
                             </Badge>
@@ -211,24 +247,24 @@ export function KRACard({
                             <CollapsibleContent className="mt-2">
                               <div className="bg-muted/50 rounded-lg p-2 space-y-1">
                                 <div className="grid grid-cols-2 gap-2 text-xs font-medium text-muted-foreground mb-1 px-2">
-                                  <span>Achievement {kpi.metric_type === 'percentage' ? '(%)' : ''}</span>
+                                  <span>Value {kpi.metric_type === 'percentage' ? '(%)' : ''}</span>
                                   <span>Rating</span>
                                 </div>
-                                {sortedCalibration.map((rule, idx) => (
+                                {calibrationRanges.map((range, idx) => (
                                   <div 
                                     key={idx} 
                                     className="grid grid-cols-2 gap-2 text-xs px-2 py-1 rounded bg-background"
                                   >
                                     <span className="font-mono">
-                                      ≥ {rule.threshold}{kpi.metric_type === 'percentage' ? '%' : ''}
+                                      {range.range}
                                     </span>
-                                    <Badge variant="secondary" className={`text-xs w-fit ${getRatingColor(rule.rating)}`}>
-                                      {rule.rating} - {getRatingLabel(rule.rating)}
+                                    <Badge variant="secondary" className={`text-xs w-fit ${getRatingColor(range.rating)}`}>
+                                      {range.rating} - {getRatingLabel(range.rating)}
                                     </Badge>
                                   </div>
                                 ))}
                                 <p className="text-[10px] text-muted-foreground px-2 pt-1">
-                                  Rating is based on the highest threshold your achievement meets or exceeds.
+                                  Rating is based on the value range your achievement falls into.
                                 </p>
                               </div>
                             </CollapsibleContent>

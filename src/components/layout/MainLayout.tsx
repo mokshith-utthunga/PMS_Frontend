@@ -35,7 +35,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
           </header>
 
           {/* Main content */}
-          <main className="flex-1 p-6">
+          <main className="flex-1 p-6 ">
             {children}
           </main>
         </SidebarInset>

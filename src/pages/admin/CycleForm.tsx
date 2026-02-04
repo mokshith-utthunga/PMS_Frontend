@@ -17,6 +17,7 @@ import { ArrowLeft, Calendar, Loader2, ChevronDown, Users, Info } from 'lucide-r
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import type { PerformanceCycle } from '@/types';
+import type { FormData } from '@/utils/quarterHelpers';
 
 export default function CycleForm() {
   const navigate = useNavigate();
@@ -71,48 +72,6 @@ export default function CycleForm() {
     | 'manager_review_end';
 
   // Define form data type with explicit quarterly fields
-  type FormData = {
-    name: string;
-    description: string;
-    year: number;
-    goal_submission_start: string;
-    goal_submission_end: string;
-    goal_approval_end: string;
-    manager_evaluation_start: string;
-    manager_evaluation_end: string;
-    calibration_start: string;
-    calibration_end: string;
-    release_date: string;
-    allow_late_goal_submission: boolean;
-    // Q1 Quarterly Review
-    q1_quarter_start_date: string;
-    q1_quarter_end_date: string;
-    q1_self_review_start: string;
-    q1_self_review_end: string;
-    q1_manager_review_start: string;
-    q1_manager_review_end: string;
-    // Q2 Quarterly Review
-    q2_quarter_start_date: string;
-    q2_quarter_end_date: string;
-    q2_self_review_start: string;
-    q2_self_review_end: string;
-    q2_manager_review_start: string;
-    q2_manager_review_end: string;
-    // Q3 Quarterly Review
-    q3_quarter_start_date: string;
-    q3_quarter_end_date: string;
-    q3_self_review_start: string;
-    q3_self_review_end: string;
-    q3_manager_review_start: string;
-    q3_manager_review_end: string;
-    // Q4 Quarterly Review
-    q4_quarter_start_date: string;
-    q4_quarter_end_date: string;
-    q4_self_review_start: string;
-    q4_self_review_end: string;
-    q4_manager_review_start: string;
-    q4_manager_review_end: string;
-  };
 
   const [formData, setFormData] = useState<FormData>({
     name: '',
@@ -174,6 +133,8 @@ export default function CycleForm() {
     hasUserModifiedDepartments.current = false;
     hasUserModifiedBusinessUnits.current = false;
     // Don't reset hasFetchedTeams - teams are fetched once per component mount
+    // Clear any existing validation errors for review dates (validation removed)
+    setQuarterlyReviewsValidationErrors({});
   }, [cycleId]);
 
   // Fetch teams once on component mount - will be called after fetchTeams is defined
@@ -518,16 +479,26 @@ export default function CycleForm() {
       };
 
       if (name.match(/^q[1-4]_(quarter_start_date|quarter_end_date|self_review_start|self_review_end|manager_review_start|manager_review_end)$/)) {
+        // Validate quarter dates (including quarter end vs next quarter start validation)
+        // This validates all quarters to catch cross-quarter dependencies
         const errors = validateAllQuarterlyReviews(newData);
         setQuarterlyReviewsValidationErrors(errors);
+        
+        // Also re-validate goals quarterly dates for all quarters when any quarter date changes
+        // (since manager_review_start_date depends on quarter dates, and quarter dates affect adjacent quarters)
+        [1, 2, 3, 4].forEach(q => {
+          const goalsData = goalsQuarterlyData[q] || {};
+          const goalsErrors = validateGoalsQuarterlyDates(q, goalsData);
+          setGoalsValidationErrors(prevErrors => ({
+            ...prevErrors,
+            [q]: goalsErrors,
+          }));
+        });
       }
 
       return newData;
     });
   };
-
-  // Note: Removed handleDateChange - quarterly dates now use handleChange like other date inputs
-  // This ensures consistent behavior with calibration/release/year-end dates that work correctly
 
   const toggleQuarter = (quarter: string) => {
     setOpenQuarters(prev => ({ ...prev, [quarter]: !prev[quarter] }));
@@ -551,11 +522,10 @@ export default function CycleForm() {
 
     if (!quarterStart || !quarterEnd) return errors; // Skip validation if quarter dates are not set
 
+    // Validate goal submission dates - they must be within quarter range
     const fieldsToValidate = [
       { field: 'goal_submission_start_date', label: 'Goal Submission Start' },
       { field: 'goal_submission_end_date', label: 'Goal Submission End' },
-      { field: 'manager_review_start_date', label: 'Manager Review Start' },
-      { field: 'manager_review_end_date', label: 'Manager Review End' },
     ];
 
     fieldsToValidate.forEach(({ field, label }) => {
@@ -564,31 +534,75 @@ export default function CycleForm() {
       }
     });
 
+    // Validation: Manager Goal Review Start Date must be:
+    // 1. Between goal submission start date and goal submission end date
+    // 2. Between quarter start date and quarter end date
+    if (data.manager_review_start_date) {
+      const managerReviewStart = data.manager_review_start_date;
+      const goalSubmissionStart = data.goal_submission_start_date;
+      const goalSubmissionEnd = data.goal_submission_end_date;
+
+      // Check if manager review start is between goal submission dates
+      if (goalSubmissionStart && goalSubmissionEnd) {
+        if (!isDateInRange(managerReviewStart, goalSubmissionStart, goalSubmissionEnd)) {
+          errors.manager_review_start_date = `Manager Goal Review Start Date must be between Goal Submission Start Date (${goalSubmissionStart}) and Goal Submission End Date (${goalSubmissionEnd})`;
+        }
+      }
+
+      // Check if manager review start is between quarter dates
+      if (!isDateInRange(managerReviewStart, quarterStart, quarterEnd)) {
+        errors.manager_review_start_date = errors.manager_review_start_date 
+          ? `${errors.manager_review_start_date} and between Quarter Start Date (${quarterStart}) and Quarter End Date (${quarterEnd})`
+          : `Manager Goal Review Start Date must be between Quarter Start Date (${quarterStart}) and Quarter End Date (${quarterEnd})`;
+      }
+    }
+
     return errors;
   };
 
 
   const validateQuarterlyReviewsDates = (quarter: 'q1' | 'q2' | 'q3' | 'q4', data: FormData): Record<string, string> => {
     const errors: Record<string, string> = {};
-    const quarterStart = data[`${quarter}_quarter_start_date`] as string || '';
-    const quarterEnd = data[`${quarter}_quarter_end_date`] as string || '';
-
-    if (!quarterStart || !quarterEnd) return errors; // Skip validation if quarter dates are not set
-
-    const fieldsToValidate = [
-      { field: `${quarter}_self_review_start`, label: 'Employee Review Start' },
-      { field: `${quarter}_self_review_end`, label: 'Employee Review End' },
-      { field: `${quarter}_manager_review_start`, label: 'Manager Review Start' },
-      { field: `${quarter}_manager_review_end`, label: 'Manager Review End' },
-    ];
-
-    fieldsToValidate.forEach(({ field, label }) => {
-      const value = (data[field] as string) || '';
-      if (value && !isDateInRange(value, quarterStart, quarterEnd)) {
-        errors[field] = `${label} must be between ${quarterStart} and ${quarterEnd}`;
+    
+    // Validation 1: Quarter end date should be before next quarter start date
+    const quarterNum = parseInt(quarter.replace('q', ''));
+    const currentQuarterEnd = getQuarterlyValue(quarter as QuarterKey, 'quarter_end_date');
+    
+    if (currentQuarterEnd && quarterNum < 4) {
+      // Check against next quarter
+      const nextQuarter = `q${quarterNum + 1}` as QuarterKey;
+      const nextQuarterStart = getQuarterlyValue(nextQuarter, 'quarter_start_date');
+      
+      if (nextQuarterStart) {
+        const currentEnd = new Date(currentQuarterEnd);
+        const nextStart = new Date(nextQuarterStart);
+        currentEnd.setHours(23, 59, 59, 999);
+        nextStart.setHours(0, 0, 0, 0);
+        
+        if (currentEnd >= nextStart) {
+          errors[`${quarter}_quarter_end_date`] = `Quarter ${quarterNum} end date must be before Quarter ${quarterNum + 1} start date`;
+        }
       }
-    });
-
+    }
+    
+    // Validation 2: If this is not Q1, check previous quarter end date
+    if (quarterNum > 1) {
+      const prevQuarter = `q${quarterNum - 1}` as QuarterKey;
+      const prevQuarterEnd = getQuarterlyValue(prevQuarter, 'quarter_end_date');
+      const currentQuarterStart = getQuarterlyValue(quarter as QuarterKey, 'quarter_start_date');
+      
+      if (prevQuarterEnd && currentQuarterStart) {
+        const prevEnd = new Date(prevQuarterEnd);
+        const currentStart = new Date(currentQuarterStart);
+        prevEnd.setHours(23, 59, 59, 999);
+        currentStart.setHours(0, 0, 0, 0);
+        
+        if (prevEnd >= currentStart) {
+          errors[`${quarter}_quarter_start_date`] = `Quarter ${quarterNum} start date must be after Quarter ${quarterNum - 1} end date`;
+        }
+      }
+    }
+    
     return errors;
   };
 
@@ -597,6 +611,8 @@ export default function CycleForm() {
     const allErrors: Record<string, string> = {};
     const quarters: Array<'q1' | 'q2' | 'q3' | 'q4'> = ['q1', 'q2', 'q3', 'q4'];
 
+    // Validate all quarters to catch cross-quarter dependencies
+    // (e.g., Q2 end date vs Q3 start date)
     quarters.forEach(quarter => {
       const quarterErrors = validateQuarterlyReviewsDates(quarter, data);
       Object.assign(allErrors, quarterErrors);
@@ -615,11 +631,24 @@ export default function CycleForm() {
         },
       };
 
+      // Validate goals quarterly dates
+      // This will also validate manager_review_start_date against goal submission dates and quarter dates
       const errors = validateGoalsQuarterlyDates(quarter, newData[quarter]);
       setGoalsValidationErrors(prevErrors => ({
         ...prevErrors,
         [quarter]: errors,
       }));
+
+      // If goal submission dates changed, we need to re-validate manager_review_start_date
+      // This is already handled in validateGoalsQuarterlyDates, but we ensure it runs
+      if (field === 'goal_submission_start_date' || field === 'goal_submission_end_date') {
+        // Re-validate to ensure manager_review_start_date is still valid
+        const revalidatedErrors = validateGoalsQuarterlyDates(quarter, newData[quarter]);
+        setGoalsValidationErrors(prevErrors => ({
+          ...prevErrors,
+          [quarter]: revalidatedErrors,
+        }));
+      }
 
       return newData;
     });
@@ -905,7 +934,11 @@ export default function CycleForm() {
                       type="date"
                       value={getQuarterlyValue(quarter as QuarterKey, 'quarter_start_date')}
                       onChange={handleChange}
+                      className={cn(quarterlyReviewsValidationErrors[`${quarter}_quarter_start_date`] && "border-destructive")}
                     />
+                    {quarterlyReviewsValidationErrors[`${quarter}_quarter_start_date`] && (
+                      <p className="text-xs text-destructive">{quarterlyReviewsValidationErrors[`${quarter}_quarter_start_date`]}</p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor={`${quarter}_quarter_end_date`}>Quarter End Date</Label>
@@ -915,7 +948,11 @@ export default function CycleForm() {
                       type="date"
                       value={getQuarterlyValue(quarter as QuarterKey, 'quarter_end_date')}
                       onChange={handleChange}
+                      className={cn(quarterlyReviewsValidationErrors[`${quarter}_quarter_end_date`] && "border-destructive")}
                     />
+                    {quarterlyReviewsValidationErrors[`${quarter}_quarter_end_date`] && (
+                      <p className="text-xs text-destructive">{quarterlyReviewsValidationErrors[`${quarter}_quarter_end_date`]}</p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1000,7 +1037,7 @@ export default function CycleForm() {
                 {/* <h4 className="text-sm font-medium mb-3 text-muted-foreground">Employee Review</h4> */}
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor={`${quarter}_self_review_start`}>Employee Review Start</Label>
+                    <Label htmlFor={`${quarter}_self_review_start`}>Employee Performance Review Start</Label>
                     <Input
                       id={`${quarter}_self_review_start`}
                       name={`${quarter}_self_review_start`}
@@ -1014,7 +1051,7 @@ export default function CycleForm() {
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor={`${quarter}_self_review_end`}>Employee Review End</Label>
+                    <Label htmlFor={`${quarter}_self_review_end`}>Employee Performance Review End</Label>
                     <Input
                       id={`${quarter}_self_review_end`}
                       name={`${quarter}_self_review_end`}
@@ -1035,7 +1072,7 @@ export default function CycleForm() {
                 {/* <h4 className="text-sm font-medium mb-3 text-muted-foreground">Manager Review</h4> */}
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor={`${quarter}_manager_review_start`}>Manager Review Start</Label>
+                    <Label htmlFor={`${quarter}_manager_review_start`}>Manager Employees Performance Review Start Date</Label>
                     <Input
                       id={`${quarter}_manager_review_start`}
                       name={`${quarter}_manager_review_start`}
@@ -1049,14 +1086,14 @@ export default function CycleForm() {
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor={`${quarter}_manager_review_end`}>Manager Review End</Label>
+                    <Label htmlFor={`${quarter}_manager_review_end`} className="mb-2">Manager Employee Performance Review End Date</Label>
                     <Input
                       id={`${quarter}_manager_review_end`}
                       name={`${quarter}_manager_review_end`}
                       type="date"
                       value={getQuarterlyValue(quarter as QuarterKey, 'manager_review_end')}
                       onChange={handleChange}
-                      className={cn(evalMgrEndError && "border-destructive")}
+                      className={cn(evalMgrEndError && "border-destructive margin-top-4")}
                     />
                     {evalMgrEndError && (
                       <p className="text-xs text-destructive">{evalMgrEndError}</p>

@@ -105,9 +105,21 @@ export function useKraOperations({
 
   const deleteKRA = useCallback(
     async (id: string) => {
-      await goalsService.kras.delete(id);
-      toasts.success('KRA deleted');
-      onSuccess();
+      try {
+        await goalsService.kras.delete(id);
+        toasts.success('KRA deleted');
+        onSuccess();
+      } catch (error: any) {
+        // If KRA doesn't exist (404), it might have been already deleted
+        // Refresh data anyway to sync UI with server state
+        if (error?.statusCode === 404 || error?.message?.toLowerCase().includes('not found')) {
+          toasts.info('KRA not found', 'The KRA may have already been deleted. Refreshing...');
+          onSuccess(); // Refresh to sync UI
+        } else {
+          toasts.error('Failed to delete KRA', error?.message || 'An error occurred');
+          throw error;
+        }
+      }
     },
     [onSuccess]
   );

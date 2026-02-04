@@ -21,8 +21,6 @@ export type {
   UpdateKRAData, 
   CreateKPIData, 
   UpdateKPIData,
-  CreateBonusKRAData,
-  CreateBonusKPIData,
 } from './goals.service';
 export type { 
   QuarterlySelfReviewData,

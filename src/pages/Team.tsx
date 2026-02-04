@@ -710,7 +710,7 @@ export default function Team() {
             ) : (
               <div className="grid gap-4 md:grid-cols-2">
                 {directReports.map((report) => (
-                  <Card key={report.id}>
+                  <Card key={report.id} className="border-card-border/30 hover:shadow-xl ">
                     <CardHeader className="pb-3">
                       <div className="flex items-start gap-4">
                         <Avatar className="h-12 w-12">

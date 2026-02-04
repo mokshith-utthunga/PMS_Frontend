@@ -26,6 +26,8 @@ import {
   Target,
   FileText,
   ClipboardCheck,
+  CheckCircle2,
+  ExternalLink,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { PageLoader } from '@/loaders';
@@ -160,6 +162,62 @@ export default function AdminEmployeeView() {
       toast({
         title: 'Error',
         description: error.message || 'Failed to save goals',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Approve KRA
+  const handleApproveKRA = async (kraId: string) => {
+    if (!employeeId || !activeCycle) return;
+
+    setSaving(true);
+    try {
+      await goalsService.kras.approve(kraId);
+      
+      // Also approve all associated KPIs
+      const kpisForKRA = reviewData?.kpis.filter(kpi => kpi.kra_id === kraId && kpi.status === 'submitted') || [];
+      for (const kpi of kpisForKRA) {
+        await goalsService.kpis.approve(kpi.id);
+      }
+      
+      toast({
+        title: 'Success',
+        description: 'KRA and KPIs approved successfully',
+      });
+      
+      fetchQuarterlyReview();
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to approve KRA',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Approve KPI
+  const handleApproveKPI = async (kpiId: string) => {
+    if (!employeeId || !activeCycle) return;
+
+    setSaving(true);
+    try {
+      await goalsService.kpis.approve(kpiId);
+      
+      toast({
+        title: 'Success',
+        description: 'KPI approved successfully',
+      });
+      
+      fetchQuarterlyReview();
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to approve KPI',
         variant: 'destructive',
       });
     } finally {
@@ -328,10 +386,19 @@ export default function AdminEmployeeView() {
                     {isAdmin && (
                       <div className="flex gap-2">
                         {goalsEditMode === 'view' ? (
-                          <Button onClick={() => setGoalsEditMode('edit')} aria-label="Edit goals">
-                            <Edit className="h-4 w-4 mr-2" />
-                            Edit
-                          </Button>
+                          <>
+                            <Button onClick={() => setGoalsEditMode('edit')} variant="outline" aria-label="Edit goals">
+                              <Edit className="h-4 w-4 mr-2" />
+                              Edit
+                            </Button>
+                            <Button 
+                              onClick={() => navigate(`/team/${employeeId}/evaluate?quarter=${selectedQuarter}`)} 
+                              aria-label="Create manager evaluation"
+                            >
+                              <ClipboardCheck className="h-4 w-4 mr-2" />
+                              Create Manager Evaluation
+                            </Button>
+                          </>
                         ) : (
                           <>
                             <Button onClick={handleSaveGoals} disabled={saving} aria-label="Save goals">
@@ -369,7 +436,12 @@ export default function AdminEmployeeView() {
                         <div key={kra.id} className="space-y-4">
                           <div className="flex items-start justify-between p-4 border rounded-lg">
                             <div className="flex-1">
-                              <h3 className="font-semibold">{kra.title}</h3>
+                              <div className="flex items-center gap-2">
+                                <h3 className="font-semibold">{kra.title}</h3>
+                                <Badge variant={kra.status === 'approved' ? 'default' : kra.status === 'submitted' ? 'secondary' : 'outline'}>
+                                  {kra.status}
+                                </Badge>
+                              </div>
                               {kra.description && (
                                 <p className="text-sm text-muted-foreground mt-1">{kra.description}</p>
                               )}
@@ -377,6 +449,22 @@ export default function AdminEmployeeView() {
                                 Weight: {kra.weight}%
                               </Badge>
                             </div>
+                            {isAdmin && goalsEditMode === 'view' && kra.status === 'submitted' && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleApproveKRA(kra.id)}
+                                disabled={saving}
+                                aria-label={`Approve KRA ${kra.title}`}
+                              >
+                                {saving ? (
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                                )}
+                                Approve
+                              </Button>
+                            )}
                           </div>
                           {kpis.length > 0 && (
                             <div className="ml-4 space-y-3">
@@ -458,7 +546,12 @@ export default function AdminEmployeeView() {
                                     ) : (
                                       <div className="flex items-start justify-between">
                                         <div className="flex-1">
-                                          <h4 className="font-medium">{editedKpi.title}</h4>
+                                          <div className="flex items-center gap-2">
+                                            <h4 className="font-medium">{editedKpi.title}</h4>
+                                            <Badge variant={editedKpi.status === 'approved' ? 'default' : editedKpi.status === 'submitted' ? 'secondary' : 'outline'}>
+                                              {editedKpi.status}
+                                            </Badge>
+                                          </div>
                                           {editedKpi.description && (
                                             <p className="text-sm text-muted-foreground mt-1">{editedKpi.description}</p>
                                           )}
@@ -467,22 +560,39 @@ export default function AdminEmployeeView() {
                                             <span>Weight: {editedKpi.weight}%</span>
                                           </div>
                                         </div>
-                                        {goalsEditMode === 'edit' && isAdmin && (
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            onClick={() => {
-                                              setEditingGoalId(kpi.id);
-                                              setEditedGoals((prev) => ({
-                                                ...prev,
-                                                [kpi.id]: { ...prev[kpi.id], ...kpi },
-                                              }));
-                                            }}
-                                            aria-label={`Edit KPI ${kpi.title}`}
-                                          >
-                                            <Edit className="h-4 w-4" />
-                                          </Button>
-                                        )}
+                                        <div className="flex gap-2">
+                                          {goalsEditMode === 'edit' && isAdmin && (
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={() => {
+                                                setEditingGoalId(kpi.id);
+                                                setEditedGoals((prev) => ({
+                                                  ...prev,
+                                                  [kpi.id]: { ...prev[kpi.id], ...kpi },
+                                                }));
+                                              }}
+                                              aria-label={`Edit KPI ${kpi.title}`}
+                                            >
+                                              <Edit className="h-4 w-4" />
+                                            </Button>
+                                          )}
+                                          {isAdmin && goalsEditMode === 'view' && editedKpi.status === 'submitted' && (
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={() => handleApproveKPI(kpi.id)}
+                                              disabled={saving}
+                                              aria-label={`Approve KPI ${kpi.title}`}
+                                            >
+                                              {saving ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                              ) : (
+                                                <CheckCircle2 className="h-4 w-4" />
+                                              )}
+                                            </Button>
+                                          )}
+                                        </div>
                                       </div>
                                     )}
                                   </div>
@@ -510,10 +620,24 @@ export default function AdminEmployeeView() {
                     {isAdmin && (
                       <div className="flex gap-2">
                         {selfEvalEditMode === 'view' ? (
-                          <Button onClick={() => setSelfEvalEditMode('edit')} aria-label="Edit self evaluation">
-                            <Edit className="h-4 w-4 mr-2" />
-                            Edit
-                          </Button>
+                          <>
+                            <Button 
+                              onClick={() => navigate(`/admin/employee/${employeeId}/evaluation?quarter=${selectedQuarter}`)} 
+                              aria-label="Edit self evaluation in full page"
+                            >
+                              <Edit className="h-4 w-4 mr-2" />
+                              Edit Evaluation
+                              <ExternalLink className="h-4 w-4 ml-2" />
+                            </Button>
+                            <Button 
+                              variant="outline"
+                              onClick={() => setSelfEvalEditMode('edit')} 
+                              aria-label="Edit self evaluation inline"
+                            >
+                              <Edit className="h-4 w-4 mr-2" />
+                              Edit Inline
+                            </Button>
+                          </>
                         ) : (
                           <>
                             <Button onClick={handleSaveSelfReview} disabled={saving} aria-label="Save self evaluation">
@@ -630,10 +754,21 @@ export default function AdminEmployeeView() {
                     {isAdmin && (
                       <div className="flex gap-2">
                         {managerEvalEditMode === 'view' ? (
-                          <Button onClick={() => setManagerEvalEditMode('edit')} aria-label="Edit manager evaluation">
-                            <Edit className="h-4 w-4 mr-2" />
-                            Edit
-                          </Button>
+                          <>
+                            <Button 
+                              onClick={() => navigate(`/team/${employeeId}/evaluate?quarter=${selectedQuarter}`)} 
+                              variant="outline"
+                              aria-label="Edit manager evaluation in full page"
+                            >
+                              <ClipboardCheck className="h-4 w-4 mr-2" />
+                              Edit Evaluation
+                              <ExternalLink className="h-4 w-4 ml-2" />
+                            </Button>
+                            <Button onClick={() => setManagerEvalEditMode('edit')} aria-label="Edit manager evaluation inline">
+                              <Edit className="h-4 w-4 mr-2" />
+                              Edit Inline
+                            </Button>
+                          </>
                         ) : (
                           <>
                             <Button onClick={handleSaveManagerReview} disabled={saving} aria-label="Save manager evaluation">
@@ -666,10 +801,24 @@ export default function AdminEmployeeView() {
                     <div className="text-center py-8">
                       <p className="text-muted-foreground mb-4">No manager evaluation found for this quarter</p>
                       {isAdmin && managerEvalEditMode === 'view' && (
-                        <Button onClick={() => setManagerEvalEditMode('edit')} aria-label="Create manager evaluation">
-                          <Edit className="h-4 w-4 mr-2" />
-                          Create Manager Evaluation
-                        </Button>
+                        <div className="flex gap-2 justify-center">
+                          <Button 
+                            onClick={() => navigate(`/team/${employeeId}/evaluate?quarter=${selectedQuarter}`)} 
+                            aria-label="Create manager evaluation"
+                          >
+                            <ClipboardCheck className="h-4 w-4 mr-2" />
+                            Create Manager Evaluation
+                            <ExternalLink className="h-4 w-4 ml-2" />
+                          </Button>
+                          <Button 
+                            variant="outline"
+                            onClick={() => setManagerEvalEditMode('edit')} 
+                            aria-label="Create manager evaluation inline"
+                          >
+                            <Edit className="h-4 w-4 mr-2" />
+                            Create Inline
+                          </Button>
+                        </div>
                       )}
                     </div>
                   ) : (

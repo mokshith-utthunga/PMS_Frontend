@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { ButtonLoader } from '@/loaders';
 
-type ItemType = 'kra' | 'kpi' | 'bonus_kra' | 'bonus_kpi';
+type ItemType = 'kra' | 'kpi';
 
 interface ReturnDialogProps {
   open: boolean;
@@ -26,8 +26,6 @@ interface ReturnDialogProps {
 const TYPE_LABELS: Record<ItemType, string> = {
   kra: 'KRA',
   kpi: 'KPI',
-  bonus_kra: 'Bonus KRA',
-  bonus_kpi: 'Bonus KPI',
 };
 
 export function ReturnDialog({
@@ -53,7 +51,7 @@ export function ReturnDialog({
   };
 
   const label = type ? TYPE_LABELS[type] : '';
-  const showKPINote = type === 'kra' || type === 'bonus_kra';
+  const showKPINote = type === 'kra';
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>

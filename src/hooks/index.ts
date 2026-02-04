@@ -7,7 +7,6 @@ export { useCurrentEmployee } from './useCurrentEmployee';
 export { useGoalsData } from './useGoalsData';
 export { useKraOperations } from './useKraOperations';
 export { useKpiOperations } from './useKpiOperations';
-export { useBonusOperations } from './useBonusOperations';
 export { useTemplateSelection } from './useTemplateSelection';
 export { useTeamMemberGoals } from './useTeamMemberGoals';
 export { useGoalApproval } from './useGoalApproval';

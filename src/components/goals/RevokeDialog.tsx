@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { ButtonLoader } from '@/loaders';
 import { AlertTriangle } from 'lucide-react';
 
-type ItemType = 'kra' | 'kpi' | 'bonus_kra' | 'bonus_kpi';
+type ItemType = 'kra' | 'kpi';
 
 interface RevokeDialogProps {
   open: boolean;
@@ -24,8 +24,6 @@ interface RevokeDialogProps {
 const TYPE_LABELS: Record<ItemType, string> = {
   kra: 'KRA',
   kpi: 'KPI',
-  bonus_kra: 'Bonus KRA',
-  bonus_kpi: 'Bonus KPI',
 };
 
 export function RevokeDialog({
@@ -41,7 +39,7 @@ export function RevokeDialog({
   };
 
   const label = type ? TYPE_LABELS[type] : '';
-  const showKPINote = type === 'kra' || type === 'bonus_kra';
+  const showKPINote = type === 'kra';
 
   return (
     <Dialog open={open} onOpenChange={onClose}>

@@ -81,12 +81,21 @@ export function useEmployeeList() {
   const filteredEmployees = useMemo(() => {
     if (!filters.search) return data.employees;
     const searchLower = filters.search.toLowerCase();
-    return data.employees.filter(emp =>
-      emp.first_name.toLowerCase().includes(searchLower) ||
-      emp.last_name.toLowerCase().includes(searchLower) ||
-      emp.email.toLowerCase().includes(searchLower) ||
-      emp.emp_id.toLowerCase().includes(searchLower)
-    );
+    return data.employees.filter(emp => {
+      const fullName = (emp.full_name || '').toLowerCase();
+      const firstName = (emp.first_name || '').toLowerCase();
+      const lastName = (emp.last_name || '').toLowerCase();
+      const email = (emp.email || '').toLowerCase();
+      const empCode = (emp.emp_code || emp.emp_id || '').toLowerCase();
+      
+      return (
+        fullName.includes(searchLower) ||
+        firstName.includes(searchLower) ||
+        lastName.includes(searchLower) ||
+        email.includes(searchLower) ||
+        empCode.includes(searchLower)
+      );
+    });
   }, [data.employees, filters.search]);
 
   const totalPages = Math.ceil(data.totalCount / DEFAULT_PAGE_SIZE);
