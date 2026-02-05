@@ -2,10 +2,25 @@
 export const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
 export const API_PREFIX = import.meta.env.VITE_API_PREFIX || '/api';
 
-// Full API URL helper
+// API URL helper - works in both dev and production
+// In development: uses relative URLs (Vite proxy handles it)
+// In production: uses full URL if VITE_BACKEND_URL is set, otherwise relative (same domain)
 export const getApiUrl = (endpoint: string): string => {
-  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  return `${API_BASE_URL}${API_PREFIX}${cleanEndpoint}`;
+  const backendUrl = import.meta.env.VITE_BACKEND_URL;
+  const isProduction = import.meta.env.PROD;
+  
+  // Ensure endpoint starts with /api
+  const cleanEndpoint = endpoint.startsWith('/api') 
+    ? endpoint 
+    : `/api${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  
+  if (isProduction && backendUrl) {
+    // Production with explicit backend URL
+    return `${backendUrl}${cleanEndpoint}`;
+  } else {
+    // Development (uses Vite proxy) or production on same domain
+    return cleanEndpoint;
+  }
 };
 
 // Status color mappings

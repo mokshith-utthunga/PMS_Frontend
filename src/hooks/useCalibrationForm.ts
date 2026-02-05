@@ -1,7 +1,7 @@
 // Custom hook for Calibration Form data and operations
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { settingsService, calibrationService, evaluationService } from '@/services';
+import { settingsService, calibrationService, evaluationService, employeeService } from '@/services';
 import { toasts } from '@/toasts';
 import { logError } from '@/errors';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
@@ -118,8 +118,8 @@ export function useCalibrationFormOperations(
   useEffect(() => {
     if (ratingScales.length === 0) return;
     const initialQuotas = ratingScales.map(scale => ({
-      rating_value: scale.rating,
-      percentage: defaultQuotas[scale.rating] ?? (scale.rating === 3 ? 70 : scale.rating >= 4 ? 10 : 5),
+      rating_value: scale.value,
+      percentage: defaultQuotas[scale.value] ?? (scale.value === 3 ? 70 : scale.value >= 4 ? 10 : 5),
     }));
     setQuotaRules(initialQuotas);
   }, [ratingScales, defaultQuotas]);
@@ -131,13 +131,13 @@ export function useCalibrationFormOperations(
       if (department && departmentQuotas[department]) {
         const deptQuotas = departmentQuotas[department];
         setQuotaRules(ratingScales.map(scale => ({
-          rating_value: scale.rating,
-          percentage: deptQuotas[scale.rating] ?? defaultQuotas[scale.rating] ?? 0,
+          rating_value: scale.value,
+          percentage: deptQuotas[scale.value] ?? defaultQuotas[scale.value] ?? 0,
         })));
       } else {
         setQuotaRules(ratingScales.map(scale => ({
-          rating_value: scale.rating,
-          percentage: defaultQuotas[scale.rating] ?? 0,
+          rating_value: scale.value,
+          percentage: defaultQuotas[scale.value] ?? 0,
         })));
       }
     },

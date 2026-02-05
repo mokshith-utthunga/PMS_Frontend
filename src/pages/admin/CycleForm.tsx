@@ -1086,7 +1086,7 @@ export default function CycleForm() {
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor={`${quarter}_manager_review_end`} className="mb-2">Manager Employee Performance Review End Date</Label>
+                    <Label htmlFor={`${quarter}_manager_review_end`} className="mb-2">Manager Employees Performance Review End Date</Label>
                     <Input
                       id={`${quarter}_manager_review_end`}
                       name={`${quarter}_manager_review_end`}

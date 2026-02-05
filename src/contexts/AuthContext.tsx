@@ -1,6 +1,7 @@
 // Authentication Context - Simple email/password auth
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { clearAllCacheFromLocalStorage } from '@/utils/localStorageCache';
+import { getApiUrl } from '@/utils/constants';
 
 type AppRole = 'employee' | 'manager' | 'dept_head' | 'hr_admin' | 'hrbp' | 'system_admin';
 
@@ -31,7 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const checkSession = async () => {
       try {
-        const res = await fetch('/api/auth/session', {
+        const res = await fetch(getApiUrl('/api/auth/session'), {
           credentials: 'include',
         });
         
@@ -41,7 +42,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(data.user);
             // Fetch roles
             try {
-              const rolesRes = await fetch('/api/auth/roles', { credentials: 'include' });
+              const rolesRes = await fetch(getApiUrl('/api/auth/roles'), { credentials: 'include' });
               if (rolesRes.ok) {
                 const rolesData = await rolesRes.json();
                 setRoles(rolesData.roles || []);
@@ -70,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Login - POST /api/auth/login
   const signIn = async (email: string, password: string) => {
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(getApiUrl('/api/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -86,7 +87,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(data.user);
       // Fetch roles after login
       try {
-        const rolesRes = await fetch('/api/auth/roles', { credentials: 'include' });
+        const rolesRes = await fetch(getApiUrl('/api/auth/roles'), { credentials: 'include' });
         if (rolesRes.ok) {
           const rolesData = await rolesRes.json();
           setRoles(rolesData.roles || []);
@@ -109,7 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Signup - POST /api/auth/signup
   const signUp = async (email: string, password: string) => {
     try {
-      const res = await fetch('/api/auth/signup', {
+      const res = await fetch(getApiUrl('/api/auth/signup'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -132,7 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Logout - POST /api/auth/logout
   const signOut = async () => {
     try {
-      await fetch('/api/auth/logout', {
+      await fetch(getApiUrl('/api/auth/logout'), {
         method: 'POST',
         credentials: 'include',
       });

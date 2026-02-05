@@ -41,7 +41,7 @@ import { toast } from 'sonner';
 interface Grade {
   id: string;
   name: string;
-  level: number | null;
+  level?: number | null;
   created_at: string;
 }
 

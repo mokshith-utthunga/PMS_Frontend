@@ -190,9 +190,7 @@ export interface Goal {
   updated_at: string;
 }
 
-  created_at: string;
-  updated_at: string;
-}
+
 
 export interface SelfEvaluation {
   id: string;

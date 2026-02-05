@@ -44,8 +44,8 @@ import { toast } from 'sonner';
 interface Competency {
   id: string;
   name: string;
-  description: string | null;
-  category: string | null;
+  description?: string | null;
+  category?: string | null;
   is_active: boolean;
   created_at: string;
 }

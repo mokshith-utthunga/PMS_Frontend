@@ -19,8 +19,22 @@ export class ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  // All endpoints go through Vite proxy to /api
-  const url = endpoint.startsWith('/api') ? endpoint : `/api${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  // In development, use Vite proxy. In production, use full URL if VITE_BACKEND_URL is set
+  const backendUrl = import.meta.env.VITE_BACKEND_URL;
+  const isProduction = import.meta.env.PROD;
+  
+  // Construct URL: use full URL in production if backendUrl is set, otherwise use relative (for same-domain deployment)
+  let url: string;
+  if (isProduction && backendUrl) {
+    // Production with explicit backend URL
+    const cleanEndpoint = endpoint.startsWith('/api') 
+      ? endpoint 
+      : `/api${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    url = `${backendUrl}${cleanEndpoint}`;
+  } else {
+    // Development (uses Vite proxy) or production on same domain
+    url = endpoint.startsWith('/api') ? endpoint : `/api${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  }
 
   try {
     const res = await fetch(url, {
@@ -103,5 +117,8 @@ export const api = {
     }),
 };
 
-// Export API_BASE_URL for backward compatibility (not needed with proxy)
-export const API_BASE_URL = '';
+// Export API_BASE_URL for backward compatibility
+// In production, this will be the backend URL if set, otherwise empty (for same-domain deployment)
+export const API_BASE_URL = import.meta.env.PROD && import.meta.env.VITE_BACKEND_URL 
+  ? import.meta.env.VITE_BACKEND_URL 
+  : '';

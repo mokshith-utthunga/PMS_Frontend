@@ -60,7 +60,7 @@ export function EvaluationPeriodTabs({
 }: EvaluationPeriodTabsProps) {
   // Use backend response for current quarter if available, otherwise fall back to date calculation
   const backendCurrentQuarter = managerReview?.present_quarter;
-  const currentQuarter = backendCurrentQuarter || getCurrentQuarter(cycle, quarterlyCycles);
+  const currentQuarter = (backendCurrentQuarter || getCurrentQuarter(cycle, quarterlyCycles)) as Quarter;
   const activeQuarter = controlledQuarter ?? currentQuarter;
   
   // Determine default tab based on backend response or current period timing
@@ -78,7 +78,7 @@ export function EvaluationPeriodTabs({
 
   const handleMainTabChange = (value: string) => {
     if (value === 'quarterly' || value === 'year-end') {
-      onTabChange?.(value, value === 'quarterly' ? activeQuarter : undefined);
+      onTabChange?.(value, value === 'quarterly' ? (activeQuarter as Quarter) : undefined);
     }
   };
 
@@ -97,7 +97,7 @@ export function EvaluationPeriodTabs({
       <TabsList className="grid w-full grid-cols-2">
         <TabsTrigger value="quarterly" className="flex items-center gap-2">
           <Calendar className="h-4 w-4" />
-          Current Quarter ({getQuarterLabel(currentQuarter)})
+          Current Quarter ({getQuarterLabel(currentQuarter as Quarter)})
           {quarterStatus.timing === 'current' && (
             <Badge variant="secondary" className="ml-1 text-xs">Open</Badge>
           )}
@@ -182,7 +182,7 @@ export function EvaluationPeriodTabs({
               message={quarterStatus.message}
               selfEvalSubmitted={quarterlySelfEvals[activeQuarter]?.status === 'submitted'}
               periodType="quarterly"
-              quarter={activeQuarter}
+              quarter={activeQuarter as Quarter}
             />
             {quarterlyContent}
           </>

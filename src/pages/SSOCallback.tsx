@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
+import { getApiUrl } from '@/utils/constants';
 
 /**
  * SSO Callback page - handles SSO login redirects
@@ -29,10 +30,9 @@ export default function SSOCallback() {
       if (fullName) params.set('fullName', fullName);
       if (role) params.set('role', role);
 
-      // Redirect to backend SSO endpoint via proxy
+      // Redirect to backend SSO endpoint
       // The backend will handle authentication, set cookies, and redirect to /dashboard
-      // The proxy will forward the request and the backend redirect will work correctly
-      window.location.href = `/api/external-auth?${params.toString()}`;
+      window.location.href = `${getApiUrl('/api/external-auth')}?${params.toString()}`;
     };
 
     processSSO();

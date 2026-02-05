@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { getApiUrl } from '@/utils/constants';
 
 export default function Auth() {
   const [email, setEmail] = useState('');
@@ -17,7 +18,7 @@ export default function Auth() {
     setMessage('');
 
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(getApiUrl('/api/auth/login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -54,7 +55,7 @@ export default function Auth() {
     setMessage('');
 
     try {
-      const res = await fetch('/api/auth/signup', {
+      const res = await fetch(getApiUrl('/api/auth/signup'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',

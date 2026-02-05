@@ -24,9 +24,11 @@ interface UserWithRoles {
   email: string;
   roles: AppRole[];
   employee?: {
-    first_name: string;
-    last_name: string;
-    emp_id: string;
+    first_name?: string;
+    last_name?: string;
+    emp_id?: string;
+    full_name?: string;
+    emp_code?: string;
   };
 }
 
