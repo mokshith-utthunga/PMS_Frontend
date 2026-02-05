@@ -44,7 +44,7 @@ export function useKraOperations({
   );
 
   const createKRA = useCallback(
-    async (data: { title: string; description: string; weight: number }) => {
+    async (data: { title: string; description: string; weight: number; kra_template_id?: string | null }) => {
       if (!employeeId || !cycleId) return;
 
       if (kras.length >= MAX_KRAS) {
@@ -57,9 +57,38 @@ export function useKraOperations({
         throw new Error('Weight limit exceeded');
       }
 
+      // Check for duplicate kra_template_id (only if kra_template_id is provided)
+      // Rule: Employee cannot have the same kra_template_id in the same quarter and cycle_id
+      // Exception: This rule does NOT apply if any KRA in that quarter has a transition_id
+      if (data.kra_template_id) {
+        // Check if any existing KRA in this quarter has a transition_id
+        const hasTransition = kras.some(kra => {
+          const sameQuarter = (kra.quarter === quarter) || (kra.quarter === null && quarter === null);
+          return sameQuarter && kra.transition_id !== null && kra.transition_id !== undefined;
+        });
+
+        // Only check for duplicates if there's no transition
+        if (!hasTransition) {
+          const duplicateKRA = kras.find(kra => {
+            const sameTemplate = kra.kra_template_id === data.kra_template_id;
+            const sameEmployee = kra.employee_id === employeeId;
+            const sameCycle = kra.cycle_id === cycleId;
+            const sameQuarter = (kra.quarter === quarter) || (kra.quarter === null && quarter === null);
+            
+            return sameTemplate && sameEmployee && sameCycle && sameQuarter;
+          });
+
+          if (duplicateKRA) {
+            toasts.error('Duplicate KRA Template', `A KRA with this template already exists in quarter ${quarter ? `Q${quarter}` : 'this quarter'} for this cycle.`);
+            throw new Error('Duplicate kra_template_id');
+          }
+        }
+      }
+
       const result = await goalsService.kras.create({
         employee_id: employeeId,
         cycle_id: cycleId,
+        kra_template_id: data.kra_template_id || null,
         title: data.title,
         description: data.description || null,
         weight: data.weight,
@@ -75,7 +104,7 @@ export function useKraOperations({
       toasts.success('KRA created successfully');
       onSuccess();
     },
-    [employeeId, cycleId, kras.length, availableKRAWeight, onSuccess, quarter]
+    [employeeId, cycleId, kras, availableKRAWeight, onSuccess, quarter]
   );
 
   const updateKRA = useCallback(

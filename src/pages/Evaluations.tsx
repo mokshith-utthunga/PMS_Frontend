@@ -126,7 +126,9 @@ export default function Evaluations() {
   }, [quarter, currentQuarter, setQuarter, isValidQuarter]);
   const [quarterlyReviews, setQuarterlyReviews] = useState(initialQuarterlyReviews);
   const [kpiRatings, setKpiRatings] = useState(initialKpiRatings);
-  const [overallComments, setOverallComments] = useState('');
+  // Store overall comments by quarter and period type (pre-transition/post-transition)
+  // Format: { [quarter]: { pre_transition: string, post_transition: string } }
+  const [overallComments, setOverallComments] = useState<Record<number, { pre_transition?: string; post_transition?: string }>>({});
   const [evaluationTab, setEvaluationTab] = useState<Record<number, string>>({});
 
   useEffect(() => {
@@ -195,11 +197,56 @@ export default function Evaluations() {
         setQuarter(q as 1 | 2 | 3 | 4);
       }
     }
-    const review = quarterlyReviews[q];
-    if (review) {
-      setOverallComments(review.overall_comments || '');
+
+    // Load comments from the correct period-specific review
+    const qTransition = transitions[q] || (transition && transition.quarter === q ? transition : null);
+    const periodType = isTransitionTab ? 'post_transition' : 'pre_transition';
+    
+    if (qTransition) {
+      // For transition employees, find the period-specific review
+      const allReviews = allReviewsByQuarter[q] || [];
+      const matchingReview = allReviews.find((r: any) => 
+        r.period_type === periodType && 
+        String(r.transition_id) === String(qTransition.id)
+      );
+      
+      if (matchingReview) {
+        setOverallComments(prev => ({
+          ...prev,
+          [q]: {
+            ...prev[q],
+            [periodType]: matchingReview.overall_comments || ''
+          }
+        }));
+      } else {
+        setOverallComments(prev => ({
+          ...prev,
+          [q]: {
+            ...prev[q],
+            [periodType]: ''
+          }
+        }));
+      }
     } else {
-      setOverallComments('');
+      // For non-transition employees, use the primary review
+      const review = quarterlyReviews[q];
+      if (review) {
+        setOverallComments(prev => ({
+          ...prev,
+          [q]: {
+            ...prev[q],
+            pre_transition: review.overall_comments || ''
+          }
+        }));
+      } else {
+        setOverallComments(prev => ({
+          ...prev,
+          [q]: {
+            ...prev[q],
+            pre_transition: ''
+          }
+        }));
+      }
     }
 
     setEvaluationTab(prev => {
@@ -208,7 +255,7 @@ export default function Evaluations() {
       }
       return prev;
     });
-  }, [selectedQuarter, quarterlyReviews, setQuarter, quarter]);
+  }, [selectedQuarter, quarterlyReviews, setQuarter, quarter, transitions, transition, isTransitionTab, allReviewsByQuarter]);
 
   // Use URL quarter if available, otherwise use selectedQuarter
   const activeQuarter = quarter || parseInt(selectedQuarter) || 1;
@@ -401,24 +448,39 @@ export default function Evaluations() {
     return calculateQuarterRating(qKras, qKraRatings);
   }, [quarterKras, quarterKpis, kpiRatings]);
 
+  // Get the current period-specific comments
+  const getCurrentPeriodComments = useCallback((quarterNum: number) => {
+    const qTransition = transitions[quarterNum] || (transition && transition.quarter === quarterNum ? transition : null);
+    const periodType = isTransitionTab ? 'post_transition' : 'pre_transition';
+    
+    if (qTransition) {
+      return overallComments[quarterNum]?.[periodType] || '';
+    } else {
+      return overallComments[quarterNum]?.pre_transition || '';
+    }
+  }, [overallComments, transitions, transition, isTransitionTab]);
+
   const handleSave = useCallback(() => {
     const q = activeQuarter;
     const calculatedRating = calculateOverallRatingForQuarter(q);
-    evalOps.saveProgress(q, overallComments, calculatedRating ?? undefined, setQuarterlyReviews);
-  }, [activeQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
+    const currentComments = getCurrentPeriodComments(q);
+    evalOps.saveProgress(q, currentComments, calculatedRating ?? undefined, setQuarterlyReviews);
+  }, [activeQuarter, getCurrentPeriodComments, evalOps, calculateOverallRatingForQuarter]);
 
   const handleSubmit = useCallback(() => {
     const q = activeQuarter;
     const calculatedRating = calculateOverallRatingForQuarter(q);
-    evalOps.submitEvaluation(q, overallComments, calculatedRating ?? undefined, setQuarterlyReviews);
-  }, [activeQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
+    const currentComments = getCurrentPeriodComments(q);
+    evalOps.submitEvaluation(q, currentComments, calculatedRating ?? undefined, setQuarterlyReviews);
+  }, [activeQuarter, getCurrentPeriodComments, evalOps, calculateOverallRatingForQuarter]);
 
   const handleNext = useCallback(async () => {
     const q = activeQuarter;
     const calculatedRating = calculateOverallRatingForQuarter(q);
-    await evalOps.saveProgress(q, overallComments, calculatedRating ?? undefined, setQuarterlyReviews);
+    const currentComments = getCurrentPeriodComments(q);
+    await evalOps.saveProgress(q, currentComments, calculatedRating ?? undefined, setQuarterlyReviews);
     setEvaluationTab(prev => ({ ...prev, [q]: 'overall' }));
-  }, [activeQuarter, overallComments, evalOps, calculateOverallRatingForQuarter]);
+  }, [activeQuarter, getCurrentPeriodComments, evalOps, calculateOverallRatingForQuarter]);
 
   const handleTabChange = useCallback((quarter: number, value: string) => {
     setEvaluationTab(prev => ({ ...prev, [quarter]: value }));
@@ -699,51 +761,91 @@ export default function Evaluations() {
       );
     }
 
-    // Quarter has goals and is accessible (or has late permission) - show evaluation content
-    // Use backend selfReview data to determine if quarter is open for self-review
-    // If selfReview is available, check if this quarter is the review_for_quarter and enabled
-    // Otherwise, fallback to date-based check
-    const qIsOpen = selfReview 
-      ? (selfReview.review_for_quarter === quarterNum && selfReview.enabled === true)
-      : isQuarterOpen(activeCycle, quarterNum, quarterlyCycles);
-    
     // For transitions, we need to get the correct review based on period_type
     // If working on post-transition KPIs, get post-transition review
     // If working on pre-transition KPIs, get pre-transition review
     // Otherwise, use the primary review (which defaults to post-transition if available)
     let qReview = quarterlyReviews[quarterNum];
     if (qTransition) {
-      // Find the specific review for the period we're working on
-      const periodInfo = currentQuarterPeriodInfo;
-      if (periodInfo.periodType && periodInfo.transitionId) {
-        // Find the review matching the current period from allReviewsByQuarter
-        const allReviews = allReviewsByQuarter[quarterNum] || [];
-        const matchingReview = allReviews.find((r: any) => 
-          r.period_type === periodInfo.periodType && 
-          r.transition_id === periodInfo.transitionId
-        );
-        if (matchingReview) {
-          qReview = matchingReview;
-        }
+      // Calculate period info directly based on isTransition parameter (not relying on currentQuarterPeriodInfo)
+      // This ensures we use the correct period for the specific quarter being rendered
+      const periodType = isTransition ? 'post_transition' : 'pre_transition';
+      const transitionId = qTransition.id;
+      
+      console.log('[Evaluations] Finding review for period:', {
+        quarter: quarterNum,
+        isTransition: isTransition,
+        periodType: periodType,
+        transitionId: transitionId,
+        allReviewsByQuarter: allReviewsByQuarter[quarterNum]
+      });
+      
+      // Find the review matching the current period from allReviewsByQuarter
+      const allReviews = allReviewsByQuarter[quarterNum] || [];
+      const matchingReview = allReviews.find((r: any) => 
+        r.period_type === periodType && 
+        String(r.transition_id) === String(transitionId)
+      );
+      
+      console.log('[Evaluations] Matching review found:', matchingReview);
+      
+      if (matchingReview) {
+        qReview = matchingReview;
+      } else {
+        // If no matching review found, set qReview to null so we can create a new one
+        qReview = null;
       }
     }
     const qIsSubmitted = qReview?.status === 'submitted';
     
-    // For post-transition period, we should allow editing even if pre-transition review is submitted
-    // because they are separate reviews. The backend creates separate reviews for each period_type.
-    // For now, if we're in post-transition period and have transition, allow editing regardless of review status
-    // (The backend will handle creating/updating the correct period-specific review)
-    const isPostTransitionPeriod = hasTransitionForQuarter && postTransitionKras.length > 0;
+    // Use backend selfReview data to determine if quarter is open for self-review
+    // If selfReview is available, check if this quarter is the review_for_quarter and enabled
+    // Otherwise, fallback to date-based check
+    // For transition employees, the selfReview from context should still indicate if the quarter is open
+    const qIsOpen = selfReview 
+      ? (selfReview.review_for_quarter === quarterNum && selfReview.enabled === true)
+      : isQuarterOpen(activeCycle, quarterNum, quarterlyCycles);
+    
+    // For transition employees, pre-transition and post-transition are separate reviews
+    // When in transition tab (post-transition), check the post-transition review status
+    // When in pre-transition tab, check the pre-transition review status
+    // The qReview is already set correctly based on currentQuarterPeriodInfo above
+    
+    // Debug logging for transition tab
+    if (isTransition && qTransition) {
+      console.log('[Evaluations] Transition tab debug:', {
+        quarter: quarterNum,
+        isTransitionTab: isTransition,
+        qReview: qReview,
+        qIsSubmitted: qIsSubmitted,
+        qIsOpen: qIsOpen,
+        qHasLatePermission: qHasLatePermission,
+        hasTransitionForQuarter: hasTransitionForQuarter,
+        isWithinQuarterDates: isWithinQuarterDates,
+        periodInfo: currentQuarterPeriodInfo
+      });
+    }
     
     // Allow editing if:
     // 1. Quarter is open OR
     // 2. Has late permission OR
     // 3. Has transition AND within quarter dates (bypass deadline check)
     // AND:
-    // - For post-transition period: always allow (backend handles period-specific reviews)
-    // - For other periods: only allow if review not submitted
+    // - The current period's review is not submitted (each period has its own review)
+    // - OR if the review doesn't exist yet (qReview is null/undefined), allow editing
     const qCanEdit = (qIsOpen || qHasLatePermission || (hasTransitionForQuarter && isWithinQuarterDates)) && 
-                     (isPostTransitionPeriod ? true : !qIsSubmitted);
+                     (!qReview || !qIsSubmitted);
+    
+    // Additional debug for transition tab
+    if (isTransition && qTransition) {
+      console.log('[Evaluations] Transition tab - qCanEdit:', qCanEdit, 'breakdown:', {
+        condition1: qIsOpen,
+        condition2: qHasLatePermission,
+        condition3: hasTransitionForQuarter && isWithinQuarterDates,
+        condition4: !qReview || !qIsSubmitted,
+        final: qCanEdit
+      });
+    }
     
     // Determine which KRAs and KPIs to display
     // Determine which KRAs/KPIs to display based on tab
@@ -940,10 +1042,46 @@ export default function Evaluations() {
             <OverallAssessmentTab
               quarter={quarterNum}
               calculatedRating={qOverallCalc}
-              overallComments={quarterNum === q ? overallComments : ''}
+              overallComments={(() => {
+                // Get period-specific comments for this quarter and period
+                const qTransition = transitions[quarterNum] || (transition && transition.quarter === quarterNum ? transition : null);
+                const periodType = isTransition ? 'post_transition' : 'pre_transition';
+                
+                if (qTransition) {
+                  return overallComments[quarterNum]?.[periodType] || '';
+                } else {
+                  return overallComments[quarterNum]?.pre_transition || '';
+                }
+              })()}
               canEdit={qCanEdit}
-              onCommentsChange={setOverallComments}
+              onCommentsChange={(newComments: string) => {
+                const qTransition = transitions[quarterNum] || (transition && transition.quarter === quarterNum ? transition : null);
+                const periodType = isTransition ? 'post_transition' : 'pre_transition';
+                
+                setOverallComments(prev => ({
+                  ...prev,
+                  [quarterNum]: {
+                    ...prev[quarterNum],
+                    [periodType]: newComments
+                  }
+                }));
+              }}
             />
+            
+            {/* Debug logging for Overall Assessment tab */}
+            {isTransition && qTransition && (() => {
+              console.log('[Evaluations] Overall Assessment tab - transition tab:', {
+                quarter: quarterNum,
+                isTransition: isTransition,
+                qReview: qReview,
+                qIsSubmitted: qIsSubmitted,
+                qCanEdit: qCanEdit,
+                showButtons: qCanEdit && !qIsSubmitted,
+                periodType: isTransition ? 'post_transition' : 'pre_transition',
+                transitionId: qTransition.id
+              });
+              return null;
+            })()}
             
             {/* Action Buttons for Overall Assessment Tab */}
             {qCanEdit && !qIsSubmitted && (
@@ -984,7 +1122,7 @@ export default function Evaluations() {
         <Tabs 
           value={selectedQuarter} 
           onValueChange={(value) => {
-            const quarterNum = parseInt(value);
+              const quarterNum = parseInt(value);
             if (quarterNum >= 1 && quarterNum <= 4) {
               setSelectedQuarter(String(quarterNum));
               setQuarter(quarterNum as 1 | 2 | 3 | 4);
@@ -1023,14 +1161,14 @@ export default function Evaluations() {
                 : (getQuarterTiming(activeCycle, quarterNum, quarterlyCycles) !== 'future');
               
               return (
-                <TabsTrigger 
+                  <TabsTrigger 
                   key={quarterNum}
-                  value={String(quarterNum)} 
+                    value={String(quarterNum)} 
                   disabled={!isTabEnabled}
-                  className="flex items-center gap-2"
-                >
-                  Q{quarterNum}
-                </TabsTrigger>
+                    className="flex items-center gap-2"
+                  >
+                    Q{quarterNum}
+                  </TabsTrigger>
               );
             })}
           </TabsList>
@@ -1084,7 +1222,7 @@ export default function Evaluations() {
                 ) : (
                   /* No Transition - Show regular content */
                   renderQuarterContent(quarterNum, false)
-                )}
+              )}
               </TabsContent>
             );
           })}

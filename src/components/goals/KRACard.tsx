@@ -212,7 +212,7 @@ export function KRACard({
                           {hasCalibration && (
                             <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700">
                               <Settings2 className="h-3 w-3 mr-1" />
-                              Calibrated
+                              Rating Correlation Analysis
                             </Badge>
                           )}
                           </div>

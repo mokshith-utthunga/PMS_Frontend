@@ -3,11 +3,13 @@ import { useCallback } from 'react';
 import { goalsService } from '@/services';
 import { toasts } from '@/toasts';
 import { MAX_KRAS } from '@/utils/constants';
+import type { KRA } from '@/types';
 
 interface UseTemplateSelectionProps {
   employeeId: string | null;
   cycleId: string | null;
   krasCount: number;
+  kras: KRA[];
   availableKRAWeight: number;
   onSuccess: () => void;
   quarter?: number | null;
@@ -35,6 +37,7 @@ export function useTemplateSelection({
   employeeId,
   cycleId,
   krasCount,
+  kras,
   availableKRAWeight,
   onSuccess,
   quarter,
@@ -52,6 +55,34 @@ export function useTemplateSelection({
       if (weight <= 0) {
         toasts.error('No Weight Available', 'Adjust existing KRAs to make room');
         throw new Error('No weight available');
+      }
+
+      // Check for duplicate kra_template_id (only if kra_template_id is provided)
+      // Rule: Employee cannot have the same kra_template_id in the same quarter and cycle_id
+      // Exception: This rule does NOT apply if any KRA in that quarter has a transition_id
+      if (template.id) {
+        // Check if any existing KRA in this quarter has a transition_id
+        const hasTransition = kras.some(kra => {
+          const sameQuarter = (kra.quarter === quarter) || (kra.quarter === null && quarter === null);
+          return sameQuarter && kra.transition_id !== null && kra.transition_id !== undefined;
+        });
+
+        // Only check for duplicates if there's no transition
+        if (!hasTransition) {
+          const duplicateKRA = kras.find(kra => {
+            const sameTemplate = kra.kra_template_id === template.id;
+            const sameEmployee = kra.employee_id === employeeId;
+            const sameCycle = kra.cycle_id === cycleId;
+            const sameQuarter = (kra.quarter === quarter) || (kra.quarter === null && quarter === null);
+            
+            return sameTemplate && sameEmployee && sameCycle && sameQuarter;
+          });
+
+          if (duplicateKRA) {
+            toasts.error('Duplicate KRA Template', `A KRA with this template already exists in quarter ${quarter ? `Q${quarter}` : 'this quarter'} for this cycle.`);
+            throw new Error('Duplicate kra_template_id');
+          }
+        }
       }
 
       // Create KRA from template (include kra_template_id for traceability)
@@ -95,7 +126,7 @@ export function useTemplateSelection({
       toasts.success('KRA created from template with KPIs');
       onSuccess();
     },
-    [employeeId, cycleId, krasCount, availableKRAWeight, onSuccess, quarter]
+    [employeeId, cycleId, krasCount, kras, availableKRAWeight, onSuccess, quarter]
   );
 
   return { selectTemplate };

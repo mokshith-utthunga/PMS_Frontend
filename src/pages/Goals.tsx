@@ -323,6 +323,7 @@ export default function Goals() {
     employeeId,
     cycleId: activeCycle?.id || null,
     krasCount: kras.length,
+    kras: kras,
     availableKRAWeight: kraOps.availableKRAWeight,
     onSuccess: refetchAllGoals,
     quarter: quarter || null,

@@ -230,7 +230,7 @@ export function CalibrationConfig({
                 aria-label="Add first calibration rule"
               >
                 <Plus className="mr-2 h-4 w-4" />
-                Add Calibration Rule
+                Add Rating Correlation Analysis
               </Button>
             )}
           </div>

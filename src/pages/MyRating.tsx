@@ -116,7 +116,10 @@ export default function MyRating() {
   const [activeCycle, setActiveCycle] = useState<any>(activeCycleFromContext);
   const [selectedQuarter, setSelectedQuarter] = useState<string>('1');
   const [viewMode, setViewMode] = useState<'quarterly' | 'year-end'>('quarterly');
-  const [isTransitionTab, setIsTransitionTab] = useState(false);
+  
+  // Track nested tab within quarter for transition employees: 'pre-transition' or 'transition'
+  const [nestedTab, setNestedTab] = useState<'pre-transition' | 'transition'>('pre-transition');
+  const isTransitionTab = nestedTab === 'transition';
   
   // Transition data - fetch transitions for all quarters
   const [transitions, setTransitions] = useState<Record<number, any>>({});
@@ -162,13 +165,16 @@ export default function MyRating() {
     const transitionParam = searchParams.get('transition');
     if (quarterParam === 'year-end') {
       setViewMode('year-end');
-      setIsTransitionTab(false);
+      setNestedTab('pre-transition');
     } else if (quarterParam && ['1', '2', '3', '4'].includes(quarterParam)) {
       setViewMode('quarterly');
       setSelectedQuarter(quarterParam);
-      setIsTransitionTab(transitionParam === 'true');
+      setNestedTab(transitionParam === 'true' ? 'transition' : 'pre-transition');
     }
   }, [searchParams]);
+  
+  // Track if transitions have been loaded (initialized as false, set to true after first load)
+  const [transitionsLoaded, setTransitionsLoaded] = useState(false);
   
   // Fetch transitions for all quarters
   useEffect(() => {
@@ -191,6 +197,7 @@ export default function MyRating() {
         }
       }
       setTransitions(transitionsMap);
+      setTransitionsLoaded(true); // Mark transitions as loaded
     };
     
     fetchTransitions();
@@ -268,6 +275,7 @@ export default function MyRating() {
       const quarter = parseInt(selectedQuarter);
       const currentTransition = transitions[quarter];
       
+      console.log('fetchData - quarter:', quarter, 'currentTransition:', currentTransition, 'isTransitionTab:', isTransitionTab, 'transitions:', transitions);
       
       if (isTransitionTab && currentTransition) {
         console.log('Fetching post-transition data (transition tab)');
@@ -282,6 +290,8 @@ export default function MyRating() {
         await fetchPreTransitionData(employeeId, currentActiveCycle.id, quarter, currentTransition);
         return; // fetchPreTransitionData handles setLoading(false)
       }
+      
+      console.log('No transition detected for quarter', quarter, '- fetching full quarter data');
             
       // Get self-review for selected quarter (no transition - full quarter)
       const selfReviewsResult = await evaluationService.selfReviews.get(
@@ -453,9 +463,13 @@ export default function MyRating() {
   }, [user, selectedQuarter, viewMode, activeCycleFromContext, activeCycle, currentEmployee, toast, isTransitionTab, transitions]);
   
   // Call fetchData when dependencies change
+  // Wait for transitions to be loaded before fetching data to avoid race condition
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    // Only fetch if transitions have been loaded (even if empty, that's fine)
+    if (transitionsLoaded) {
+      fetchData();
+    }
+  }, [fetchData, transitionsLoaded]);
   
   // Fetch transition-specific data (pre and post-transition separately)
   const fetchTransitionData = useCallback(async (
@@ -768,23 +782,24 @@ export default function MyRating() {
       
       try {
         // Pre-transition KRAs are set to 'locked' status when transition is created
-        // So we need to fetch without status filter or include 'locked' status
-        // Fetch without status filter to get both 'approved' and 'locked' KRAs
+        // Fetch all KRAs for the quarter (without period_type and transition_id filters)
+        // Then filter in frontend to get pre-transition KRAs
         const preKrasResult = await goalsService.kras.getByEmployee(
           employeeId,
           cycleId,
           undefined, // No status filter - we want both 'approved' and 'locked' for pre-transition
           quarter,
-          'pre_transition',
-          transition.id
+          null, // period_type should be null (not 'pre_transition')
+          null  // transition_id should be null
         );
-        console.log('Pre-transition KRAs API response (full):', JSON.stringify(preKrasResult, null, 2));
-        console.log('Pre-transition KRAs API response type:', typeof preKrasResult);
-        console.log('Pre-transition KRAs API response.data:', preKrasResult.data);
-        preKras = (preKrasResult.data || []).filter((k: any) => 
-          k.status === 'approved' || k.status === 'locked'
-        );
-        console.log('Pre-transition KRAs fetched (after filtering by status):', preKras.length, preKras);
+
+        // Filter in frontend: get pre-transition KRAs (period_type='pre_transition' and transition_id matches, OR period_type is null/empty and no transition_id)
+        preKras = (preKrasResult.data || []).filter((k: any) => {
+          const statusMatch = k.status === 'approved' || k.status === 'locked';
+          const isPreTransition = (k.period_type === 'pre_transition' && k.transition_id === transition.id) ||
+                                  (!k.period_type && !k.transition_id); // Full quarter KRAs (no transition)
+          return statusMatch && isPreTransition;
+        });
       } catch (error: any) {
         console.error('Error fetching pre-transition KRAs:', error);
         toast({
@@ -794,25 +809,29 @@ export default function MyRating() {
         });
       }
       
+      console.log('Setting KRAs:', preKras.length, preKras);
       setKras(preKras);
       
       try {
-        // Pre-transition KPIs are set to 'locked' status when transition is created
-        // So we need to fetch without status filter or include 'locked' status
+
         const preKpisResult = await goalsService.kpis.getByEmployee(
           employeeId,
           cycleId,
           undefined, // No status filter - we want both 'approved' and 'locked' for pre-transition
           quarter,
-          'pre_transition',
-          transition.id
+          null, // period_type should be null (not 'pre_transition')
+          null  // transition_id should be null
         );
-        console.log('Pre-transition KPIs API response (full):', JSON.stringify(preKpisResult, null, 2));
-        console.log('Pre-transition KPIs API response.data:', preKpisResult.data);
-        preKpis = (preKpisResult.data || []).filter((kpi: any) => 
-          kpi.kra_id && (kpi.status === 'approved' || kpi.status === 'locked')
-        );
-        console.log('Pre-transition KPIs fetched (after filtering):', preKpis.length, preKpis);
+
+        // Filter in frontend: get pre-transition KPIs (period_type='pre_transition' and transition_id matches, OR period_type is null/empty and no transition_id)
+        preKpis = (preKpisResult.data || []).filter((kpi: any) => {
+          const hasKraId = !!kpi.kra_id;
+          const statusMatch = kpi.status === 'approved' || kpi.status === 'locked';
+          const isPreTransition = (kpi.period_type === 'pre_transition' && kpi.transition_id === transition.id) ||
+                                  (!kpi.period_type && !kpi.transition_id); // Full quarter KPIs (no transition)
+          return hasKraId && statusMatch && isPreTransition;
+        });
+        console.log('Pre-transition KPIs fetched (after filtering by status and period):', preKpis.length, preKpis);
       } catch (error: any) {
         console.error('Error fetching pre-transition KPIs:', error);
         toast({
@@ -926,18 +945,25 @@ export default function MyRating() {
       console.log('Pre-transition KRAs count:', preKras.length);
       console.log('Pre-transition KPIs count:', preKpis.length);
       console.log('Pre-transition calculated self KRA ratings:', preCalculatedSelfKRARatings);
+      console.log('Setting kraRatings with:', preKraRatingsData.length, 'items');
       setKraRatings(preKraRatingsData);
       
       // Determine evaluation state for pre-transition
+      console.log('Pre-transition evaluation state check - preMgrReview:', preMgrReview, 'preCalibratedRating:', preCalibratedRating);
       if (!preMgrReview) {
+        console.log('Setting evaluation state to manager_pending');
         setEvaluationState('manager_pending');
       } else if (preMgrReview.employee_acknowledged_at) {
+        console.log('Setting evaluation state to employee_accepted');
         setEvaluationState('employee_accepted');
       } else if (preMgrReview.employee_rejected_at) {
+        console.log('Setting evaluation state to employee_rejected');
         setEvaluationState('employee_rejected');
       } else if (preCalibratedRating !== null || preMgrReview.hr_approved_at) {
+        console.log('Setting evaluation state to hr_approved');
         setEvaluationState('hr_approved');
       } else {
+        console.log('Setting evaluation state to hr_pending');
         setEvaluationState('hr_pending');
       }
       
@@ -1056,29 +1082,33 @@ export default function MyRating() {
 
   const activeTab = useMemo(() => {
     if (viewMode === 'year-end') return 'year-end';
-    if (isTransitionTab) return `q${selectedQuarter}-transition`;
     return `q${selectedQuarter}`;
-  }, [viewMode, selectedQuarter, isTransitionTab]);
+  }, [viewMode, selectedQuarter]);
 
   const handleTabChange = useCallback((tab: string) => {
     if (tab === 'year-end') {
       handleViewModeChange('year-end');
-      setIsTransitionTab(false);
+      setNestedTab('pre-transition');
       setSearchParams({ quarter: 'year-end' });
-    } else if (tab.endsWith('-transition')) {
-      const quarter = tab.replace('q', '').replace('-transition', '');
-      setSelectedQuarter(quarter);
-      setIsTransitionTab(true);
-      handleViewModeChange('quarterly', quarter);
-      setSearchParams({ quarter, transition: 'true' });
     } else {
       const quarter = tab.replace('q', '');
       setSelectedQuarter(quarter);
-      setIsTransitionTab(false);
+      setNestedTab('pre-transition'); // Reset nested tab when switching quarters
       handleViewModeChange('quarterly', quarter);
       setSearchParams({ quarter });
     }
   }, [handleViewModeChange, setSearchParams]);
+  
+  // Reset nested tab when quarter changes
+  useEffect(() => {
+    const quarter = parseInt(selectedQuarter);
+    if (transitions[quarter]) {
+      // If quarter has transition, default to pre-transition tab
+      setNestedTab('pre-transition');
+    } else {
+      setNestedTab('pre-transition');
+    }
+  }, [selectedQuarter, transitions]);
 
   const formatJoinDate = (date: string | null | undefined) => {
     if (!date) return '-';
@@ -1383,20 +1413,19 @@ export default function MyRating() {
     return (
       <>
         {/* Transition Info Card */}
-        <Card className="border-2 border-primary/20 bg-primary/5">
+        <Card className="bg-white border-2 border-input/50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <AlertCircle className="h-5 w-5" />
+              <AlertCircle className="w-5" />
               Mid-Quarter Transition Detected
             </CardTitle>
             <CardDescription>
               Transition Date: {new Date(transition.transition_date).toLocaleDateString()} • Type: {transition.transition_type}
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          {/* <CardContent>
             <div className="flex items-center gap-4 text-sm">
               <div>
-                <span className="text-muted-foreground">Post-Transition Period</span>
                 {transition.post_period_start_date && transition.post_period_end_date && (
                   <div className="font-medium">
                     {formatPeriodDateRange(transition.post_period_start_date, transition.post_period_end_date)}
@@ -1404,7 +1433,7 @@ export default function MyRating() {
                 )}
               </div>
             </div>
-          </CardContent>
+          </CardContent> */}
         </Card>
         
         {/* Post-Transition Period Ratings */}
@@ -1576,48 +1605,66 @@ export default function MyRating() {
     );
   };
 
-  // Create single unified tab layout
-  const renderTabs = (quarterContent: React.ReactNode) => {
-    // Count total tabs: 4 quarters + transition tabs (if any) + year-end
-    const quartersWithTransitions = [1, 2, 3, 4].filter(q => transitions[q]);
-    const totalTabs = 4 + quartersWithTransitions.length + 1;
-    
-    // Build tabs array
-    const tabs: Array<{ value: string; label: string; isTransition?: boolean }> = [];
-    [1, 2, 3, 4].forEach(quarter => {
-      tabs.push({ value: `q${quarter}`, label: `Q${quarter}` });
-      if (transitions[quarter]) {
-        tabs.push({ value: `q${quarter}-transition`, label: 'Transition', isTransition: true });
-      }
-    });
-    tabs.push({ value: 'year-end', label: 'Year-End' });
+  // Create single unified tab layout with nested tabs for transitions
+  const renderTabs = (quarterContent: (quarter: number) => React.ReactNode) => {
+    // Count total tabs: 4 quarters + year-end
+    const totalTabs = 5;
     
     return (
       <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
         <TabsList className="grid w-full " style={{ gridTemplateColumns: `repeat(${totalTabs}, 1fr)` }}>
-          {tabs.map(tab => (
-            <TabsTrigger 
-              key={tab.value} 
-              value={tab.value}
-              className={tab.value === 'year-end' ? 'flex items-center gap-1' : ''}
-            >
-              {tab.value === 'year-end' && <Calendar className="h-4 w-4" />}
-              {tab.label}
+          {[1, 2, 3, 4].map(quarter => (
+            <TabsTrigger key={quarter} value={`q${quarter}`}>
+              Q{quarter}
             </TabsTrigger>
           ))}
+          <TabsTrigger value="year-end" className="flex items-center gap-1">
+            <Calendar className="h-4 w-4" />
+            Year-End
+          </TabsTrigger>
         </TabsList>
         
-        {[1, 2, 3, 4].map(quarter => (
-          <TabsContent key={quarter} value={`q${quarter}`} className="space-y-4 ">
-            {quarterContent}
-          </TabsContent>
-        ))}
-        
         {[1, 2, 3, 4].map(quarter => {
-          if (!transitions[quarter]) return null;
+          const quarterTransition = transitions[quarter];
+          const isCurrentQuarter = parseInt(selectedQuarter) === quarter;
+          
           return (
-            <TabsContent key={`${quarter}-transition`} value={`q${quarter}-transition`} className="space-y-4">
-              {renderTransitionContent(quarter, transitions[quarter])}
+            <TabsContent key={quarter} value={`q${quarter}`} className="space-y-4">
+              {quarterTransition ? (
+                /* Transition Employee - Show Nested Tabs */
+                <Tabs 
+                  value={isCurrentQuarter ? nestedTab : 'pre-transition'} 
+                  onValueChange={(value) => {
+                    if (isCurrentQuarter) {
+                      setNestedTab(value as 'pre-transition' | 'transition');
+                      const params: Record<string, string> = { quarter: selectedQuarter };
+                      if (value === 'transition') {
+                        params.transition = 'true';
+                      }
+                      setSearchParams(params);
+                    }
+                  }}
+                  className="space-y-4"
+                >
+                  <TabsList>
+                    <TabsTrigger value="pre-transition">Pre-Transition</TabsTrigger>
+                    <TabsTrigger value="transition">Transition</TabsTrigger>
+                  </TabsList>
+                  
+                  {/* Pre-Transition Tab Content */}
+                  <TabsContent value="pre-transition" className="space-y-4">
+                    {quarterContent(quarter)}
+                  </TabsContent>
+                  
+                  {/* Transition Tab Content (Post-Transition) */}
+                  <TabsContent value="transition" className="space-y-4">
+                    {renderTransitionContent(quarter, quarterTransition)}
+                  </TabsContent>
+                </Tabs>
+              ) : (
+                /* Full Quarter (No Transition) */
+                quarterContent(quarter)
+              )}
             </TabsContent>
           );
         })}
@@ -1639,7 +1686,7 @@ export default function MyRating() {
             <p className="text-muted-foreground">View your performance rating</p>
           </div>
           
-          {activeCycle && renderTabs(
+          {activeCycle && renderTabs((quarter) => (
             viewMode === 'year-end' ? null : (
               <Card>
                 <CardContent className="flex flex-col items-center justify-center py-12">
@@ -1651,7 +1698,7 @@ export default function MyRating() {
                 </CardContent>
               </Card>
             )
-          )}
+          ))}
         </div>
       </MainLayout>
     );
@@ -1667,7 +1714,7 @@ export default function MyRating() {
             <p className="text-muted-foreground">View your performance rating</p>
           </div>
           
-          {activeCycle && renderTabs(
+          {activeCycle && renderTabs((quarter) => (
             <>
               <Alert className="border-yellow-200 bg-yellow-50">
                 <AlertCircle className="h-4 w-4 text-yellow-600" />
@@ -1769,7 +1816,7 @@ export default function MyRating() {
                 </CardContent>
               </Card>
             </>
-          )}
+          ))}
         </div>
       </MainLayout>
     );
@@ -1777,35 +1824,50 @@ export default function MyRating() {
 
   // renderTransitionContent is already defined above renderTabs - duplicate removed
 
-  const renderQuarterlyContent = () => {
-    const quarter = parseInt(selectedQuarter);
+  const renderQuarterlyContent = (quarterNum: number) => {
+    const quarter = quarterNum;
     const currentTransition = transitions[quarter];
-    const isPreTransitionView = currentTransition && !isTransitionTab;
+    const isCurrentQuarter = parseInt(selectedQuarter) === quarter;
+    const isPreTransitionView = currentTransition && (isCurrentQuarter ? nestedTab === 'pre-transition' : true);
+    
+    // Only show data for the currently selected quarter
+    if (!isCurrentQuarter) {
+      return (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12">
+            <Star className="h-12 w-12 text-muted-foreground mb-4" />
+            <h3 className="font-semibold text-lg">Select Q{quarter} to view ratings</h3>
+            <p className="text-muted-foreground">
+              Click on the Q{quarter} tab to view your performance ratings for this quarter.
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
     
     return (
       <>
         {/* Show transition info if viewing pre-transition period */}
-        {isPreTransitionView && (
-          <Card className="border-2 border-primary/20 bg-primary/5">
+        {isPreTransitionView && currentTransition && (
+          <Card className="bg-white border-2 border-input/50">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <AlertCircle className="h-5 w-5" />
+                <AlertCircle className=" w-5" />
                 Pre-Transition Period
               </CardTitle>
               <CardDescription>
                 Transition Date: {new Date(currentTransition.transition_date).toLocaleDateString()} • Type: {currentTransition.transition_type}
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="text-sm">
-                <span className="text-muted-foreground">Period: </span>
+            {/* <CardContent> */}
+              {/* <div className="text-sm">
                 {currentTransition.pre_period_start_date && currentTransition.pre_period_end_date && (
                   <span className="font-medium">
                     {formatPeriodDateRange(currentTransition.pre_period_start_date, currentTransition.pre_period_end_date)}
                   </span>
                 )}
-              </div>
-            </CardContent>
+              </div> */}
+            {/* </CardContent> */}
           </Card>
         )}
         
@@ -1825,21 +1887,15 @@ export default function MyRating() {
                   Your Self-Evaluation
                 </CardTitle>
                 <CardDescription>
-                  Your self-evaluation ratings for Q{selectedQuarter}
+                  Your self-evaluation ratings for Q{quarter}
                   {isPreTransitionView && ' (Pre-Transition Period)'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                {(() => {
-                  console.log('Rendering quarterly content - kraRatings:', kraRatings.length, kraRatings);
-                  console.log('Rendering quarterly content - kras state:', kras.length, kras);
-                  console.log('Rendering quarterly content - isPreTransitionView:', isPreTransitionView);
-                  console.log('Rendering quarterly content - currentTransition:', currentTransition);
-                  return null;
-                })()}
+           
                 {(kraRatings.length === 0 && kras.length === 0) ? (
                   <div className="text-center py-8 text-muted-foreground">
-                    <p>No KRAs found for Q{selectedQuarter}</p>
+                    <p>No KRAs found for Q{quarter}</p>
                     {isPreTransitionView && currentTransition && (
                       <div className="text-xs mt-2 text-orange-600">
                         <p>Pre-transition period detected</p>
@@ -2176,7 +2232,7 @@ export default function MyRating() {
           )}
         </div>
 
-        {activeCycle && renderTabs(renderQuarterlyContent())}
+        {activeCycle && renderTabs(renderQuarterlyContent)}
       </div>
 
       {/* Rejection Confirmation Dialog */}

@@ -254,7 +254,7 @@ export function CalibrationDisplay({
   return (
     <Card className={className}>
       <CardHeader>
-        <CardTitle className="text-base">Calibration Scale</CardTitle>
+        <CardTitle className="text-base">Rating Correlation Analysis</CardTitle>
         <CardDescription className='flex justify-between items-center'>
           Rating thresholds for this KPI.
           {targetValue && (

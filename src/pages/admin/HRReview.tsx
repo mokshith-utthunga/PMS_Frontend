@@ -60,6 +60,9 @@ interface PendingReview {
   cycle_name: string;
   quarter: number;
   calculated_overall_rating: number | null;
+  display_rating: number | null; // For transition employees, this is the average of pre + post
+  period_type: string | null;
+  transition_id: string | null;
   overall_comments: string | null;
   guidance: string | null;
   created_at: string;
@@ -946,11 +949,15 @@ export default function HRReview() {
                                 </div>
                                 <div className="text-right">
                                   <div className="text-2xl font-bold text-primary">
-                                    {review.calculated_overall_rating 
-                                      ? formatRating(review.calculated_overall_rating)
+                                    {review.display_rating || review.calculated_overall_rating
+                                      ? formatRating(review.display_rating || review.calculated_overall_rating)
                                       : '-'}
                                   </div>
-                                  <div className="text-xs text-muted-foreground">Overall Rating</div>
+                                  <div className="text-xs text-muted-foreground">
+                                    {review.period_type === 'post_transition' && review.transition_id
+                                      ? 'Average Rating (Pre + Post)'
+                                      : 'Overall Rating'}
+                                  </div>
                                 </div>
                               </div>
                             </CardHeader>
@@ -1902,16 +1909,26 @@ export default function HRReview() {
                   <CardTitle className="flex items-center gap-2">
                     <Calculator className="h-5 w-5" />
                     Overall Assessment
+                    {reviewDetails.period_type === 'post_transition' && reviewDetails.transition_id && (
+                      <Badge variant="outline" className="ml-2">
+                        Average (Pre + Post)
+                      </Badge>
+                    )}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="text-center p-6 rounded-lg bg-primary/5 border-2 border-primary">
                     <div className="text-sm text-muted-foreground mb-2">Performance Rating</div>
                     <div className="text-4xl font-bold text-primary mb-2">
-                      {reviewDetails.calculated_overall_rating 
-                        ? formatRating(reviewDetails.calculated_overall_rating)
+                      {reviewDetails.display_rating || reviewDetails.calculated_overall_rating
+                        ? formatRating(reviewDetails.display_rating || reviewDetails.calculated_overall_rating)
                         : '-'}
                     </div>
+                    {reviewDetails.period_type === 'post_transition' && reviewDetails.transition_id && (
+                      <div className="text-xs text-muted-foreground mt-2">
+                        Calculated as average of pre-transition (HR approved) and post-transition ratings
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>

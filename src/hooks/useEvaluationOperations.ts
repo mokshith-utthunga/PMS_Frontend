@@ -78,13 +78,15 @@ export function useEvaluationOperations({
         });
 
         // Create or update quarterly self review
+        // Always set status to 'in_progress' when saving (Save/Next buttons)
+        // Only the Submit button should set status to 'submitted'
         const result = await evaluationService.selfReviews.upsert({
           employee_id: employeeId,
           cycle_id: cycleId,
           quarter,
           overall_rating: overallRating,
           overall_comments: overallComments,
-          status: review?.status === 'submitted' ? 'submitted' : 'in_progress',
+          status: 'in_progress',
           period_type: periodType || undefined,
           transition_id: transitionId || undefined,
           period_start_date: periodStartDate || undefined,
