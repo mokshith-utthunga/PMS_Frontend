@@ -288,7 +288,7 @@ export default function CalibrationList() {
           </p>
         </div>
 
-        {activeCycle && (
+        {/* {activeCycle && (
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
@@ -308,10 +308,10 @@ export default function CalibrationList() {
               </div>
             </CardContent>
           </Card>
-        )}
+        )} */}
 
         {/* Master Switch */}
-        <Card>
+        {/* <Card>
           <CardHeader>
             <CardTitle>Master Switch</CardTitle>
             <CardDescription>
@@ -335,7 +335,7 @@ export default function CalibrationList() {
               />
             </div>
           </CardContent>
-        </Card>
+        </Card> */}
 
         {/* Default Calibration Quotas */}
         <Card>
@@ -390,7 +390,7 @@ export default function CalibrationList() {
         </Card>
 
         {/* Department Overrides */}
-        <Card>
+        {/* <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
@@ -474,7 +474,7 @@ export default function CalibrationList() {
               ))
             )}
           </CardContent>
-        </Card>
+        </Card> */}
 
         {/* Save Button */}
         <div className="flex justify-end">

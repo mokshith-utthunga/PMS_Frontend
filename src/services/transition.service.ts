@@ -53,6 +53,15 @@ export interface UpdateTransitionStatusData {
   new_period_approved?: boolean;
 }
 
+export interface UpdateTransitionData {
+  transition_type: TransitionType;
+  transition_date: string;
+  new_manager_id?: string | null;
+  new_department?: string | null;
+  new_grade?: string | null;
+  new_project?: string | null;
+}
+
 export const transitionService = {
   /**
    * Create a transition for an employee
@@ -90,6 +99,39 @@ export const transitionService = {
   getById: async (employeeId: string, transitionId: string): Promise<EmployeeQuarterTransition> => {
     const response = await api.get<{ data: EmployeeQuarterTransition }>(
       `/employees/${employeeId}/transitions/${transitionId}`
+    );
+    return response.data;
+  },
+
+  /**
+   * Get all transitions (admin only)
+   */
+  getAll: async (
+    cycleId?: string | null,
+    quarter?: number | null
+  ): Promise<EmployeeQuarterTransition[]> => {
+    const params = new URLSearchParams();
+    if (cycleId) params.append('cycle_id', cycleId);
+    if (quarter) params.append('quarter', quarter.toString());
+    
+    const query = params.toString();
+    const response = await api.get<{ data: EmployeeQuarterTransition[] }>(
+      `/employees/transitions${query ? `?${query}` : ''}`
+    );
+    return response.data || [];
+  },
+
+  /**
+   * Update transition (admin only)
+   */
+  update: async (
+    employeeId: string,
+    transitionId: string,
+    data: UpdateTransitionData
+  ): Promise<EmployeeQuarterTransition> => {
+    const response = await api.put<{ data: EmployeeQuarterTransition }>(
+      `/employees/${employeeId}/transitions/${transitionId}`,
+      data
     );
     return response.data;
   },

@@ -424,15 +424,60 @@ export default function ManagerEvaluation() {
       setRatingScales(scales);
 
       // Fetch KRAs for this employee - fetch for selected quarter to ensure manager role filtering is applied
-      // For transitions, fetch based on active nestedTab:
-      // - If transition tab is selected, fetch post-transition goals with period_type and transition_id
-      // - Otherwise, fetch all goals (pre-transition, full_quarter, or all if no transition)
+      // For transitions, fetch based on active nestedTab and manager role:
+      // - If transition tab is selected (for new_manager or same_manager), fetch post-transition goals with period_type and transition_id
+      // - If pre-transition tab is selected (for old_manager or same_manager), fetch pre-transition goals with period_type and transition_id
+      // - Otherwise, fetch all goals (full_quarter, or all if no transition)
       // Note: Pre-transition KRAs have status='locked', so we fetch without status filter
       // activeCycleFromContext is already checked above, so it's safe to use .id
       // Fetch with selectedQuarter to ensure API applies correct manager role filtering
-      const shouldFetchPostTransition = transition && transition.quarter === selectedQuarter && isTransitionTab;
-      const periodTypeForFetch = shouldFetchPostTransition ? 'post_transition' : undefined;
-      const transitionIdForFetch = shouldFetchPostTransition ? transition.id : undefined;
+      
+      // Compute manager role first to determine what to fetch
+      let computedManagerRole: 'old_manager' | 'new_manager' | 'same_manager' | null = null;
+      if (transition && transition.quarter === selectedQuarter && currentEmployee) {
+        const isOldManager = transition.old_manager_id === currentEmployee.id;
+        const isNewManager = transition.new_manager_id && transition.new_manager_id === currentEmployee.id;
+        const managersAreDifferent = transition.new_manager_id && 
+                                    transition.new_manager_id !== transition.old_manager_id;
+        
+        if (managersAreDifferent) {
+          if (isOldManager) {
+            computedManagerRole = 'old_manager';
+          } else if (isNewManager) {
+            computedManagerRole = 'new_manager';
+          }
+        } else {
+          computedManagerRole = 'same_manager';
+        }
+      }
+      
+      // Determine what to fetch based on manager role
+      // For old_manager: always fetch pre_transition (no tabs)
+      // For new_manager: always fetch post_transition (no tabs)
+      // For same_manager: fetch based on nestedTab (has tabs)
+      let periodTypeForFetch: 'pre_transition' | 'post_transition' | undefined = undefined;
+      let transitionIdForFetch: string | undefined = undefined;
+      
+      if (transition && transition.quarter === selectedQuarter) {
+        if (computedManagerRole === 'old_manager') {
+          // Old manager: always fetch pre-transition goals (no tabs)
+          periodTypeForFetch = 'pre_transition';
+          transitionIdForFetch = transition.id;
+        } else if (computedManagerRole === 'new_manager') {
+          // New manager: always fetch post-transition goals (no tabs)
+          periodTypeForFetch = 'post_transition';
+          transitionIdForFetch = transition.id;
+        } else if (computedManagerRole === 'same_manager') {
+          // Same manager: fetch based on nestedTab (has tabs)
+          if (isTransitionTab) {
+            periodTypeForFetch = 'post_transition';
+            transitionIdForFetch = transition.id;
+          } else {
+            periodTypeForFetch = 'pre_transition';
+            transitionIdForFetch = transition.id;
+          }
+        }
+      }
       
       const krasResult = await goalsService.kras.getByEmployee(
         employeeId, 
@@ -501,43 +546,26 @@ export default function ManagerEvaluation() {
       // For transition employees, fetch period-specific self-reviews based on manager role
       // activeCycleFromContext is already checked above, so it's safe to use .id
       
-      // Compute manager role for transition filtering (inside fetchData to have access to transition)
-      let computedManagerRole: 'old_manager' | 'new_manager' | 'same_manager' | null = null;
-      if (transition && transition.quarter === selectedQuarter && currentEmployee) {
-        const isOldManager = transition.old_manager_id === currentEmployee.id;
-        const isNewManager = transition.new_manager_id && transition.new_manager_id === currentEmployee.id;
-        const managersAreDifferent = transition.new_manager_id && 
-                                    transition.new_manager_id !== transition.old_manager_id;
-
-        if (managersAreDifferent) {
-          if (isOldManager) {
-            computedManagerRole = 'old_manager';
-          } else if (isNewManager) {
-            computedManagerRole = 'new_manager';
-          }
-        } else {
-          if (isOldManager || isNewManager) {
-            computedManagerRole = 'same_manager';
-          }
-        }
-      }
+      // Reuse computedManagerRole that was already computed above for KRA/KPI fetching
       
       let allQuarterlySelfResult;
       
       // Check if we have a transition for the selected quarter
       if (transition && transition.quarter === selectedQuarter) {
         // For transition employees, fetch the correct period-specific self-review
-        // Consider both manager role AND nestedTab state
+        // For old_manager: always pre-transition (no tabs)
+        // For new_manager: always post-transition (no tabs)
+        // For same_manager: fetch based on nestedTab (has tabs)
         let periodType: 'pre_transition' | 'post_transition' | null = null;
         
-        if (computedManagerRole === 'new_manager') {
-          // New manager: always post-transition
-          periodType = 'post_transition';
-        } else if (computedManagerRole === 'old_manager') {
-          // Old manager: always pre-transition
+        if (computedManagerRole === 'old_manager') {
+          // Old manager: always pre-transition (no tabs)
           periodType = 'pre_transition';
-        } else if (computedManagerRole === 'same_manager' || !computedManagerRole) {
-          // Same manager or no role: fetch based on nestedTab
+        } else if (computedManagerRole === 'new_manager') {
+          // New manager: always post-transition (no tabs)
+          periodType = 'post_transition';
+        } else if (computedManagerRole === 'same_manager') {
+          // Same manager: fetch based on nestedTab (has tabs)
           periodType = isTransitionTab ? 'post_transition' : 'pre_transition';
         }
         
@@ -2463,25 +2491,702 @@ export default function ManagerEvaluation() {
       
       {transition ? (
         /* Transition Employee - Show Nested Period Tabs with Evaluation Tabs Inside */
-        <Tabs 
-          value={nestedTab} 
-          onValueChange={(value) => setNestedTab(value as 'pre-transition' | 'transition')}
-          className="space-y-4"
-        >
-          <TabsList>
-            {/* Only show Pre-Transition tab if manager should see it */}
-            {(managerRole === 'old_manager' || managerRole === 'same_manager') && (
+        /* Only show tabs for same_manager; old_manager and new_manager don't have tabs */
+        managerRole === 'same_manager' ? (
+          <Tabs 
+            value={nestedTab} 
+            onValueChange={(value) => setNestedTab(value as 'pre-transition' | 'transition')}
+            className="space-y-4"
+          >
+            <TabsList>
               <TabsTrigger value="pre-transition">Pre-Transition</TabsTrigger>
-            )}
-            {/* Only show Transition tab if manager should see it */}
-            {(managerRole === 'new_manager' || managerRole === 'same_manager') && (
               <TabsTrigger value="transition">Transition</TabsTrigger>
+            </TabsList>
+            
+            {/* Pre-Transition Tab Content with Evaluation Tabs */}
+            {/* For same_manager: show when pre-transition tab is active */}
+            {managerRole === 'same_manager' && !isTransitionTab && (
+              <TabsContent value="pre-transition" className="space-y-4">
+                <div className="flex items-center gap-2 pb-2 border-b">
+                  <Badge variant={getPeriodBadgeVariant('pre_transition')}>
+                    {getPeriodLabel('pre_transition')}
+                  </Badge>
+                  {transition.pre_period_start_date && transition.pre_period_end_date && (
+                    <span className="text-sm text-muted-foreground">
+                      {formatPeriodDateRange(transition.pre_period_start_date, transition.pre_period_end_date)}
+                    </span>
+                  )}
+                  {transition.old_manager_name && (
+                    <span className="text-sm text-muted-foreground ml-auto">
+                      Manager: {transition.old_manager_name}
+                    </span>
+                  )}
+                </div>
+                
+                <Tabs 
+                  value={preTransitionEvaluationTab} 
+                  onValueChange={setPreTransitionEvaluationTab}
+                  className="space-y-4"
+                >
+                  <TabsList>
+                    <TabsTrigger value="goals">KRA/KPI Ratings ({displayPreTransitionKpis.length})</TabsTrigger>
+                    <TabsTrigger value="overall">Overall Assessment</TabsTrigger>
+                    <TabsTrigger 
+                      value="hr-review-rating"
+                      onClick={() => {
+                        if (activeCycle && managerId && selectedQuarter) {
+                          fetchHrReviewRatings();
+                        }
+                      }}
+                    >
+                      HR Review Rating
+                      {hrReviewRatings.length > 0 && (
+                        <Badge variant="secondary" className="ml-2">{hrReviewRatings.length}</Badge>
+                      )}
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="goals" className="space-y-6">
+                    {displayPreTransitionKras.length > 0 ? (
+                      displayPreTransitionKras.map((kra) => {
+                        const kraKpis = displayPreTransitionKpis.filter(k => k.kra_id === kra.id);
+                        return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+                      })
+                    ) : (
+                      <Card>
+                        <CardContent className="py-8 text-center text-muted-foreground">
+                          <p>No KRAs/KPIs found for the pre-transition period.</p>
+                          <p className="text-sm mt-2">Goals from before the transition date should appear here.</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                    
+                    {/* Action Buttons for KRA/KPI Ratings Tab */}
+                    {!isSubmitted && canEvaluate && (
+                      <div className="space-y-3 pt-4 border-t">
+                        {hasLatePermission && quarterPeriodStatus.timing === 'past' && (
+                          <Alert>
+                            <Clock className="h-4 w-4" />
+                            <AlertDescription>
+                              You have been granted late submission access. You can submit this evaluation even though the deadline has passed.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <div className="flex justify-end gap-3">
+                          <Button 
+                            variant="outline" 
+                            onClick={handleSave} 
+                            disabled={saving}
+                          >
+                            <Save className="mr-2 h-4 w-4" />
+                            Save
+                          </Button>
+                          <Button 
+                            onClick={() => setPreTransitionEvaluationTab('overall')}
+                            disabled={saving}
+                          >
+                            Next
+                            <ChevronRight className="ml-2 h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="overall" className="space-y-4">
+                    {relevantSelfEval && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2">
+                            <User className="h-5 w-5" />
+                            Employee Self Assessment Summary
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div>
+                              <Label className="text-muted-foreground">Overall Self Rating</Label>
+                              <p className="font-medium mt-1">{getRatingLabel(relevantSelfEval.overall_rating)}</p>
+                            </div>
+                          </div>
+                          {relevantSelfEval.overall_comments && (
+                            <div>
+                              <Label className="text-muted-foreground">Overall Comments</Label>
+                              <p className="mt-1">{relevantSelfEval.overall_comments}</p>
+                            </div>
+                          )}
+                          {relevantSelfEval.development_plan && (
+                            <div>
+                              <Label className="text-muted-foreground">Development Plan</Label>
+                              <p className="mt-1">{relevantSelfEval.development_plan}</p>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* Calculated Quarterly Rating */}
+                    <Card className="border-2 border-primary/20 bg-primary/5">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <Calculator className="h-5 w-5" />
+                          Pre-Transition Manager Rating (Auto-Calculated)
+                        </CardTitle>
+                        <CardDescription>
+                          Calculated as weighted average of KRA ratings (KRA weights × KRA rating)
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex items-center justify-between p-4 rounded-lg bg-background border-2 border-primary">
+                          <span className="font-medium text-lg">Your Overall Rating for Pre-Transition</span>
+                          <span className="text-3xl font-bold text-primary">
+                            {calculatedQuarterRating !== null ? calculatedQuarterRating.toFixed(2) : '-'}
+                          </span>
+                        </div>
+                        {calculatedQuarterRating === null && (
+                          <Alert className="mt-4">
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertDescription>
+                              Rate all KPIs to see the calculated overall rating.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {/* Manager Overall Assessment */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <ClipboardCheck className="h-5 w-5" />
+                          Manager Assessment Summary
+                        </CardTitle>
+                        <CardDescription>
+                          Provide your overall assessment of {getEmployeeFirstName(employee)}'s performance for Pre-Transition
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-6">
+                        <div className="space-y-2">
+                          <Label>Overall Comments</Label>
+                          <Textarea
+                            placeholder={`Summarize ${getEmployeeFirstName(employee)}'s key achievements, strengths, and areas for improvement for pre-transition period...`}
+                            value={overallComments}
+                            onChange={(e) => setOverallComments(e.target.value)}
+                            disabled={isSubmitted}
+                            rows={4}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Guidance & Development Recommendations</Label>
+                          <Textarea
+                            placeholder="Provide guidance for improvement, suggest training, projects, or focus areas..."
+                            value={developmentRecommendations}
+                            onChange={(e) => setDevelopmentRecommendations(e.target.value)}
+                            disabled={isSubmitted}
+                            rows={4}
+                          />
+                        </div>
+                      </CardContent>
+                    </Card>
+                    
+                    {/* Action Buttons for Overall Assessment Tab */}
+                    {!isSubmitted && canEvaluate && (
+                      <div className="space-y-3 pt-4 border-t">
+                        {hasLatePermission && quarterPeriodStatus.timing === 'past' && (
+                          <Alert>
+                            <Clock className="h-4 w-4" />
+                            <AlertDescription>
+                              You have been granted late submission access. You can submit this evaluation even though the deadline has passed.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <div className="flex justify-end gap-3">
+                          <Button 
+                            variant="outline" 
+                            onClick={handleSave} 
+                            disabled={saving}
+                          >
+                            <Save className="mr-2 h-4 w-4" />
+                            Save
+                          </Button>
+                          <Button 
+                            onClick={handleSubmit}
+                            disabled={saving}
+                            variant="primary"
+                          >
+                            <Send className="mr-2 h-4 w-4" />
+                            Submit
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="hr-review-rating" className="space-y-4">
+                    {hrReviewLoading ? (
+                      <div className="flex items-center justify-center h-64">
+                        <Loader2 className="h-8 w-8 animate-spin" />
+                      </div>
+                    ) : hrReviewRatings.length === 0 ? (
+                      <Card>
+                        <CardContent className="flex flex-col items-center justify-center py-12">
+                          <CheckCircle2 className="h-12 w-12 text-muted-foreground mb-4" />
+                          <h3 className="font-semibold text-lg">No HR review ratings</h3>
+                          <p className="text-muted-foreground">
+                            No normalized ratings have been sent to you for review.
+                          </p>
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <div className="space-y-4">
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription>
+                            HR has normalized and calibrated ratings for {employee?.full_name || 'this employee'}. Please review and accept or reject the rating.
+                          </AlertDescription>
+                        </Alert>
+                        {hrReviewRatings.map((rating) => (
+                          <Card key={rating.id}>
+                            <CardHeader>
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <CardTitle className="flex items-center gap-2">
+                                    <User className="h-5 w-5" />
+                                    {rating.employee_name}
+                                    <Badge variant="outline">{rating.employee_code}</Badge>
+                                  </CardTitle>
+                                  <CardDescription className="mt-2">
+                                    Grade: {rating.grade} • Q{rating.quarter}
+                                  </CardDescription>
+                                </div>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="space-y-6">
+                              {/* Ratings Display */}
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {/* Raw Rating */}
+                                <div className="p-4 rounded-lg border-2 bg-muted/30">
+                                  <div className="text-sm font-medium text-muted-foreground mb-3">
+                                    Raw Rating
+                                  </div>
+                                  <div className="text-3xl font-bold text-gray-700">
+                                    {formatRating(rating.raw_rating)}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-2">
+                                    Original manager rating before normalization
+                                  </p>
+                                </div>
+
+                                {/* HR Normalized Rating */}
+                                <div className="p-4 rounded-lg border-2 border-primary/30 bg-primary/5">
+                                  <div className="text-sm font-medium text-primary mb-3">
+                                    HR Normalized Rating
+                                  </div>
+                                  <div className="text-3xl font-bold text-primary">
+                                    {formatRating(rating.final_normalized_rating)}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-2">
+                                    HR adjusted rating after normalization
+                                  </p>
+                                </div>
+
+                                {/* Difference */}
+                                <div className="p-4 rounded-lg border-2 bg-blue-50">
+                                  <div className="text-sm font-medium text-blue-700 mb-3">
+                                    Difference
+                                  </div>
+                                  <div className={`text-3xl font-bold ${rating.final_normalized_rating - rating.raw_rating >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                    {rating.final_normalized_rating - rating.raw_rating >= 0 ? '+' : ''}
+                                    {(rating.final_normalized_rating - rating.raw_rating).toFixed(2)}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-2">
+                                    Change from original rating
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Action Buttons */}
+                              <div className="flex justify-end gap-3">
+                                <Button
+                                  variant="outline"
+                                  onClick={() => {
+                                    toast({
+                                      title: 'Rating Rejected',
+                                      description: 'You have rejected the HR normalized rating.',
+                                    });
+                                  }}
+                                >
+                                  <XCircle className="mr-2 h-4 w-4" />
+                                  Reject
+                                </Button>
+                                <Button
+                                  onClick={() => {
+                                    toast({
+                                      title: 'Rating Accepted',
+                                      description: 'You have accepted the HR normalized rating.',
+                                    });
+                                  }}
+                                >
+                                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                                  Accept
+                                </Button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </TabsContent>
             )}
-          </TabsList>
-          
-          {/* Pre-Transition Tab Content with Evaluation Tabs */}
-          {(managerRole === 'old_manager' || managerRole === 'same_manager') && (
-            <TabsContent value="pre-transition" className="space-y-4">
+            
+            {/* Transition Tab Content (Post-Transition) with Evaluation Tabs */}
+            {/* For same_manager: show when transition tab is active */}
+            {managerRole === 'same_manager' && isTransitionTab && (
+              <TabsContent value="transition" className="space-y-4">
+                <div className="flex items-center gap-2 pb-2 border-b">
+                  <Badge variant={getPeriodBadgeVariant('post_transition')}>
+                    {getPeriodLabel('post_transition')}
+                  </Badge>
+                  {transition.post_period_start_date && transition.post_period_end_date && (
+                    <span className="text-sm text-muted-foreground">
+                      {formatPeriodDateRange(transition.post_period_start_date, transition.post_period_end_date)}
+                    </span>
+                  )}
+                  {transition.new_manager_name && (
+                    <span className="text-sm text-muted-foreground ml-auto">
+                      Manager: {transition.new_manager_name}
+                    </span>
+                  )}
+                </div>
+                
+                <Tabs 
+                  value={transitionEvaluationTab} 
+                  onValueChange={setTransitionEvaluationTab}
+                  className="space-y-4"
+                >
+                  <TabsList>
+                    <TabsTrigger value="goals">KRA/KPI Ratings ({displayPostTransitionKpis.length})</TabsTrigger>
+                    <TabsTrigger value="overall">Overall Assessment</TabsTrigger>
+                    <TabsTrigger 
+                      value="hr-review-rating"
+                      onClick={() => {
+                        if (activeCycle && managerId && selectedQuarter) {
+                          fetchHrReviewRatings();
+                        }
+                      }}
+                    >
+                      HR Review Rating
+                      {hrReviewRatings.length > 0 && (
+                        <Badge variant="secondary" className="ml-2">{hrReviewRatings.length}</Badge>
+                      )}
+                    </TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="goals" className="space-y-6">
+                    {displayPostTransitionKras.length > 0 ? (
+                      displayPostTransitionKras.map((kra) => {
+                        const kraKpis = displayPostTransitionKpis.filter(k => k.kra_id === kra.id);
+                        return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+                      })
+                    ) : (
+                      <Card>
+                        <CardContent className="py-8 text-center text-muted-foreground">
+                          <p>No KRAs/KPIs found for the post-transition period.</p>
+                          <p className="text-sm mt-2">New goals can be created for the post-transition period.</p>
+                        </CardContent>
+                      </Card>
+                    )}
+                    
+                    {/* Action Buttons for KRA/KPI Ratings Tab */}
+                    {!isSubmitted && canEvaluate && (
+                      <div className="space-y-3 pt-4 border-t">
+                        {hasLatePermission && quarterPeriodStatus.timing === 'past' && (
+                          <Alert>
+                            <Clock className="h-4 w-4" />
+                            <AlertDescription>
+                              You have been granted late submission access. You can submit this evaluation even though the deadline has passed.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <div className="flex justify-end gap-3">
+                          <Button 
+                            variant="outline" 
+                            onClick={handleSave} 
+                            disabled={saving}
+                          >
+                            <Save className="mr-2 h-4 w-4" />
+                            Save
+                          </Button>
+                          <Button 
+                            onClick={() => setTransitionEvaluationTab('overall')}
+                            disabled={saving}
+                          >
+                            Next
+                            <ChevronRight className="ml-2 h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="overall" className="space-y-4">
+                    {relevantSelfEval && (
+                      <Card>
+                        <CardHeader>
+                          <CardTitle className="flex items-center gap-2">
+                            <User className="h-5 w-5" />
+                            Employee Self Assessment Summary
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div>
+                              <Label className="text-muted-foreground">Overall Self Rating</Label>
+                              <p className="font-medium mt-1">{getRatingLabel(relevantSelfEval.overall_rating)}</p>
+                            </div>
+                          </div>
+                          {relevantSelfEval.overall_comments && (
+                            <div>
+                              <Label className="text-muted-foreground">Overall Comments</Label>
+                              <p className="mt-1">{relevantSelfEval.overall_comments}</p>
+                            </div>
+                          )}
+                          {relevantSelfEval.development_plan && (
+                            <div>
+                              <Label className="text-muted-foreground">Development Plan</Label>
+                              <p className="mt-1">{relevantSelfEval.development_plan}</p>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {/* Calculated Quarterly Rating */}
+                    <Card className="border-2 border-primary/20 bg-primary/5">
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <Calculator className="h-5 w-5" />
+                          Post-Transition Manager Rating (Auto-Calculated)
+                        </CardTitle>
+                        <CardDescription>
+                          Calculated as weighted average of KRA ratings (KRA weights × KRA rating)
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="flex items-center justify-between p-4 rounded-lg bg-background border-2 border-primary">
+                          <span className="font-medium text-lg">Your Overall Rating for Post-Transition</span>
+                          <span className="text-3xl font-bold text-primary">
+                            {calculatedQuarterRating !== null ? calculatedQuarterRating.toFixed(2) : '-'}
+                          </span>
+                        </div>
+                        {calculatedQuarterRating === null && (
+                          <Alert className="mt-4">
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertDescription>
+                              Rate all KPIs to see the calculated overall rating.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {/* Manager Overall Assessment */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <ClipboardCheck className="h-5 w-5" />
+                          Manager Assessment Summary
+                        </CardTitle>
+                        <CardDescription>
+                          Provide your overall assessment of {getEmployeeFirstName(employee)}'s performance for Post-Transition
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-6">
+                        <div className="space-y-2">
+                          <Label>Overall Comments</Label>
+                          <Textarea
+                            placeholder={`Summarize ${getEmployeeFirstName(employee)}'s key achievements, strengths, and areas for improvement for post-transition period...`}
+                            value={overallComments}
+                            onChange={(e) => setOverallComments(e.target.value)}
+                            disabled={isSubmitted}
+                            rows={4}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Guidance & Development Recommendations</Label>
+                          <Textarea
+                            placeholder="Provide guidance for improvement, suggest training, projects, or focus areas..."
+                            value={developmentRecommendations}
+                            onChange={(e) => setDevelopmentRecommendations(e.target.value)}
+                            disabled={isSubmitted}
+                            rows={4}
+                          />
+                        </div>
+                      </CardContent>
+                    </Card>
+                    
+                    {/* Action Buttons for Overall Assessment Tab */}
+                    {!isSubmitted && canEvaluate && (
+                      <div className="space-y-3 pt-4 border-t">
+                        {hasLatePermission && quarterPeriodStatus.timing === 'past' && (
+                          <Alert>
+                            <Clock className="h-4 w-4" />
+                            <AlertDescription>
+                              You have been granted late submission access. You can submit this evaluation even though the deadline has passed.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <div className="flex justify-end gap-3">
+                          <Button 
+                            variant="outline" 
+                            onClick={handleSave} 
+                            disabled={saving}
+                          >
+                            <Save className="mr-2 h-4 w-4" />
+                            Save
+                          </Button>
+                          <Button 
+                            onClick={handleSubmit}
+                            disabled={saving}
+                            variant="primary"
+                          >
+                            <Send className="mr-2 h-4 w-4" />
+                            Submit
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="hr-review-rating" className="space-y-4">
+                    {hrReviewLoading ? (
+                      <div className="flex items-center justify-center h-64">
+                        <Loader2 className="h-8 w-8 animate-spin" />
+                      </div>
+                    ) : hrReviewRatings.length === 0 ? (
+                      <Card>
+                        <CardContent className="flex flex-col items-center justify-center py-12">
+                          <CheckCircle2 className="h-12 w-12 text-muted-foreground mb-4" />
+                          <h3 className="font-semibold text-lg">No HR review ratings</h3>
+                          <p className="text-muted-foreground">
+                            No normalized ratings have been sent to you for review.
+                          </p>
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <div className="space-y-4">
+                        <Alert>
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription>
+                            HR has normalized and calibrated ratings for {employee?.full_name || 'this employee'}. Please review and accept or reject the rating.
+                          </AlertDescription>
+                        </Alert>
+                        {hrReviewRatings.map((rating) => (
+                          <Card key={rating.id}>
+                            <CardHeader>
+                              <div className="flex items-start justify-between">
+                                <div>
+                                  <CardTitle className="flex items-center gap-2">
+                                    <User className="h-5 w-5" />
+                                    {rating.employee_name}
+                                    <Badge variant="outline">{rating.employee_code}</Badge>
+                                  </CardTitle>
+                                  <CardDescription className="mt-2">
+                                    Grade: {rating.grade} • Q{rating.quarter}
+                                  </CardDescription>
+                                </div>
+                              </div>
+                            </CardHeader>
+                            <CardContent className="space-y-6">
+                              {/* Ratings Display */}
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {/* Raw Rating */}
+                                <div className="p-4 rounded-lg border-2 bg-muted/30">
+                                  <div className="text-sm font-medium text-muted-foreground mb-3">
+                                    Raw Rating
+                                  </div>
+                                  <div className="text-3xl font-bold text-gray-700">
+                                    {formatRating(rating.raw_rating)}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-2">
+                                    Original manager rating before normalization
+                                  </p>
+                                </div>
+
+                                {/* HR Normalized Rating */}
+                                <div className="p-4 rounded-lg border-2 border-primary/30 bg-primary/5">
+                                  <div className="text-sm font-medium text-primary mb-3">
+                                    HR Normalized Rating
+                                  </div>
+                                  <div className="text-3xl font-bold text-primary">
+                                    {formatRating(rating.final_normalized_rating)}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-2">
+                                    HR adjusted rating after normalization
+                                  </p>
+                                </div>
+
+                                {/* Difference */}
+                                <div className="p-4 rounded-lg border-2 bg-blue-50">
+                                  <div className="text-sm font-medium text-blue-700 mb-3">
+                                    Difference
+                                  </div>
+                                  <div className={`text-3xl font-bold ${rating.final_normalized_rating - rating.raw_rating >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                    {rating.final_normalized_rating - rating.raw_rating >= 0 ? '+' : ''}
+                                    {(rating.final_normalized_rating - rating.raw_rating).toFixed(2)}
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-2">
+                                    Change from original rating
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Action Buttons */}
+                              <div className="flex justify-end gap-3">
+                                <Button
+                                  variant="outline"
+                                  onClick={() => {
+                                    toast({
+                                      title: 'Rating Rejected',
+                                      description: 'You have rejected the HR normalized rating.',
+                                    });
+                                  }}
+                                >
+                                  <XCircle className="mr-2 h-4 w-4" />
+                                  Reject
+                                </Button>
+                                <Button
+                                  onClick={() => {
+                                    toast({
+                                      title: 'Rating Accepted',
+                                      description: 'You have accepted the HR normalized rating.',
+                                    });
+                                  }}
+                                >
+                                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                                  Accept
+                                </Button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </TabsContent>
+            )}
+          </Tabs>
+        ) : (
+          /* For old_manager and new_manager, render content directly without tabs */
+          <>
+            {/* Old Manager: Show only pre-transition content (no tabs) */}
+            {managerRole === 'old_manager' && !isTransitionTab && (
+              <div className="space-y-4">
               <div className="flex items-center gap-2 pb-2 border-b">
                 <Badge variant={getPeriodBadgeVariant('pre_transition')}>
                   {getPeriodLabel('pre_transition')}
@@ -2844,12 +3549,12 @@ export default function ManagerEvaluation() {
                   )}
                 </TabsContent>
               </Tabs>
-            </TabsContent>
-          )}
-          
-          {/* Transition Tab Content (Post-Transition) with Evaluation Tabs */}
-          {(managerRole === 'new_manager' || managerRole === 'same_manager') && (
-            <TabsContent value="transition" className="space-y-4">
+              </div>
+            )}
+            
+            {/* New Manager: Show only post-transition content (no tabs) */}
+            {managerRole === 'new_manager' && isTransitionTab && (
+              <div className="space-y-4">
               <div className="flex items-center gap-2 pb-2 border-b">
                 <Badge variant={getPeriodBadgeVariant('post_transition')}>
                   {getPeriodLabel('post_transition')}
@@ -3212,9 +3917,10 @@ export default function ManagerEvaluation() {
                   )}
                 </TabsContent>
               </Tabs>
-            </TabsContent>
-          )}
-        </Tabs>
+              </div>
+            )}
+          </>
+        )
       ) : (
         /* Full Quarter (No Transition) - Keep Original Structure */
         <Tabs 

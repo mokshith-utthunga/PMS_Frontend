@@ -1452,8 +1452,8 @@ export default function MyRating() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* Post-Transition Overall Rating */}
-            {postOverallRating !== null && (
+            {/* Post-Transition Overall Rating - Only show after HR approval */}
+            {postApproved && postOverallRating !== null && (
               <div className="p-4 rounded-lg bg-muted/30 border">
                 <div className="text-sm text-muted-foreground mb-1">Post-Transition Overall Rating</div>
                 <div className="text-2xl font-bold">{formatRating(postOverallRating)}</div>
@@ -1830,6 +1830,17 @@ export default function MyRating() {
     const isCurrentQuarter = parseInt(selectedQuarter) === quarter;
     const isPreTransitionView = currentTransition && (isCurrentQuarter ? nestedTab === 'pre-transition' : true);
     
+    // Calculate pre-transition overall rating (only if HR has approved)
+    const preOverallRating = isPreTransitionView && currentTransition
+      ? (preTransitionCalibratedRating !== null
+          ? preTransitionCalibratedRating
+          : (preTransitionManagerReview?.calculated_overall_rating || null))
+      : null;
+    
+    const preApproved = isPreTransitionView && currentTransition
+      ? (preTransitionManagerReview?.hr_approved_at || preTransitionCalibratedRating !== null)
+      : false;
+    
     // Only show data for the currently selected quarter
     if (!isCurrentQuarter) {
       return (
@@ -1849,26 +1860,33 @@ export default function MyRating() {
       <>
         {/* Show transition info if viewing pre-transition period */}
         {isPreTransitionView && currentTransition && (
-          <Card className="bg-white border-2 border-input/50">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <AlertCircle className=" w-5" />
-                Pre-Transition Period
-              </CardTitle>
-              <CardDescription>
-                Transition Date: {new Date(currentTransition.transition_date).toLocaleDateString()} • Type: {currentTransition.transition_type}
-              </CardDescription>
-            </CardHeader>
-            {/* <CardContent> */}
-              {/* <div className="text-sm">
-                {currentTransition.pre_period_start_date && currentTransition.pre_period_end_date && (
-                  <span className="font-medium">
-                    {formatPeriodDateRange(currentTransition.pre_period_start_date, currentTransition.pre_period_end_date)}
-                  </span>
+          <>
+            <Card className="bg-white border-2 border-input/50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Badge variant={getPeriodBadgeVariant('pre_transition')}>
+                    {getPeriodLabel('pre_transition')}
+                  </Badge>
+                  Pre-Transition Period Ratings
+                </CardTitle>
+                <CardDescription>
+                  Transition Date: {new Date(currentTransition.transition_date).toLocaleDateString()} • Type: {currentTransition.transition_type}
+                  {currentTransition.pre_period_start_date && currentTransition.pre_period_end_date && (
+                    <> • {formatPeriodDateRange(currentTransition.pre_period_start_date, currentTransition.pre_period_end_date)}</>
+                  )}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Pre-Transition Overall Rating - Only show after HR approval */}
+                {preApproved && preOverallRating !== null && (
+                  <div className="p-4 rounded-lg bg-muted/30 border">
+                    <div className="text-sm text-muted-foreground mb-1">Pre-Transition Overall Rating</div>
+                    <div className="text-2xl font-bold">{formatRating(preOverallRating)}</div>
+                  </div>
                 )}
-              </div> */}
-            {/* </CardContent> */}
-          </Card>
+              </CardContent>
+            </Card>
+          </>
         )}
         
         {evaluationState === 'hr_pending' && calibratedRating === null && (
