@@ -39,7 +39,7 @@ const navigation = [
   { name: 'My Rating', href: '/my-rating', icon: Star, roles: ['employee', 'manager', 'dept_head','hr_admin'] },
   { name: 'Team', href: '/team', icon: Users, roles: ['manager', 'dept_head','hr_admin'] },
   { name: 'Calibration', href: '/calibration', icon: Scale, roles: ['hr_admin', 'hrbp'] },
-  { name: 'Reports', href: '/reports', icon: BarChart3, roles: ['hr_admin', 'hrbp', 'dept_head'] },
+  // { name: 'Reports', href: '/reports', icon: BarChart3, roles: ['hr_admin', 'hrbp', 'dept_head'] },
   { name: 'HR Review', href: '/admin/review', icon: FileCheck, roles: ['hr_admin', 'hrbp', 'system_admin', 'dept_head'] },
   { name: 'Late Submissions', href: '/admin/late-submissions', icon: Clock, roles: ['hr_admin', 'system_admin'] },
   { name: 'Transitions', href: '/admin/transitions', icon: ArrowRightLeft, roles: ['hr_admin', 'system_admin'] },

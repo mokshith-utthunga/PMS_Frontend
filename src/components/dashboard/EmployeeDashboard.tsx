@@ -68,6 +68,9 @@ export function EmployeeDashboard({
   const getDeadlineText = () => {
     if (!activeCycle) return '';
     
+    // Note: goal_submission_end is now in goalsQuarterlyCycles, not activeCycle
+    // This function is called from Dashboard.tsx which should pass the correct deadline
+    // For now, return a generic message if goal_submission_end is not available
     if (!activeCycle.goal_submission_end) {
       return 'Deadline not set';
     }
@@ -210,7 +213,7 @@ export function EmployeeDashboard({
           </CardContent>
         </Card>
 
-        <Card>
+        {/* <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Calendar className="h-5 w-5" />
@@ -226,7 +229,7 @@ export function EmployeeDashboard({
               </Button>
             </Link>
           </CardContent>
-        </Card>
+        </Card> */}
 
         <Card>
           <CardHeader>

@@ -731,7 +731,7 @@ export default function Team() {
                       </div>
                     </CardHeader>
                     <CardContent className="space-y-3">
-                      <div>
+                      {/* <div>
                         <div className="flex justify-between text-sm mb-1">
                           <span>Goals:</span>
                           <span>
@@ -742,7 +742,7 @@ export default function Team() {
                           value={report.goals_count ? (report.approved_goals / report.goals_count) * 100 : 0} 
                           className="h-2" 
                         />
-                      </div>
+                      </div> */}
 
                       <div className="flex flex-wrap gap-2">
                        

@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
     server: {
       host: "::",
       port: Number(env.VITE_PORT) || 8080,
+      allowedHosts: ['performance-people.utthunga.io'],
       proxy: {
         // Proxy /api endpoints to the backend
         '/api': {

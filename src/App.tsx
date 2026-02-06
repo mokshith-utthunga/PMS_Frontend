@@ -108,9 +108,10 @@ const App = () => (
             <Route path="/admin/employees/import" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><EmployeeImport /></ProtectedRoute>} />
             <Route path="/admin/employee/:id" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><AdminEmployeeView /></ProtectedRoute>} />
             <Route path="/admin/employee/:id/evaluation" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><AdminEmployeeEvaluation /></ProtectedRoute>} />
-            <Route path="/admin/cycles" element={<ProtectedRoute requiredRoles={['hr_admin']}><CycleList /></ProtectedRoute>} />
-            <Route path="/admin/cycles/new" element={<ProtectedRoute requiredRoles={['hr_admin']}><CycleForm /></ProtectedRoute>} />
-            <Route path="/admin/cycles/:cycleId/edit" element={<ProtectedRoute requiredRoles={['hr_admin']}><CycleForm /></ProtectedRoute>} />
+            <Route path="/admin/cycles" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><CycleList /></ProtectedRoute>} />
+            <Route path="/admin/cycles/new" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><CycleForm /></ProtectedRoute>} />
+            <Route path="/admin/cycles/:cycleId/view" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><CycleForm /></ProtectedRoute>} />
+            <Route path="/admin/cycles/:cycleId/edit" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><CycleForm /></ProtectedRoute>} />
             <Route path="/admin/roles" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><RoleManagement /></ProtectedRoute>} />
             <Route path="/admin/release" element={<ProtectedRoute requiredRoles={['hr_admin']}><RatingRelease /></ProtectedRoute>} />
             <Route path="/admin/templates" element={<ProtectedRoute requiredRoles={['hr_admin', 'system_admin']}><TemplateList /></ProtectedRoute>} />

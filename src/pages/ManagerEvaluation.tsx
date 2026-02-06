@@ -2810,23 +2810,13 @@ export default function ManagerEvaluation() {
                               <div className="flex justify-end gap-3">
                                 <Button
                                   variant="outline"
-                                  onClick={() => {
-                                    toast({
-                                      title: 'Rating Rejected',
-                                      description: 'You have rejected the HR normalized rating.',
-                                    });
-                                  }}
+                                  onClick={() => handleManagerReview(rating.employee_id, 'REJECT')}
                                 >
                                   <XCircle className="mr-2 h-4 w-4" />
                                   Reject
                                 </Button>
                                 <Button
-                                  onClick={() => {
-                                    toast({
-                                      title: 'Rating Accepted',
-                                      description: 'You have accepted the HR normalized rating.',
-                                    });
-                                  }}
+                                  onClick={() => handleManagerReview(rating.employee_id, 'ACCEPT')}
                                 >
                                   <CheckCircle2 className="mr-2 h-4 w-4" />
                                   Accept
@@ -3149,23 +3139,13 @@ export default function ManagerEvaluation() {
                               <div className="flex justify-end gap-3">
                                 <Button
                                   variant="outline"
-                                  onClick={() => {
-                                    toast({
-                                      title: 'Rating Rejected',
-                                      description: 'You have rejected the HR normalized rating.',
-                                    });
-                                  }}
+                                  onClick={() => handleManagerReview(rating.employee_id, 'REJECT')}
                                 >
                                   <XCircle className="mr-2 h-4 w-4" />
                                   Reject
                                 </Button>
                                 <Button
-                                  onClick={() => {
-                                    toast({
-                                      title: 'Rating Accepted',
-                                      description: 'You have accepted the HR normalized rating.',
-                                    });
-                                  }}
+                                  onClick={() => handleManagerReview(rating.employee_id, 'ACCEPT')}
                                 >
                                   <CheckCircle2 className="mr-2 h-4 w-4" />
                                   Accept
@@ -3518,25 +3498,13 @@ export default function ManagerEvaluation() {
                             <div className="flex justify-end gap-3">
                               <Button
                                 variant="outline"
-                                onClick={() => {
-                                  // Handle reject action
-                                  toast({
-                                    title: 'Rating Rejected',
-                                    description: 'You have rejected the HR normalized rating.',
-                                  });
-                                }}
+                                onClick={() => handleManagerReview(rating.employee_id, 'REJECT')}
                               >
                                 <XCircle className="mr-2 h-4 w-4" />
                                 Reject
                               </Button>
                               <Button
-                                onClick={() => {
-                                  // Handle accept action
-                                  toast({
-                                    title: 'Rating Accepted',
-                                    description: 'You have accepted the HR normalized rating.',
-                                  });
-                                }}
+                                onClick={() => handleManagerReview(rating.employee_id, 'ACCEPT')}
                               >
                                 <CheckCircle2 className="mr-2 h-4 w-4" />
                                 Accept
@@ -3886,25 +3854,13 @@ export default function ManagerEvaluation() {
                             <div className="flex justify-end gap-3">
                               <Button
                                 variant="outline"
-                                onClick={() => {
-                                  // Handle reject action
-                                  toast({
-                                    title: 'Rating Rejected',
-                                    description: 'You have rejected the HR normalized rating.',
-                                  });
-                                }}
+                                onClick={() => handleManagerReview(rating.employee_id, 'REJECT')}
                               >
                                 <XCircle className="mr-2 h-4 w-4" />
                                 Reject
                               </Button>
                               <Button
-                                onClick={() => {
-                                  // Handle accept action
-                                  toast({
-                                    title: 'Rating Accepted',
-                                    description: 'You have accepted the HR normalized rating.',
-                                  });
-                                }}
+                                onClick={() => handleManagerReview(rating.employee_id, 'ACCEPT')}
                               >
                                 <CheckCircle2 className="mr-2 h-4 w-4" />
                                 Accept

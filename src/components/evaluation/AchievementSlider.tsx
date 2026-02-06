@@ -265,7 +265,9 @@ export function getMaxPercentageFromCalibration(calibration?: CalibrationRule[] 
   if (!calibration || calibration.length === 0) return 200; // Default
   
   const highestThreshold = Math.max(...calibration.map(r => r.threshold));
-  return Math.max(100, Math.ceil(highestThreshold * 1.2));
+  // Always allow at least 200% to ensure managers can rate above target
+  // If highest threshold is already above 200, use that with a buffer
+  return Math.max(200, Math.ceil(highestThreshold * 1.2));
 }
 
 export function DualAchievementSlider({
@@ -293,8 +295,7 @@ export function DualAchievementSlider({
   onEmployeeChange?: (value: number) => void; // For editing employee's claimed value
   canEditEmployee?: boolean; // Whether employee's value can be edited
 }) {
-  console.log('employeeAchieved', employeeAchieved);
-  console.log('managerAchieved', managerAchieved);
+
   // Convert to numbers, handling string inputs and null/undefined
   const numericEmployeeAchieved = typeof employeeAchieved === 'number' 
     ? employeeAchieved 
@@ -548,7 +549,7 @@ export function DualAchievementSlider({
                   className="absolute text-[9px] text-muted-foreground -top-0.5"
                   style={{ left: `${(100 / maxPercentage) * 100}%`, transform: 'translateX(-50%)' }}
                 >
-                  100%
+                  target
                 </div>
               </div>
             )}

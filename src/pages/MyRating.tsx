@@ -467,7 +467,7 @@ export default function MyRating() {
   useEffect(() => {
     // Only fetch if transitions have been loaded (even if empty, that's fine)
     if (transitionsLoaded) {
-      fetchData();
+    fetchData();
     }
   }, [fetchData, transitionsLoaded]);
   
@@ -1862,16 +1862,16 @@ export default function MyRating() {
         {isPreTransitionView && currentTransition && (
           <>
             <Card className="bg-white border-2 border-input/50">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
                   <Badge variant={getPeriodBadgeVariant('pre_transition')}>
                     {getPeriodLabel('pre_transition')}
                   </Badge>
                   Pre-Transition Period Ratings
-                </CardTitle>
-                <CardDescription>
-                  Transition Date: {new Date(currentTransition.transition_date).toLocaleDateString()} • Type: {currentTransition.transition_type}
-                  {currentTransition.pre_period_start_date && currentTransition.pre_period_end_date && (
+              </CardTitle>
+              <CardDescription>
+                Transition Date: {new Date(currentTransition.transition_date).toLocaleDateString()} • Type: {currentTransition.transition_type}
+                {currentTransition.pre_period_start_date && currentTransition.pre_period_end_date && (
                     <> • {formatPeriodDateRange(currentTransition.pre_period_start_date, currentTransition.pre_period_end_date)}</>
                   )}
                 </CardDescription>
@@ -1882,10 +1882,10 @@ export default function MyRating() {
                   <div className="p-4 rounded-lg bg-muted/30 border">
                     <div className="text-sm text-muted-foreground mb-1">Pre-Transition Overall Rating</div>
                     <div className="text-2xl font-bold">{formatRating(preOverallRating)}</div>
-                  </div>
+              </div>
                 )}
-              </CardContent>
-            </Card>
+            </CardContent>
+          </Card>
           </>
         )}
         

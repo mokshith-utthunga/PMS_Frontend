@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 import { cycleService, settingsService } from '@/services';
 import { useAuth } from '@/contexts/AuthContext';
-import { ArrowLeft, Calendar, Loader2, ChevronDown, Users, Info } from 'lucide-react';
+import { ArrowLeft, Calendar, Loader2, ChevronDown, Users, Info, Pencil } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import type { PerformanceCycle } from '@/types';
@@ -22,7 +22,9 @@ import type { FormData } from '@/utils/quarterHelpers';
 export default function CycleForm() {
   const navigate = useNavigate();
   const { cycleId } = useParams();
-  const isEditMode = Boolean(cycleId);
+  const location = useLocation();
+  const isViewMode = location.pathname.includes('/view');
+  const isEditMode = Boolean(cycleId) && !isViewMode;
   const { toast } = useToast();
   const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -426,9 +428,9 @@ export default function CycleForm() {
     }
   }, [cycleId]);
 
-  // Fetch cycle data when editing - placed after function definitions
+  // Fetch cycle data when editing or viewing - placed after function definitions
   useEffect(() => {
-    if (!isEditMode || !cycleId) return;
+    if (!cycleId || (!isEditMode && !isViewMode)) return;
 
     // Reset fetch flags to allow re-fetching on refresh
     hasFetchedCycle.current = null;
@@ -444,7 +446,7 @@ export default function CycleForm() {
     ]).catch(error => {
       console.error('Error fetching cycle data:', error);
     });
-  }, [cycleId, isEditMode, fetchCycle, fetchQuarterlyCycles, fetchGoalsQuarterlyCycles]);
+  }, [cycleId, isEditMode, isViewMode, fetchCycle, fetchQuarterlyCycles, fetchGoalsQuarterlyCycles]);
 
   const fetchTeams = useCallback(async () => {
     if (hasFetchedTeams.current) {
@@ -694,6 +696,10 @@ export default function CycleForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (isViewMode) {
+      return; // Prevent submission in view mode
+    }
 
     let hasValidationErrors = false;
     const allGoalsErrors: Record<number, Record<string, string>> = { 1: {}, 2: {}, 3: {}, 4: {} };
@@ -934,6 +940,7 @@ export default function CycleForm() {
                       type="date"
                       value={getQuarterlyValue(quarter as QuarterKey, 'quarter_start_date')}
                       onChange={handleChange}
+                      readOnly={isViewMode}
                       className={cn(quarterlyReviewsValidationErrors[`${quarter}_quarter_start_date`] && "border-destructive")}
                     />
                     {quarterlyReviewsValidationErrors[`${quarter}_quarter_start_date`] && (
@@ -948,6 +955,7 @@ export default function CycleForm() {
                       type="date"
                       value={getQuarterlyValue(quarter as QuarterKey, 'quarter_end_date')}
                       onChange={handleChange}
+                      readOnly={isViewMode}
                       className={cn(quarterlyReviewsValidationErrors[`${quarter}_quarter_end_date`] && "border-destructive")}
                     />
                     {quarterlyReviewsValidationErrors[`${quarter}_quarter_end_date`] && (
@@ -976,6 +984,7 @@ export default function CycleForm() {
                       id={`${quarter}_goal_submission_start`}
                       type="date"
                       value={goalsData.goal_submission_start_date || ''}
+                      readOnly={isViewMode}
                       onChange={(e) => updateGoalsQuarterlyData(quarterNum, 'goal_submission_start_date', e.target.value)}
                       className={cn(goalsErrors.goal_submission_start_date && "border-destructive")}
                     />
@@ -989,6 +998,7 @@ export default function CycleForm() {
                       id={`${quarter}_goal_submission_end`}
                       type="date"
                       value={goalsData.goal_submission_end_date || ''}
+                      readOnly={isViewMode}
                       onChange={(e) => updateGoalsQuarterlyData(quarterNum, 'goal_submission_end_date', e.target.value)}
                       className={cn(goalsErrors.goal_submission_end_date && "border-destructive")}
                     />
@@ -1009,6 +1019,7 @@ export default function CycleForm() {
                       id={`${quarter}_mgr_goal_review_start`}
                       type="date"
                       value={goalsData.manager_review_start_date || ''}
+                      readOnly={isViewMode}
                       onChange={(e) => updateGoalsQuarterlyData(quarterNum, 'manager_review_start_date', e.target.value)}
                       className={cn(goalsErrors.manager_review_start_date && "border-destructive")}
                     />
@@ -1022,6 +1033,7 @@ export default function CycleForm() {
                       id={`${quarter}_mgr_goal_review_end`}
                       type="date"
                       value={goalsData.manager_review_end_date || ''}
+                      readOnly={isViewMode}
                       onChange={(e) => updateGoalsQuarterlyData(quarterNum, 'manager_review_end_date', e.target.value)}
                       className={cn(goalsErrors.manager_review_end_date && "border-destructive")}
                     />
@@ -1044,6 +1056,7 @@ export default function CycleForm() {
                       type="date"
                       value={getQuarterlyValue(quarter as QuarterKey, 'self_review_start')}
                       onChange={handleChange}
+                      readOnly={isViewMode}
                       className={cn(selfStartError && "border-destructive")}
                     />
                     {selfStartError && (
@@ -1058,6 +1071,7 @@ export default function CycleForm() {
                       type="date"
                       value={getQuarterlyValue(quarter as QuarterKey, 'self_review_end')}
                       onChange={handleChange}
+                      readOnly={isViewMode}
                       className={cn(selfEndError && "border-destructive")}
                     />
                     {selfEndError && (
@@ -1079,6 +1093,7 @@ export default function CycleForm() {
                       type="date"
                       value={getQuarterlyValue(quarter as QuarterKey, 'manager_review_start')}
                       onChange={handleChange}
+                      readOnly={isViewMode}
                       className={cn(evalMgrStartError && "border-destructive")}
                     />
                     {evalMgrStartError && (
@@ -1093,6 +1108,7 @@ export default function CycleForm() {
                       type="date"
                       value={getQuarterlyValue(quarter as QuarterKey, 'manager_review_end')}
                       onChange={handleChange}
+                      readOnly={isViewMode}
                       className={cn(evalMgrEndError && "border-destructive margin-top-4")}
                     />
                     {evalMgrEndError && (
@@ -1129,10 +1145,10 @@ export default function CycleForm() {
           </Link>
           <div>
             <h1 className="text-3xl font-bold tracking-tight">
-              {isEditMode ? 'Edit Performance Cycle' : 'Create Performance Cycle'}
+              {isViewMode ? 'View Performance Cycle' : isEditMode ? 'Edit Performance Cycle' : 'Create Performance Cycle'}
             </h1>
             <p className="text-muted-foreground">
-              {isEditMode ? 'Update the performance review cycle settings' : 'Set up a new performance review cycle with dates for each phase'}
+              {isViewMode ? 'View the performance review cycle details' : isEditMode ? 'Update the performance review cycle settings' : 'Set up a new performance review cycle with dates for each phase'}
             </p>
           </div>
         </div>
@@ -1153,6 +1169,7 @@ export default function CycleForm() {
                     placeholder="e.g., FY 2024-25 Annual Review"
                     value={formData.name}
                     onChange={handleChange}
+                    readOnly={isViewMode}
                     required
                   />
                 </div>
@@ -1165,6 +1182,7 @@ export default function CycleForm() {
                     min="2020"
                     value={formData.year}
                     onChange={handleChange}
+                    readOnly={isViewMode}
                     required
                   />
                 </div>
@@ -1177,6 +1195,7 @@ export default function CycleForm() {
                   placeholder="Brief description of this performance cycle"
                   value={formData.description}
                   onChange={handleChange}
+                  readOnly={isViewMode}
                   rows={3}
                 />
               </div>
@@ -1400,18 +1419,28 @@ export default function CycleForm() {
           </Card> */}
 
           <div className="mt-6 flex gap-4">
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {isEditMode ? 'Saving...' : 'Creating...'}
-                </>
-              ) : (
-                isEditMode ? 'Save Changes' : 'Create Cycle'
-              )}
-            </Button>
+            {!isViewMode && (
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {isEditMode ? 'Saving...' : 'Creating...'}
+                  </>
+                ) : (
+                  isEditMode ? 'Save Changes' : 'Create Cycle'
+                )}
+              </Button>
+            )}
+            {isViewMode && cycleId && (
+              <Link to={`/admin/cycles/${cycleId}/edit`}>
+                <Button type="button">
+                  <Pencil className="mr-2 h-4 w-4" />
+                  Edit Cycle
+                </Button>
+              </Link>
+            )}
             <Link to="/admin/cycles">
-              <Button type="button" variant="outline">Cancel</Button>
+              <Button type="button" variant="outline">{isViewMode ? 'Back' : 'Cancel'}</Button>
             </Link>
           </div>
         </form>

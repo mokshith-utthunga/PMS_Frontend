@@ -94,14 +94,14 @@ export default function AdminDashboard() {
                 link="/admin/cycles/new"
                 buttonText="New Cycle"
               />
-              <QuickActionCard
+              {/* <QuickActionCard
                 title="Manage Roles"
                 description="Assign roles and permissions to users"
                 icon={Shield}
                 link="/admin/roles"
                 buttonText="Manage Roles"
                 variant="secondary"
-              />
+              /> */}
               <QuickActionCard
                 title="Goal Templates"
                 description="Create KRA/KPI templates for roles"
@@ -195,18 +195,18 @@ export default function AdminDashboard() {
                 icon={GraduationCap}
                 link="/admin/settings/grades"
               />
-              <SettingsCard
+              {/* <SettingsCard
                 title="Locations"
                 description="Configure office locations"
                 icon={MapPin}
                 link="/admin/settings/locations"
-              />
-              <SettingsCard
+              /> */}
+              {/* <SettingsCard
                 title="Competencies"
                 description="Define competency framework"
                 icon={Target}
                 link="/admin/settings/competencies"
-              />
+              /> */}
             </div>
           </TabsContent>
         </Tabs>

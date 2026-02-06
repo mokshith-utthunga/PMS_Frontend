@@ -49,14 +49,14 @@ export function GettingStartedCard({
       buttonText: 'Create',
       isComplete: activeCyclesCount > 0,
     },
-    {
-      number: 4,
-      title: 'Activate and monitor',
-      description: 'Launch the cycle and track progress through reports',
-      buttonText: activeCyclesCount > 0 ? 'Active' : 'Activate',
-      isComplete: activeCyclesCount > 0,
-      disabled: activeCyclesCount === 0,
-    },
+    // {
+    //   number: 4,
+    //   title: 'Activate and monitor',
+    //   description: 'Launch the cycle and track progress through reports',
+    //   buttonText: activeCyclesCount > 0 ? 'Active' : 'Activate',
+    //   isComplete: activeCyclesCount > 0,
+    //   disabled: activeCyclesCount === 0,
+    // },
   ];
 
   return (

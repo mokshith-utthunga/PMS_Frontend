@@ -72,7 +72,7 @@ export const goalsService = {
 
     getByEmployee: (employeeId: string, cycleId: string, status?: string, quarter?: number | null, periodType?: PeriodType | null, transitionId?: string | null) => {
       let url = `/api/kras?employee_id=${employeeId}&cycle_id=${cycleId}`;
-      if (status) url += `&status=${status}`;
+      // if (status) url += `&status=${status}`;
       // Only add quarter param when it's a valid number (1-4)
       if (quarter && quarter >= 1 && quarter <= 4) {
         url += `&quarter=${quarter}`;
@@ -103,7 +103,7 @@ export const goalsService = {
   kpis: {
     getByEmployee: (employeeId: string, cycleId: string, status?: string, quarter?: number | null, periodType?: PeriodType | null, transitionId?: string | null) => {
       let url = `/api/goals?employee_id=${employeeId}&cycle_id=${cycleId}`;
-      if (status) url += `&status=${status}`;
+      // if (status) url += `&status=${status}`;
       // Only add quarter param when it's a valid number (1-4)
       if (quarter && quarter >= 1 && quarter <= 4) {
         url += `&quarter=${quarter}`;

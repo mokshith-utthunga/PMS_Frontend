@@ -140,14 +140,19 @@ export default function TeamMemberGoals() {
   });
   
   // Fetch team member goals data with quarter filter (only if quarter has started)
-  // Pass isTransitionTab to control whether to use transition_id in API call
-  // If transition tab is active, use transition_id; otherwise, don't use it
-  // Only use transition_id if we're in the transition nested tab AND transition exists for this quarter
+  // Pass periodType and transition_id based on the active nested tab
+  // Only apply periodType filtering for transitioned employees (when transition exists)
+  // Pre-transition tab: pass periodType='pre_transition' to get pre-transition goals
+  // Transition tab: pass periodType='post_transition' and transition_id to get post-transition goals
   const shouldUseTransitionId = isTransitionTab && transition && transition.quarter === quarter;
+  // Only set periodType if employee has a transition for this quarter
+  const periodType = transition && transition.quarter === quarter
+    ? (isTransitionTab ? 'post_transition' : 'pre_transition')
+    : undefined; // For non-transitioned employees, don't pass periodType
   const goalsData = useTeamMemberGoals(
     employeeId, 
     shouldFetchData ? quarter : null, 
-    undefined, // periodType
+    periodType, // Pass periodType only for transitioned employees
     shouldUseTransitionId // useTransitionId - only use transition_id when in transition nested tab
   );
   const { employee, kras, kpis, loading, refetch } = goalsData;

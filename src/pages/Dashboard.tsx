@@ -25,7 +25,7 @@ export default function Dashboard() {
   const { employee } = useCurrentEmployee();
 
   // Get active cycle data from context (fetched once at app initialization)
-  const { activeCycle, quarterlyCycles, goalsQuarterlyCycles } = useActiveCycle();
+  const { activeCycle, quarterlyCycles, goalsQuarterlyCycles, goalSetting, selfReview, managerReview, dashboard } = useActiveCycle();
 
   // Fetch my goals
   const { data: goals = [] } = useQuery({
@@ -72,6 +72,9 @@ export default function Dashboard() {
     enabled: !!employee?.id && !!activeCycle?.id && isManager
   });
   const completedEvals = completedData?.count || 0;
+  
+  // Get quarterly pending reviews from dashboard data
+  const pendingQuarterlyReviews = dashboard?.quarterly_pending || 0;
 
   const getSelfEvalStatus = () => {
     if (!selfEvaluation) return { label: 'Not Started', variant: 'secondary' as const };
@@ -82,8 +85,15 @@ export default function Dashboard() {
   };
 
   const getSelfEvalDueText = () => {
-    if (!activeCycle?.self_evaluation_end) return 'Set up a cycle first';
-    const dueDate = new Date(activeCycle.self_evaluation_end);
+    // Use quarterlyCycles data for self evaluation dates
+    if (!selfReview?.review_for_quarter || !quarterlyCycles) return 'Set up a cycle first';
+    
+    const reviewQuarter = selfReview.review_for_quarter;
+    const quarterlyCycle = quarterlyCycles.find(qc => qc.quarter === reviewQuarter);
+    
+    if (!quarterlyCycle?.self_review_end_date) return 'Set up a cycle first';
+    
+    const dueDate = new Date(quarterlyCycle.self_review_end_date);
     const daysLeft = differenceInDays(dueDate, new Date());
     if (daysLeft < 0) return 'Overdue';
     if (daysLeft === 0) return 'Due today';
@@ -93,11 +103,42 @@ export default function Dashboard() {
   const getCyclePhase = () => {
     if (!activeCycle) return 'No active cycle';
     const now = new Date();
-    if (activeCycle.goal_submission_end && now < new Date(activeCycle.goal_submission_end)) return 'Goal Setting Phase';
-    if (activeCycle.goal_approval_end && now < new Date(activeCycle.goal_approval_end)) return 'Goal Approval Phase';
-    if (activeCycle.self_evaluation_end && now < new Date(activeCycle.self_evaluation_end)) return 'Self Evaluation Phase';
-    if (activeCycle.manager_evaluation_end && now < new Date(activeCycle.manager_evaluation_end)) return 'Manager Evaluation Phase';
-    if (activeCycle.calibration_end && now < new Date(activeCycle.calibration_end)) return 'Calibration Phase';
+    
+    // Check goal setting phase using goalsQuarterlyCycles
+    if (goalSetting?.enabled && goalSetting?.quarter) {
+      const currentGoalsCycle = goalsQuarterlyCycles?.find(gqc => gqc.quarter === goalSetting.quarter);
+      if (currentGoalsCycle?.goal_submission_end_date && now <= new Date(currentGoalsCycle.goal_submission_end_date)) {
+        return 'Goal Setting Phase';
+      }
+    }
+    
+    // Check goal approval phase using goalsQuarterlyCycles
+    if (goalSetting?.quarter) {
+      const currentGoalsCycle = goalsQuarterlyCycles?.find(gqc => gqc.quarter === goalSetting.quarter);
+      if (currentGoalsCycle?.goals_manager_review_end_date && now <= new Date(currentGoalsCycle.goals_manager_review_end_date)) {
+        return 'Goal Approval Phase';
+      }
+    }
+    
+    // Check self evaluation phase using quarterlyCycles
+    if (selfReview?.enabled && selfReview?.review_for_quarter) {
+      const reviewQuarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === selfReview.review_for_quarter);
+      if (reviewQuarterlyCycle?.self_review_end_date && now <= new Date(reviewQuarterlyCycle.self_review_end_date)) {
+        return 'Self Evaluation Phase';
+      }
+    }
+    
+    // Check manager evaluation phase using quarterlyCycles
+    if (managerReview?.enabled && managerReview?.review_for_quarter) {
+      const reviewQuarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === managerReview.review_for_quarter);
+      if (reviewQuarterlyCycle?.quarterly_manager_review_end_date && now <= new Date(reviewQuarterlyCycle.quarterly_manager_review_end_date)) {
+        return 'Manager Evaluation Phase';
+      }
+    }
+    
+    // Check calibration phase (from activeCycle)
+    if (activeCycle.calibration_end && now <= new Date(activeCycle.calibration_end)) return 'Calibration Phase';
+    
     return 'Release Phase';
   };
 
@@ -107,60 +148,95 @@ export default function Dashboard() {
         { label: 'Goal Submission', date: 'Set up a performance cycle first', status: 'pending', badge: 'Pending Setup' },
         { label: 'Self Evaluation', date: 'After goals are approved', status: 'upcoming', badge: 'Upcoming' },
         { label: 'Manager Evaluation', date: 'After self evaluation', status: 'upcoming', badge: 'Upcoming' },
-        { label: 'Calibration & Release', date: 'HR reviews and finalizes', status: 'upcoming', badge: 'Upcoming' },
+        // { label: 'Calibration & Release', date: 'HR reviews and finalizes', status: 'upcoming', badge: 'Upcoming' },
       ];
     }
 
     const now = new Date();
     const items = [];
 
-    // Goal Submission
-    if (activeCycle.goal_submission_start && activeCycle.goal_submission_end) {
-    items.push({
-      label: 'Goal Submission',
-      date: `${format(new Date(activeCycle.goal_submission_start), 'MMM d')} - ${format(new Date(activeCycle.goal_submission_end), 'MMM d, yyyy')}`,
-      status: now <= new Date(activeCycle.goal_submission_end) ? 'active' : 'done',
-      badge: now <= new Date(activeCycle.goal_submission_end) ? 'Current' : 'Completed',
-    });
+    // Goal Submission - Use goalsQuarterlyCycles for current quarter
+    if (goalSetting?.quarter) {
+      const currentGoalsCycle = goalsQuarterlyCycles?.find(gqc => gqc.quarter === goalSetting.quarter);
+      if (currentGoalsCycle?.goal_submission_start_date && currentGoalsCycle?.goal_submission_end_date) {
+        const startDate = new Date(currentGoalsCycle.goal_submission_start_date);
+        const endDate = new Date(currentGoalsCycle.goal_submission_end_date);
+        const isActive = now >= startDate && now <= endDate;
+        const isDone = now > endDate;
+        
+        items.push({
+          label: 'Goal Submission',
+          date: `${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d, yyyy')}`,
+          status: isActive ? 'active' : isDone ? 'done' : 'upcoming',
+          badge: isActive ? 'Current' : isDone ? 'Completed' : 'Upcoming',
+        });
+      } else {
+        items.push({ label: 'Goal Submission', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
+      }
     } else {
       items.push({ label: 'Goal Submission', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
     }
 
-    // Self Evaluation
-    if (activeCycle.self_evaluation_start && activeCycle.self_evaluation_end) {
-      items.push({
-        label: 'Self Evaluation',
-        date: `${format(new Date(activeCycle.self_evaluation_start), 'MMM d')} - ${format(new Date(activeCycle.self_evaluation_end), 'MMM d, yyyy')}`,
-        status: now < new Date(activeCycle.self_evaluation_start) ? 'upcoming' : now <= new Date(activeCycle.self_evaluation_end) ? 'active' : 'done',
-        badge: now < new Date(activeCycle.self_evaluation_start) ? 'Upcoming' : now <= new Date(activeCycle.self_evaluation_end) ? 'Current' : 'Completed',
-      });
+    // Self Evaluation - Use quarterlyCycles for review quarter
+    if (selfReview?.review_for_quarter) {
+      const reviewQuarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === selfReview.review_for_quarter);
+      if (reviewQuarterlyCycle?.self_review_start_date && reviewQuarterlyCycle?.self_review_end_date) {
+        const startDate = new Date(reviewQuarterlyCycle.self_review_start_date);
+        const endDate = new Date(reviewQuarterlyCycle.self_review_end_date);
+        const isActive = now >= startDate && now <= endDate;
+        const isDone = now > endDate;
+        
+        items.push({
+          label: 'Self Evaluation',
+          date: `${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d, yyyy')}`,
+          status: isActive ? 'active' : isDone ? 'done' : 'upcoming',
+          badge: isActive ? 'Current' : isDone ? 'Completed' : 'Upcoming',
+        });
+      } else {
+        items.push({ label: 'Self Evaluation', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
+      }
     } else {
       items.push({ label: 'Self Evaluation', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
     }
 
-    // Manager Evaluation
-    if (activeCycle.manager_evaluation_start && activeCycle.manager_evaluation_end) {
-    items.push({
-      label: 'Manager Evaluation',
-      date: `${format(new Date(activeCycle.manager_evaluation_start), 'MMM d')} - ${format(new Date(activeCycle.manager_evaluation_end), 'MMM d, yyyy')}`,
-      status: now < new Date(activeCycle.manager_evaluation_start) ? 'upcoming' : now <= new Date(activeCycle.manager_evaluation_end) ? 'active' : 'done',
-      badge: now < new Date(activeCycle.manager_evaluation_start) ? 'Upcoming' : now <= new Date(activeCycle.manager_evaluation_end) ? 'Current' : 'Completed',
-    });
+    // Manager Evaluation - Use quarterlyCycles for review quarter
+    if (managerReview?.review_for_quarter) {
+      const reviewQuarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === managerReview.review_for_quarter);
+      if (reviewQuarterlyCycle?.quarterly_manager_review_start_date && reviewQuarterlyCycle?.quarterly_manager_review_end_date) {
+        const startDate = new Date(reviewQuarterlyCycle.quarterly_manager_review_start_date);
+        const endDate = new Date(reviewQuarterlyCycle.quarterly_manager_review_end_date);
+        const isActive = now >= startDate && now <= endDate;
+        const isDone = now > endDate;
+        
+        items.push({
+          label: 'Manager Evaluation',
+          date: `${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d, yyyy')}`,
+          status: isActive ? 'active' : isDone ? 'done' : 'upcoming',
+          badge: isActive ? 'Current' : isDone ? 'Completed' : 'Upcoming',
+        });
+      } else {
+        items.push({ label: 'Manager Evaluation', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
+      }
     } else {
       items.push({ label: 'Manager Evaluation', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
     }
 
-    // Calibration & Release
-    if (activeCycle.calibration_start && activeCycle.release_date) {
-    items.push({
-      label: 'Calibration & Release',
-      date: `${format(new Date(activeCycle.calibration_start), 'MMM d')} - ${format(new Date(activeCycle.release_date), 'MMM d, yyyy')}`,
-      status: now < new Date(activeCycle.calibration_start) ? 'upcoming' : now <= new Date(activeCycle.release_date) ? 'active' : 'done',
-      badge: now < new Date(activeCycle.calibration_start) ? 'Upcoming' : now <= new Date(activeCycle.release_date) ? 'Current' : 'Completed',
-    });
-    } else {
-      items.push({ label: 'Calibration & Release', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
-    }
+    // Calibration & Release - Use activeCycle data
+    // if (activeCycle.calibration_start && activeCycle.release_date) {
+    //   const startDate = new Date(activeCycle.calibration_start);
+    //   const endDate = new Date(activeCycle.release_date);
+    //   const isActive = now >= startDate && now <= endDate;
+    //   const isDone = now > endDate;
+      
+    //   items.push({
+    //     label: 'Calibration & Release',
+    //     date: `${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d, yyyy')}`,
+    //     status: isActive ? 'active' : isDone ? 'done' : 'upcoming',
+    //     badge: isActive ? 'Current' : isDone ? 'Completed' : 'Upcoming',
+    //   });
+    // } else {
+    //   items.push({ label: 'Calibration & Release', date: 'Not configured', status: 'upcoming', badge: 'Not Set' });
+    // }
 
     return items;
   };
@@ -204,7 +280,15 @@ export default function Dashboard() {
                 selfEvaluation={selfEvaluation}
                 selfEvalStatus={getSelfEvalStatus()}
                 selfEvalDueText={getSelfEvalDueText()}
-                activeCycle={activeCycle}
+                activeCycle={{
+                  ...activeCycle,
+                  goal_submission_end: goalSetting?.quarter 
+                    ? goalsQuarterlyCycles?.find(gqc => gqc.quarter === goalSetting.quarter)?.goal_submission_end_date || activeCycle?.goal_submission_end
+                    : activeCycle?.goal_submission_end,
+                  allow_late_goal_submission: goalSetting?.quarter
+                    ? goalsQuarterlyCycles?.find(gqc => gqc.quarter === goalSetting.quarter)?.allow_late_goal_submission || activeCycle?.allow_late_goal_submission
+                    : activeCycle?.allow_late_goal_submission
+                }}
                 cyclePhase={getCyclePhase()}
                 goalsSubmitted={goalsData?.submitted || false}
               />
@@ -213,7 +297,13 @@ export default function Dashboard() {
 
           {isManager && (
             <TabsContent value="manager">
-              <ManagerDashboard teamCount={teamCount} pendingApprovals={pendingApprovals} completedEvals={completedEvals} totalTeamEvals={teamCount} />
+              <ManagerDashboard 
+                teamCount={teamCount} 
+                pendingApprovals={pendingApprovals} 
+                completedEvals={completedEvals} 
+                totalTeamEvals={teamCount}
+                pendingQuarterlyReviews={pendingQuarterlyReviews}
+              />
             </TabsContent>
           )}
 

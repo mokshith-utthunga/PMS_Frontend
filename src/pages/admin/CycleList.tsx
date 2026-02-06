@@ -23,7 +23,8 @@ import {
   Play,
   Pause,
   Archive,
-  Pencil
+  Pencil,
+  Eye
 } from 'lucide-react';
 
 const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -220,6 +221,12 @@ export default function CycleList() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              <DropdownMenuItem asChild>
+                                <Link to={`/admin/cycles/${cycle.id}/view`}>
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  View
+                                </Link>
+                              </DropdownMenuItem>
                               <DropdownMenuItem asChild>
                                 <Link to={`/admin/cycles/${cycle.id}/edit`}>
                                   <Pencil className="mr-2 h-4 w-4" />

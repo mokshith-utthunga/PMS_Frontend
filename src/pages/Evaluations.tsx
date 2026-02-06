@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Save, Send, Target, AlertCircle, ChevronRight, Calendar, AlertTriangle, ArrowRight } from 'lucide-react';
+import { Save, Send, Target, AlertCircle, ChevronRight, Calendar, AlertTriangle, ArrowRight, Lock } from 'lucide-react';
 import { PageLoader } from '@/loaders';
 import { useAuth } from '@/contexts/AuthContext';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
@@ -755,6 +755,76 @@ export default function Evaluations() {
               onClick={() => window.location.href = `/goals?quarter=q${quarterNum}`}
             >
               Go to Goals
+            </Button>
+          </CardContent>
+        </Card>
+      );
+    }
+    
+    // Check if goals are approved before allowing self-evaluation
+    // For transition employees: check if goals for the specific period are approved
+    // For non-transition employees: check if goals are approved
+    let goalsApproved = false;
+    if (qTransition) {
+      // Transition employee: check goals for the specific period
+      const periodType = isTransition ? 'post_transition' : 'pre_transition';
+      const transitionIdStr = String(qTransition.id);
+      
+      // Get goals for the current period
+      const periodKras = isTransition ? postTransitionKras : preTransitionKras;
+      const periodKpis = isTransition ? postTransitionKpis : preTransitionKpis;
+      
+      // Check if goals for this period are approved
+      const periodKrasApproved = periodKras.some(k => k.status === 'approved');
+      const periodKpisApproved = periodKpis.some(k => k.status === 'approved');
+      
+      if (isTransition) {
+        // For post-transition: if post-transition goals are not approved yet,
+        // allow evaluation if pre-transition goals are approved
+        if (!periodKrasApproved && !periodKpisApproved) {
+          // Check if pre-transition goals are approved
+          const preKrasApproved = preTransitionKras.some(k => k.status === 'approved');
+          const preKpisApproved = preTransitionKpis.some(k => k.status === 'approved');
+          goalsApproved = (preKrasApproved || preKpisApproved);
+        } else {
+          goalsApproved = (periodKrasApproved || periodKpisApproved);
+        }
+      } else {
+        // For pre-transition: check if pre-transition goals are approved
+        goalsApproved = (periodKrasApproved || periodKpisApproved);
+      }
+    } else {
+      // Non-transition employee: check if any goals are approved
+      const fullKrasApproved = fullQuarterKras.some(k => k.status === 'approved');
+      const fullKpisApproved = fullQuarterKpis.some(k => k.status === 'approved');
+      goalsApproved = (fullKrasApproved || fullKpisApproved);
+    }
+    
+    if (!goalsApproved) {
+      const periodLabel = qTransition 
+        ? (isTransition ? 'post-transition' : 'pre-transition')
+        : '';
+      return (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12">
+            <Lock className="h-12 w-12 text-muted-foreground mb-4" />
+            <h3 className="font-semibold text-lg">
+              {qTransition 
+                ? `Please Wait for Manager Approval - Q${quarterNum} ${periodLabel.charAt(0).toUpperCase() + periodLabel.slice(1)} Goals`
+                : `Please Wait for Manager Approval - Q${quarterNum} Goals`
+              }
+            </h3>
+            <p className="text-muted-foreground text-center mt-2">
+              {qTransition
+                ? `Your ${periodLabel} goals for Q${quarterNum} must be approved by your manager before you can start self-evaluation.`
+                : `Your Q${quarterNum} goals must be approved by your manager before you can start self-evaluation.`
+              }
+            </p>
+            <Button 
+              className="mt-4" 
+              onClick={() => window.location.href = `/goals?quarter=q${quarterNum}`}
+            >
+              View Goals
             </Button>
           </CardContent>
         </Card>

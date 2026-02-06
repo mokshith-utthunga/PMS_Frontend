@@ -122,7 +122,7 @@ export function HRDashboard() {
           </CardContent>
         </Card>
 
-        <Card>
+        {/* <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <FileText className="h-5 w-5" />
@@ -138,9 +138,9 @@ export function HRDashboard() {
               </Button>
             </Link>
           </CardContent>
-        </Card>
+        </Card> */}
 
-        <Card>
+        {/* <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <Grid3X3 className="h-5 w-5" />
@@ -156,8 +156,8 @@ export function HRDashboard() {
               </Button>
             </Link>
           </CardContent>
-        </Card>
-
+        </Card> */}
+{/* 
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -174,7 +174,7 @@ export function HRDashboard() {
               </Button>
             </Link>
           </CardContent>
-        </Card>
+        </Card> */}
       </div>
     </div>
   );
