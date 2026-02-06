@@ -10,17 +10,17 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       host: "::",
-      port: Number(env.VITE_PORT) || 8080,
+      port: Number(env.VITE_PORT),
       allowedHosts: ['performance-people.utthunga.io'],
       proxy: {
         // Proxy /api endpoints to the backend
         '/api': {
-          target: env.VITE_BACKEND_URL || 'http://localhost:3001',
+          target: env.VITE_BACKEND_URL,
           changeOrigin: true,
         },
         // Proxy /external-auth to backend /api/external-auth for SSO
         '/external-auth': {
-          target: env.VITE_BACKEND_URL || 'http://localhost:3001',
+          target: env.VITE_BACKEND_URL ,
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/external-auth/, '/api/external-auth'),
         },
