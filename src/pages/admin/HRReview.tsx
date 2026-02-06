@@ -1543,22 +1543,50 @@ export default function HRReview() {
           {/* Manager Status Tab */}
           {isHR && (
             <TabsContent value="manager-status" className="space-y-4">
-              <div className="flex items-center gap-4">
-                <Label>Quarter:</Label>
-                <select
-                  value={selectedQuarter}
-                  onChange={(e) => {
-                    const q = parseInt(e.target.value);
-                    setSelectedQuarter(q);
-                    fetchNormalizedRatings(q);
-                  }}
-                  className="px-3 py-2 border rounded-md"
-                >
-                  <option value={1}>Q1</option>
-                  <option value={2}>Q2</option>
-                  <option value={3}>Q3</option>
-                  <option value={4}>Q4</option>
-                </select>
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <Label>Quarter:</Label>
+                  <select
+                    value={selectedQuarter}
+                    onChange={(e) => {
+                      const q = parseInt(e.target.value);
+                      setSelectedQuarter(q);
+                      fetchNormalizedRatings(q);
+                    }}
+                    className="px-3 py-2 border rounded-md"
+                  >
+                    <option value={1}>Q1</option>
+                    <option value={2}>Q2</option>
+                    <option value={3}>Q3</option>
+                    <option value={4}>Q4</option>
+                  </select>
+                </div>
+                {(() => {
+                  const acceptedRatings = normalizedRatings.filter(r => r.status === 'ACCEPTED');
+                  const hasAcceptedRatings = acceptedRatings.length > 0;
+                  return (
+                    <Button
+                      onClick={() => {
+                        const employeeIds = acceptedRatings.map(r => r.employee_id);
+                        handlePublish(employeeIds);
+                      }}
+                      disabled={!hasAcceptedRatings || saving === 'bulk'}
+                      variant="default"
+                    >
+                      {saving === 'bulk' ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Publishing...
+                        </>
+                      ) : (
+                        <>
+                          <Send className="mr-2 h-4 w-4" />
+                          Publish to All ({acceptedRatings.length})
+                        </>
+                      )}
+                    </Button>
+                  );
+                })()}
               </div>
 
               {normalizedRatingsLoading ? (

@@ -25,7 +25,7 @@ export function TeamMemberKRACard({
   onReturn,
   onRevoke,
 }: TeamMemberKRACardProps) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const totalKPIWeight = kpis.reduce((sum, k) => sum + Number(k.weight || 0), 0);
 
   return (

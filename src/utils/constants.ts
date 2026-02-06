@@ -24,10 +24,10 @@ export const getApiUrl = (endpoint: string): string => {
 };
 
 // Status color mappings
-export const STATUS_COLORS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+export const STATUS_COLORS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'|'submitted'> = {
   draft: 'secondary',
-  submitted: 'default',
-  approved: 'outline',
+  submitted: 'submitted',
+  approved: 'submitted',
   returned: 'destructive',
   locked: 'outline',
   active: 'default',
