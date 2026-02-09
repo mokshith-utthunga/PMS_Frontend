@@ -112,6 +112,8 @@ export default function Team() {
   const [activeCycle, setActiveCycle] = useState<any>(activeCycleFromContext);
   const [quarterlyCycles, setQuarterlyCycles] = useState<QuarterlyCycle[]>((quarterlyCyclesFromContext || []) as QuarterlyCycle[]);
   const [dashboardCounts, setDashboardCounts] = useState<DashboardCounts | null>(dashboardFromContext as DashboardCounts | null);
+  const [ratingRejections, setRatingRejections] = useState<any[]>([]);
+  const [loadingRejections, setLoadingRejections] = useState(false);
 
   // Calculate current quarter based on active cycle
   const currentQuarter = getCurrentQuarter(activeCycleFromContext, quarterlyCyclesFromContext);
@@ -127,8 +129,9 @@ export default function Team() {
     // Wait for employee to load before fetching team data
     if (!isLoadingEmployee && user) {
       fetchTeamData();
+      fetchRatingRejections();
     }
-  }, [user, currentEmployee, isLoadingEmployee]);
+  }, [user, currentEmployee, isLoadingEmployee, activeCycleFromContext]);
 
   const fetchTeamData = async () => {
     if (!user) {
@@ -332,6 +335,26 @@ export default function Team() {
       console.error('Error fetching team data:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchRatingRejections = async () => {
+    if (!user || !currentEmployee || !activeCycleFromContext) {
+      return;
+    }
+
+    try {
+      setLoadingRejections(true);
+      const result = await evaluationService.managerRatingRejections.get(
+        activeCycleFromContext.id,
+        'pending' // Only show pending rejections
+      );
+      setRatingRejections(result.data || []);
+    } catch (error) {
+      console.error('Error fetching rating rejections:', error);
+      setRatingRejections([]);
+    } finally {
+      setLoadingRejections(false);
     }
   };
 
@@ -688,6 +711,12 @@ export default function Team() {
                 <Badge variant="secondary" className="ml-2">{dashboardCounts?.quarterly_pending ?? 0}</Badge>
               )}
             </TabsTrigger>
+            <TabsTrigger value="rejections">
+              Review Rejections
+              {ratingRejections.length > 0 && (
+                <Badge variant="secondary" className="ml-2">{ratingRejections.length}</Badge>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="evaluations">
               Year-End Evals
               {(dashboardCounts?.year_end_pending ?? 0) > 0 && (
@@ -899,6 +928,105 @@ export default function Team() {
                   </TabsContent>
                 ))}
               </Tabs>
+            )}
+          </TabsContent>
+
+          <TabsContent value="rejections" className="space-y-4">
+            {loadingRejections ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mb-4" />
+                  <p className="text-muted-foreground">Loading rejections...</p>
+                </CardContent>
+              </Card>
+            ) : ratingRejections.length === 0 ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-12">
+                  <CheckCircle2 className="h-12 w-12 text-muted-foreground mb-4" />
+                  <h3 className="font-semibold text-lg">No rating rejections</h3>
+                  <p className="text-muted-foreground">
+                    No team members have rejected their published ratings
+                  </p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-4">
+                {ratingRejections.map((rejection) => (
+                  <Card key={rejection.id}>
+                    <CardHeader>
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-4">
+                          <Avatar>
+                            <AvatarFallback className="bg-primary text-primary-foreground">
+                              {rejection.employee_name
+                                ? rejection.employee_name
+                                    .split(' ')
+                                    .map((n: string) => n[0])
+                                    .join('')
+                                    .toUpperCase()
+                                    .slice(0, 2)
+                                : '??'}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <CardTitle className="text-lg">
+                              {rejection.employee_name || 'Unknown Employee'}
+                            </CardTitle>
+                            <CardDescription>
+                              {rejection.employee_code || 'N/A'} • {rejection.quarter ? `Q${rejection.quarter}` : 'Year-End'} • {rejection.cycle_name || 'N/A'}
+                            </CardDescription>
+                          </div>
+                        </div>
+                        <Badge variant="destructive">Rejected</Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div>
+                        <p className="text-sm font-medium mb-2">Rejection Reason</p>
+                        <p className="text-sm text-muted-foreground bg-muted p-3 rounded-md">
+                          {rejection.rejection_reason || 'No reason provided'}
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm font-medium mb-1">Published Rating</p>
+                          <p className="text-lg font-semibold">
+                            {(() => {
+                              if (rejection.calculated_overall_rating === null || rejection.calculated_overall_rating === undefined) {
+                                return 'N/A';
+                              }
+                              const rating = typeof rejection.calculated_overall_rating === 'string' 
+                                ? parseFloat(rejection.calculated_overall_rating) 
+                                : Number(rejection.calculated_overall_rating);
+                              return !isNaN(rating) ? rating.toFixed(2) : 'N/A';
+                            })()}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium mb-1">Rejected On</p>
+                          <p className="text-sm text-muted-foreground">
+                            {rejection.created_at
+                              ? new Date(rejection.created_at).toLocaleDateString('en-US', {
+                                  year: 'numeric',
+                                  month: 'short',
+                                  day: 'numeric',
+                                })
+                              : 'N/A'}
+                          </p>
+                        </div>
+                      </div>
+                      {rejection.manager_comments && (
+                        <div>
+                          <p className="text-sm font-medium mb-2">Manager Comments</p>
+                          <p className="text-sm text-muted-foreground bg-muted p-3 rounded-md">
+                            {rejection.manager_comments}
+                          </p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
             )}
           </TabsContent>
 

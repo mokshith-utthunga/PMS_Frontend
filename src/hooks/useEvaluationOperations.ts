@@ -204,10 +204,8 @@ export function useEvaluationOperations({
 
       setSaving(true);
       try {
-        // Save first
         await saveProgress(quarter, overallComments, overallRating, setQuarterlyReviews);
 
-        // Then submit
         await evaluationService.selfReviews.upsert({
           employee_id: employeeId,
           cycle_id: cycleId,

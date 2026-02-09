@@ -53,6 +53,6 @@ export const MAX_KRAS = 5;
 export const TOTAL_WEIGHT = 100;
 
 // Cache time constants (in milliseconds)
-export const CACHE_STALE_TIME = 30 * 60 * 1000; // 30 minutes - data is fresh for this duration
-export const CACHE_GC_TIME = 60 * 60 * 1000; // 1 hour - keep in cache for this duration after last use
-export const LOCAL_STORAGE_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes - localStorage cache expires after this duration
+export const CACHE_STALE_TIME = 2 * 60 * 1000; // 30 minutes - data is fresh for this duration
+export const CACHE_GC_TIME = 10 * 60 * 1000; // 1 hour - keep in cache for this duration after last use
+export const LOCAL_STORAGE_CACHE_DURATION = 2 * 60 * 1000; // 30 minutes - localStorage cache expires after this duration

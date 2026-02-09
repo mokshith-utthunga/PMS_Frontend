@@ -12,6 +12,7 @@ import { Save, Send, Target, AlertCircle, ChevronRight, Calendar, AlertTriangle,
 import { PageLoader } from '@/loaders';
 import { useAuth } from '@/contexts/AuthContext';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import { useCurrentEmployee } from '@/hooks/useCurrentEmployee';
 import { useEvaluationsData, useEvaluationOperations, useTransition, type KpiRating } from '@/hooks';
 import { evaluationService, transitionService } from '@/services';
 import { getPeriodLabel, getPeriodBadgeVariant, formatPeriodDateRange } from '@/utils/periodHelpers';
@@ -38,6 +39,7 @@ export default function Evaluations() {
   const { user, hasAnyRole } = useAuth();
   const isHR = hasAnyRole(['hr_admin', 'hrbp', 'system_admin']);
   const { selfReview } = useActiveCycle();
+  const { employee: currentEmployee } = useCurrentEmployee();
 
   // URL-based quarter handling
   const { quarter, setQuarter, isValidQuarter } = useQuarterFromUrl();
@@ -130,6 +132,9 @@ export default function Evaluations() {
   // Format: { [quarter]: { pre_transition: string, post_transition: string } }
   const [overallComments, setOverallComments] = useState<Record<number, { pre_transition?: string; post_transition?: string }>>({});
   const [evaluationTab, setEvaluationTab] = useState<Record<number, string>>({});
+  
+  // KRA/KPI rejection state - track rejections per quarter
+  const [kraKpiRejections, setKraKpiRejections] = useState<Record<number, Record<string, any>>>({});
 
   useEffect(() => {
     setQuarterlyReviews(initialQuarterlyReviews);
@@ -260,6 +265,52 @@ export default function Evaluations() {
   // Use URL quarter if available, otherwise use selectedQuarter
   const activeQuarter = quarter || parseInt(selectedQuarter) || 1;
   
+  // Fetch KRA/KPI rejections for the active quarter
+  useEffect(() => {
+    const fetchRejections = async () => {
+      if (!employeeId || !activeCycle?.id || !activeQuarter) return;
+      
+      try {
+        // Fetch rejections by employee_id, cycle_id, and quarter
+        // This will get all rejections for the quarter regardless of manager_review_id
+        // This handles transitions where there might be multiple manager reviews
+        const rejectionsResult = await evaluationService.kraKpiRejections.get({
+          employee_id: employeeId,
+          cycle_id: activeCycle.id,
+          quarter: activeQuarter,
+        });
+        
+        // Create a map of rejections by KRA/KPI ID for this quarter
+        const rejectionsMap: Record<string, any> = {};
+        (rejectionsResult.data || []).forEach((rejection: any) => {
+          const key = rejection.kra_id || rejection.goal_id;
+          if (key) {
+            // If multiple rejections exist for same KPI (shouldn't happen, but handle it)
+            // Keep the most recent one
+            if (!rejectionsMap[key] || new Date(rejection.rejected_at) > new Date(rejectionsMap[key].rejected_at)) {
+              rejectionsMap[key] = rejection;
+            }
+          }
+        });
+        
+        console.log('[Evaluations] Fetched rejections for Q' + activeQuarter + ':', {
+          totalRejections: rejectionsResult.data?.length || 0,
+          rejectionsMap,
+          rejectionKeys: Object.keys(rejectionsMap),
+        });
+        
+        setKraKpiRejections(prev => ({
+          ...prev,
+          [activeQuarter]: rejectionsMap,
+        }));
+      } catch (error) {
+        console.error('Error fetching KRA/KPI rejections:', error);
+      }
+    };
+    
+    fetchRejections();
+  }, [employeeId, activeCycle?.id, activeQuarter]);
+
   // Debug logging
   useEffect(() => {
     console.log('[Evaluations] Quarter state:', {
@@ -761,9 +812,7 @@ export default function Evaluations() {
       );
     }
     
-    // Check if goals are approved before allowing self-evaluation
-    // For transition employees: check if goals for the specific period are approved
-    // For non-transition employees: check if goals are approved
+
     let goalsApproved = false;
     if (qTransition) {
       // Transition employee: check goals for the specific period
@@ -841,24 +890,14 @@ export default function Evaluations() {
       // This ensures we use the correct period for the specific quarter being rendered
       const periodType = isTransition ? 'post_transition' : 'pre_transition';
       const transitionId = qTransition.id;
-      
-      console.log('[Evaluations] Finding review for period:', {
-        quarter: quarterNum,
-        isTransition: isTransition,
-        periodType: periodType,
-        transitionId: transitionId,
-        allReviewsByQuarter: allReviewsByQuarter[quarterNum]
-      });
-      
+          
       // Find the review matching the current period from allReviewsByQuarter
       const allReviews = allReviewsByQuarter[quarterNum] || [];
       const matchingReview = allReviews.find((r: any) => 
         r.period_type === periodType && 
         String(r.transition_id) === String(transitionId)
       );
-      
-      console.log('[Evaluations] Matching review found:', matchingReview);
-      
+         
       if (matchingReview) {
         qReview = matchingReview;
       } else {
@@ -883,18 +922,21 @@ export default function Evaluations() {
     
     // Debug logging for transition tab
     if (isTransition && qTransition) {
-      console.log('[Evaluations] Transition tab debug:', {
-        quarter: quarterNum,
-        isTransitionTab: isTransition,
-        qReview: qReview,
-        qIsSubmitted: qIsSubmitted,
-        qIsOpen: qIsOpen,
-        qHasLatePermission: qHasLatePermission,
-        hasTransitionForQuarter: hasTransitionForQuarter,
-        isWithinQuarterDates: isWithinQuarterDates,
-        periodInfo: currentQuarterPeriodInfo
-      });
+
     }
+    
+    // Check for active rejections (not resubmitted) for this quarter
+    const quarterRejections = kraKpiRejections[quarterNum] || {};
+    const activeRejections = Object.values(quarterRejections).filter((r: any) => !r.resubmitted_at);
+    const hasActiveRejections = activeRejections.length > 0;
+    
+    // Debug logging for rejections
+    console.log('[Evaluations] Rejection check for Q' + quarterNum + ':', {
+      quarterRejections,
+      activeRejectionsCount: activeRejections.length,
+      hasActiveRejections,
+      rejectionKeys: Object.keys(quarterRejections),
+    });
     
     // Allow editing if:
     // 1. Quarter is open OR
@@ -903,8 +945,20 @@ export default function Evaluations() {
     // AND:
     // - The current period's review is not submitted (each period has its own review)
     // - OR if the review doesn't exist yet (qReview is null/undefined), allow editing
-    const qCanEdit = (qIsOpen || qHasLatePermission || (hasTransitionForQuarter && isWithinQuarterDates)) && 
-                     (!qReview || !qIsSubmitted);
+    // SPECIAL CASE: If there are active rejections, allow editing even if review is submitted
+    // (employee needs to fix rejected items and resubmit)
+    const baseCanEdit = (qIsOpen || qHasLatePermission || (hasTransitionForQuarter && isWithinQuarterDates));
+    const qCanEdit = baseCanEdit && (hasActiveRejections || !qReview || !qIsSubmitted);
+    
+    console.log('[Evaluations] qCanEdit for Q' + quarterNum + ':', {
+      qCanEdit,
+      qIsOpen,
+      qHasLatePermission,
+      hasTransitionForQuarter,
+      isWithinQuarterDates,
+      qReview: qReview ? { id: qReview.id, status: qReview.status } : null,
+      qIsSubmitted,
+    });
     
     // Additional debug for transition tab
     if (isTransition && qTransition) {
@@ -954,6 +1008,12 @@ export default function Evaluations() {
     const qKraRatings = calculateAllKRARatings(displayKras, qKpisWithKra, qKpiRatingsForCalc);
     const qOverallCalc = calculateQuarterRating(displayKras, qKraRatings);
     
+    // Determine year from quarter dates (prefer quarter_start_date, fallback to cycle year)
+    const quarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === quarterNum);
+    const quarterYear = quarterlyCycle?.quarter_start_date 
+      ? new Date(quarterlyCycle.quarter_start_date).getFullYear()
+      : (activeCycle?.year || new Date().getFullYear());
+    
     return (
       <>
         <QuarterAlerts
@@ -963,6 +1023,19 @@ export default function Evaluations() {
           isSubmitted={qIsSubmitted}
         />
         
+        {/* Rejection Alert */}
+        {hasActiveRejections && (
+          <Alert className="border-orange-200 bg-orange-50 dark:bg-orange-900/20">
+            <AlertCircle className="h-4 w-4 text-orange-600" />
+            <AlertDescription className="text-orange-800 dark:text-orange-200">
+              <div className="font-semibold mb-2">Some KRAs/KPIs have been rejected by your manager</div>
+              <div className="text-sm">
+                You can only edit the rejected items below. Please review the manager feedback, make necessary updates, and resubmit.
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Transition Alert */}
         {qTransition && (
           <Alert>
@@ -1038,6 +1111,12 @@ export default function Evaluations() {
                         ratingScales={ratingScales}
                         canEdit={qCanEdit}
                         onRatingChange={handleKpiRatingChange}
+                        empCode={currentEmployee?.emp_code}
+                        quarter={quarterNum}
+                        year={quarterYear}
+                        employeeId={employeeId || undefined}
+                        kraKpiRejections={quarterRejections}
+                        hasActiveRejections={hasActiveRejections}
                       />
                     ))}
                   </div>
@@ -1065,6 +1144,12 @@ export default function Evaluations() {
                         ratingScales={ratingScales}
                         canEdit={qCanEdit}
                         onRatingChange={handleKpiRatingChange}
+                        empCode={currentEmployee?.emp_code}
+                        quarter={quarterNum}
+                        year={quarterYear}
+                        employeeId={employeeId || undefined}
+                        kraKpiRejections={quarterRejections}
+                        hasActiveRejections={hasActiveRejections}
                       />
                     ))}
                   </div>
@@ -1082,12 +1167,19 @@ export default function Evaluations() {
                   ratingScales={ratingScales}
                   canEdit={qCanEdit}
                   onRatingChange={handleKpiRatingChange}
+                  empCode={currentEmployee?.emp_code}
+                  quarter={quarterNum}
+                  year={activeCycle?.year}
+                  employeeId={employeeId || undefined}
+                  kraKpiRejections={quarterRejections}
+                  hasActiveRejections={hasActiveRejections}
                 />
               ))
             )}
             
 
-            {qCanEdit && !qIsSubmitted && (
+            {/* Show buttons if: canEdit AND (not submitted OR has active rejections) */}
+            {qCanEdit && (!qIsSubmitted || hasActiveRejections) && (
               <div className="flex justify-end gap-3 pt-4 border-t">
                 <Button 
                   variant="outline" 
@@ -1146,7 +1238,7 @@ export default function Evaluations() {
                 qReview: qReview,
                 qIsSubmitted: qIsSubmitted,
                 qCanEdit: qCanEdit,
-                showButtons: qCanEdit && !qIsSubmitted,
+                showButtons: qCanEdit && (!qIsSubmitted || hasActiveRejections),
                 periodType: isTransition ? 'post_transition' : 'pre_transition',
                 transitionId: qTransition.id
               });
@@ -1154,7 +1246,8 @@ export default function Evaluations() {
             })()}
             
             {/* Action Buttons for Overall Assessment Tab */}
-            {qCanEdit && !qIsSubmitted && (
+            {/* Show buttons if: canEdit AND (not submitted OR has active rejections) */}
+            {qCanEdit && (!qIsSubmitted || hasActiveRejections) && (
               <div className="flex justify-end gap-3 pt-4 border-t">
                 <Button 
                   variant="outline" 

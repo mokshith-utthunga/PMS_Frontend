@@ -1,5 +1,3 @@
-// Core API client - Centralized HTTP layer
-// All backend routes are under /api
 
 export interface ApiResponse<T> {
   data: T;
@@ -19,7 +17,6 @@ export class ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  // In development, use Vite proxy. In production, use full URL if VITE_BACKEND_URL is set
   const backendUrl = import.meta.env.VITE_BACKEND_URL;
   const isProduction = import.meta.env.PROD;
   
@@ -37,12 +34,35 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   try {
+    // Don't set Content-Type for FormData - browser will set it automatically with boundary
+    const isFormData = options.body instanceof FormData;
+    
+    // Build headers object
+    const headers: HeadersInit = {};
+    
+    if (!isFormData) {
+      // For non-FormData requests, set Content-Type
+      headers['Content-Type'] = 'application/json';
+    }
+    
+    // Add any provided headers, but skip Content-Type for FormData
+    if (options.headers) {
+      const providedHeaders = options.headers instanceof Headers
+        ? Object.fromEntries(options.headers.entries())
+        : options.headers;
+      
+      for (const [key, value] of Object.entries(providedHeaders)) {
+        // Skip Content-Type for FormData - browser will set it with boundary
+        if (isFormData && key.toLowerCase() === 'content-type') {
+          continue;
+        }
+        headers[key] = value as string;
+      }
+    }
+
     const res = await fetch(url, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+      headers,
       credentials: 'include',
     });
 
@@ -92,10 +112,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 export const api = {
   get: <T>(url: string) => request<T>(url),
   
-  post: <T>(url: string, body?: unknown) => 
+  post: <T>(url: string, body?: unknown, options?: RequestInit) => 
     request<T>(url, { 
       method: 'POST', 
-      body: body ? JSON.stringify(body) : undefined 
+      body: body instanceof FormData ? body : (body ? JSON.stringify(body) : undefined),
+      ...options,
     }),
   
   put: <T>(url: string, body?: unknown) => 

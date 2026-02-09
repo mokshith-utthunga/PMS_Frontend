@@ -10,6 +10,14 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { employeeService, goalsService, evaluationService, settingsService, delegationService, permissionsService, transitionService } from '@/services';
 import { useAuth } from '@/contexts/AuthContext';
@@ -39,6 +47,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DualAchievementSlider, parseNumericTarget } from '@/components/evaluation/AchievementSlider';
 import { CalibrationDisplay, calculateRatingFromCalibration } from '@/components/evaluation/CalibrationDisplay';
 import { EvaluationPeriodTabs } from '@/components/evaluation/EvaluationPeriodTabs';
+import { KPIEvidenceView } from '@/components/evaluation/KPIEvidenceView';
 import { 
   calculateAllKRARatings, 
   calculateQuarterRating, 
@@ -79,7 +88,6 @@ const getEmployeeInitials = (employee: Employee | null | undefined): string => {
   }
 };
 
-// Helper function to get display name
 const getEmployeeDisplayName = (employee: Employee | null | undefined): string => {
   try {
     if (!employee || !employee.full_name || typeof employee.full_name !== 'string') {
@@ -240,6 +248,12 @@ export default function ManagerEvaluation() {
   
   // Late submission permission state for manager evaluations
   const [hasLatePermission, setHasLatePermission] = useState(false);
+  
+  // KRA/KPI rejection state
+  const [kraKpiRejections, setKraKpiRejections] = useState<Record<string, any>>({});
+  const [rejectionDialogOpen, setRejectionDialogOpen] = useState(false);
+  const [rejectingItem, setRejectingItem] = useState<{ type: 'kra' | 'kpi'; id: string; title: string } | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
   
   // Fetch transition data for the selected quarter
   const { transition, loading: transitionLoading } = useTransition({
@@ -982,6 +996,30 @@ export default function ManagerEvaluation() {
         setGoalManagerRatings(emptyRatingsMap);
       }
 
+      // Fetch KRA/KPI rejections for the selected quarter
+      if (existingReview?.id && activeCycleFromContext) {
+        try {
+          const rejectionsResult = await evaluationService.kraKpiRejections.get({
+            manager_review_id: existingReview.id,
+            employee_id: employeeId,
+            cycle_id: activeCycleFromContext.id,
+            quarter: selectedQuarter,
+          });
+          
+          // Create a map of rejections by KRA/KPI ID
+          const rejectionsMap: Record<string, any> = {};
+          (rejectionsResult.data || []).forEach((rejection: any) => {
+            const key = rejection.kra_id || rejection.goal_id;
+            if (key) {
+              rejectionsMap[key] = rejection;
+            }
+          });
+          setKraKpiRejections(rejectionsMap);
+        } catch (error) {
+          console.error('Error fetching KRA/KPI rejections:', error);
+        }
+      }
+
       // Always fetch year-end evaluation data (outside of quarterly review block)
       try {
         // activeCycleFromContext is already checked above, so it's safe to use .id
@@ -1345,6 +1383,82 @@ export default function ManagerEvaluation() {
     setEvaluationTab('overall');
   }, [handleSave]);
 
+  // Handle KRA/KPI rejection
+  const handleRejectKraKpi = useCallback((type: 'kra' | 'kpi', id: string, title: string) => {
+    setRejectingItem({ type, id, title });
+    setRejectionReason('');
+    setRejectionDialogOpen(true);
+  }, []);
+
+  const handleConfirmRejection = useCallback(async () => {
+    if (!rejectingItem || !rejectionReason.trim() || !managerEvaluation?.id || !activeCycle || !employeeId) {
+      toast({
+        title: 'Error',
+        description: 'Please provide a rejection reason',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await evaluationService.kraKpiRejections.reject({
+        manager_review_id: managerEvaluation.id,
+        [rejectingItem.type === 'kra' ? 'kra_id' : 'goal_id']: rejectingItem.id,
+        rejection_reason: rejectionReason.trim(),
+        quarter: selectedQuarter,
+        cycle_id: activeCycle.id,
+        employee_id: employeeId,
+      });
+
+      toast({
+        title: 'Rejection submitted',
+        description: `The ${rejectingItem.type.toUpperCase()} has been rejected and sent back to the employee.`,
+      });
+
+      // Refresh rejections and manager evaluation
+      const rejectionsResult = await evaluationService.kraKpiRejections.get({
+        manager_review_id: managerEvaluation.id,
+        employee_id: employeeId,
+        cycle_id: activeCycle.id,
+        quarter: selectedQuarter,
+      });
+      
+      const rejectionsMap: Record<string, any> = {};
+      (rejectionsResult.data || []).forEach((rejection: any) => {
+        const key = rejection.kra_id || rejection.goal_id;
+        if (key) {
+          rejectionsMap[key] = rejection;
+        }
+      });
+      setKraKpiRejections(rejectionsMap);
+
+      // Refresh manager evaluation to get updated status
+      const mgrReviewResult = await evaluationService.managerReviews.getByQuarter(
+        employeeId,
+        activeCycle.id,
+        selectedQuarter,
+        managerEvaluation.period_type,
+        managerEvaluation.transition_id
+      );
+      if (mgrReviewResult.data) {
+        setManagerEvaluation(mgrReviewResult.data);
+      }
+
+      setRejectionDialogOpen(false);
+      setRejectingItem(null);
+      setRejectionReason('');
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to reject KRA/KPI',
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
+  }, [rejectingItem, rejectionReason, managerEvaluation, activeCycle, employeeId, selectedQuarter, toast]);
+
   const handleTabChange = useCallback((value: string) => {
     setEvaluationTab(value);
   }, []);
@@ -1591,7 +1705,7 @@ export default function ManagerEvaluation() {
   }, [activeCycle, selectedQuarter, toast, fetchHrReviewRatings]);
 
   // Helper function to render KRA card - MUST be defined before early returns (React Rules of Hooks)
-  const renderKRACard = useCallback((kra: any, kraKpis: any[], relevantGoalSelfRatings: Record<string, GoalSelfRating>, isSubmitted: boolean) => {
+  const renderKRACard = useCallback((kra: any, kraKpis: any[], relevantGoalSelfRatings: Record<string, GoalSelfRating>, isSubmitted: boolean, quarter: number) => {
     const isExpanded = expandedKRAs.has(kra.id);
     return (
       <Card key={kra.id} className="border-l-4 border-l-card-border">
@@ -1673,12 +1787,31 @@ export default function ManagerEvaluation() {
                           <p className="mt-1">{relevantGoalSelfRatings[kpi.id].achievement}</p>
                         </div>
                       )}
-                      {relevantGoalSelfRatings[kpi.id].evidence && (
-                        <div>
-                          <span className="text-muted-foreground">Evidence: </span>
-                          <p className="mt-1">{relevantGoalSelfRatings[kpi.id].evidence}</p>
-                        </div>
-                      )}
+                      {(() => {
+                        const evidence = relevantGoalSelfRatings[kpi.id]?.evidence;
+                        console.log('[ManagerEvaluation] Evidence for KPI:', {
+                          kpiId: kpi.id,
+                          kpiTitle: kpi.title,
+                          evidence,
+                          hasEvidence: !!evidence,
+                          evidenceType: typeof evidence,
+                          evidenceLength: evidence?.length,
+                          ratingExists: !!relevantGoalSelfRatings[kpi.id],
+                          allRatingFields: relevantGoalSelfRatings[kpi.id]
+                        });
+                        // Show evidence if it exists and is not empty string
+                        if (evidence && evidence.trim() !== '') {
+                          return (
+                            <KPIEvidenceView
+                              evidence={evidence}
+                              goalId={kpi.id}
+                              employeeId={employeeId}
+                              quarter={quarter}
+                            />
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
                   </div>
                 )}
@@ -1759,6 +1892,59 @@ export default function ManagerEvaluation() {
                       rows={3}
                     />
                   </div>
+
+                  {/* Reject Button */}
+                  {!isSubmitted && managerEvaluation?.id && (
+                    <div className="flex justify-end pt-2 border-t">
+                      {(() => {
+                        const rejection = kraKpiRejections[kpi.id];
+                        const isRejected = rejection && !rejection.resubmitted_at;
+                        const canReject = !isRejected; // Can only reject if not already rejected
+                        
+                        return (
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleRejectKraKpi('kpi', kpi.id, kpi.title)}
+                            disabled={!canReject || saving}
+                            aria-label={`Reject KPI: ${kpi.title}`}
+                          >
+                            <XCircle className="h-4 w-4 mr-2" />
+                            {isRejected ? 'Already Rejected' : 'Reject KPI'}
+                          </Button>
+                        );
+                      })()}
+                    </div>
+                  )}
+
+                  {/* Show rejection feedback if rejected */}
+                  {(() => {
+                    const rejection = kraKpiRejections[kpi.id];
+                    if (rejection && !rejection.resubmitted_at) {
+                      return (
+                        <Alert className="mt-2">
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription>
+                            <div className="font-medium mb-1">Rejected by Manager</div>
+                            <div className="text-sm">{rejection.rejection_reason}</div>
+                          </AlertDescription>
+                        </Alert>
+                      );
+                    }
+                    if (rejection && rejection.resubmitted_at) {
+                      return (
+                        <Alert className="mt-2">
+                          <CheckCircle2 className="h-4 w-4" />
+                          <AlertDescription>
+                            <div className="font-medium mb-1">Resubmitted by Employee</div>
+                            <div className="text-sm">Previously rejected, now resubmitted for review.</div>
+                          </AlertDescription>
+                        </Alert>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               </div>
             ))}
@@ -1766,7 +1952,7 @@ export default function ManagerEvaluation() {
         )}
       </Card>
     );
-  }, [expandedKRAs, toggleKRA, calculatedKRARatings, goalManagerRatings, handleGoalRatingChange, ratingScales, getRatingLabel]);
+  }, [expandedKRAs, toggleKRA, calculatedKRARatings, goalManagerRatings, handleGoalRatingChange, ratingScales, getRatingLabel, managerEvaluation, kraKpiRejections, handleRejectKraKpi, saving]);
 
   // ALL HOOKS AND COMPUTED VALUES MUST BE CALLED BEFORE ANY EARLY RETURNS
   // This ensures React Rules of Hooks are followed (hooks must be called in the same order every render)
@@ -2550,7 +2736,7 @@ export default function ManagerEvaluation() {
                     {displayPreTransitionKras.length > 0 ? (
                       displayPreTransitionKras.map((kra) => {
                         const kraKpis = displayPreTransitionKpis.filter(k => k.kra_id === kra.id);
-                        return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+                        return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted, selectedQuarter);
                       })
                     ) : (
                       <Card>
@@ -2879,7 +3065,7 @@ export default function ManagerEvaluation() {
                     {displayPostTransitionKras.length > 0 ? (
                       displayPostTransitionKras.map((kra) => {
                         const kraKpis = displayPostTransitionKpis.filter(k => k.kra_id === kra.id);
-                        return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+                        return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted, selectedQuarter);
                       })
                     ) : (
                       <Card>
@@ -3238,7 +3424,7 @@ export default function ManagerEvaluation() {
                   {displayPreTransitionKras.length > 0 ? (
                     displayPreTransitionKras.map((kra) => {
                       const kraKpis = displayPreTransitionKpis.filter(k => k.kra_id === kra.id);
-                      return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+                      return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted, selectedQuarter);
                     })
                   ) : (
                     <Card>
@@ -3594,7 +3780,7 @@ export default function ManagerEvaluation() {
                   {displayPostTransitionKras.length > 0 ? (
                     displayPostTransitionKras.map((kra) => {
                       const kraKpis = displayPostTransitionKpis.filter(k => k.kra_id === kra.id);
-                      return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+                      return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted, selectedQuarter);
                     })
                   ) : (
                     <Card>
@@ -3934,7 +4120,7 @@ export default function ManagerEvaluation() {
             {/* Full Quarter (No Transition) */}
             {fullQuarterKras.map((kra) => {
               const kraKpis = fullQuarterKpis.filter(k => k.kra_id === kra.id);
-              return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted);
+              return renderKRACard(kra, kraKpis, relevantGoalSelfRatings, isSubmitted, selectedQuarter);
             })}
             
             {/* Action Buttons for KRA/KPI Ratings Tab */}
@@ -4549,6 +4735,65 @@ export default function ManagerEvaluation() {
           yearEndContent={renderYearEndEvaluationContent()}
         />
       </div>
+
+      {/* Rejection Dialog */}
+      <Dialog open={rejectionDialogOpen} onOpenChange={setRejectionDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Reject {rejectingItem?.type.toUpperCase()}</DialogTitle>
+            <DialogDescription>
+              Provide feedback for rejecting {rejectingItem?.type === 'kra' ? 'KRA' : 'KPI'}: <strong>{rejectingItem?.title}</strong>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="rejection-reason">Rejection Reason *</Label>
+              <Textarea
+                id="rejection-reason"
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                placeholder="Explain why this KRA/KPI is being rejected and what needs to be improved..."
+                rows={5}
+                aria-required="true"
+                aria-label="Rejection reason"
+              />
+              <p className="text-xs text-muted-foreground">
+                This feedback will be sent to the employee. They can only resubmit once per quarter.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRejectionDialogOpen(false);
+                setRejectingItem(null);
+                setRejectionReason('');
+              }}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmRejection}
+              disabled={!rejectionReason.trim() || saving}
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Rejecting...
+                </>
+              ) : (
+                <>
+                  <XCircle className="mr-2 h-4 w-4" />
+                  Reject {rejectingItem?.type.toUpperCase()}
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </MainLayout>
   );
 }

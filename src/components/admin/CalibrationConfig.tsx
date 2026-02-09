@@ -198,7 +198,7 @@ export function CalibrationConfig({
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="text-base">Calibration Settings</CardTitle>
+            <CardTitle className="text-base">Rating Correlation Analysis</CardTitle>
             <CardDescription>
               Define thresholds and their corresponding ratings. 
               {targetValue && ` Target: ${targetValue}`}
@@ -220,7 +220,7 @@ export function CalibrationConfig({
       <CardContent className="space-y-4">
         {rules.length === 0 ? (
           <div className="text-center py-4 text-muted-foreground">
-            <p className="text-sm mb-3">No calibration rules defined.</p>
+            <p className="text-sm mb-3">No Rating Correlation defined.</p>
             {!disabled && (
               <Button
                 type="button"
@@ -230,7 +230,7 @@ export function CalibrationConfig({
                 aria-label="Add first calibration rule"
               >
                 <Plus className="mr-2 h-4 w-4" />
-                Add Rating Correlation Analysis
+                Add Rating Correlation 
               </Button>
             )}
           </div>

@@ -53,6 +53,7 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { formatRating, calculateAllKRARatings, calculateKRARating } from '@/lib/ratingCalculations';
 import type { YearEndEvaluationData } from '@/services/evaluation.service';
+import { KPIEvidenceView } from '@/components/evaluation/KPIEvidenceView';
 
 interface GoalRating {
   id: string;
@@ -62,6 +63,7 @@ interface GoalRating {
   self_rating: number | null;
   manager_rating: number | null;
   manager_comments: string | null;
+  evidence?: string | null;
   kra_id?: string | null;
   quarter?: number | null;
 }
@@ -158,6 +160,9 @@ export default function MyRating() {
   
   // Track expanded KRAs
   const [expandedKRAs, setExpandedKRAs] = useState<Record<string, boolean>>({});
+  
+  // KRA/KPI rejection state
+  const [kraKpiRejections, setKraKpiRejections] = useState<Record<string, any>>({});
 
   // Initialize quarter from URL or default to 1
   useEffect(() => {
@@ -275,10 +280,8 @@ export default function MyRating() {
       const quarter = parseInt(selectedQuarter);
       const currentTransition = transitions[quarter];
       
-      console.log('fetchData - quarter:', quarter, 'currentTransition:', currentTransition, 'isTransitionTab:', isTransitionTab, 'transitions:', transitions);
       
       if (isTransitionTab && currentTransition) {
-        console.log('Fetching post-transition data (transition tab)');
         await fetchTransitionData(employeeId, currentActiveCycle.id, quarter, currentTransition);
         setLoading(false);
         return;
@@ -286,12 +289,10 @@ export default function MyRating() {
       
       // If transition exists but we're in regular tab, fetch pre-transition data only
       if (currentTransition && !isTransitionTab) {
-        console.log('Fetching pre-transition data (regular tab), transition ID:', currentTransition.id);
         await fetchPreTransitionData(employeeId, currentActiveCycle.id, quarter, currentTransition);
-        return; // fetchPreTransitionData handles setLoading(false)
+        return; 
       }
       
-      console.log('No transition detected for quarter', quarter, '- fetching full quarter data');
             
       // Get self-review for selected quarter (no transition - full quarter)
       const selfReviewsResult = await evaluationService.selfReviews.get(
@@ -350,6 +351,38 @@ export default function MyRating() {
       const mgrReviewData = mgrReviewsResult.data?.find((r: any) => r.quarter === quarter);
       setManagerReview(mgrReviewData || null);
 
+      // Fetch KRA/KPI rejections for this quarter
+      if (mgrReviewData?.id) {
+        try {
+          const rejectionsResult = await evaluationService.kraKpiRejections.get({
+            manager_review_id: mgrReviewData.id,
+            employee_id: employeeId,
+            cycle_id: currentActiveCycle.id,
+            quarter: quarter,
+          });
+          
+          // Create a map of rejections by KRA/KPI ID
+          const rejectionsMap: Record<string, any> = {};
+          (rejectionsResult.data || []).forEach((rejection: any) => {
+            const key = rejection.kra_id || rejection.goal_id;
+            if (key) {
+              rejectionsMap[key] = rejection;
+            }
+          });
+          setKraKpiRejections(rejectionsMap);
+
+          // If there are active rejections (not resubmitted), redirect to evaluations page
+          const activeRejections = (rejectionsResult.data || []).filter((r: any) => !r.resubmitted_at);
+          if (activeRejections.length > 0) {
+            // Redirect to evaluations page for this quarter
+            setSearchParams({ quarter: quarter.toString() });
+            // Note: We'll handle the UI display in the render logic
+          }
+        } catch (error) {
+          console.error('Error fetching KRA/KPI rejections:', error);
+        }
+      }
+
       // Always try to fetch calibrated rating if HR has published it
       // The API will only return data if status = 'PUBLISHED', so it's safe to always try
       let fetchedCalibratedRating: number | null = null;
@@ -383,13 +416,19 @@ export default function MyRating() {
         const selfRating = selfRatings.find((r: any) => r.goal_id === goal.id);
         const mgrFeedbackItem = mgrFeedback.find((r: any) => r.goal_id === goal.id);
 
+        const evidenceValue = selfRating?.evidence || null;
+
+
         return {
           ...goal,
           self_rating: selfRating?.self_rating || null,
           manager_rating: calibratedRating ? (calibratedRating || null) : null,
-          manager_comments: mgrReviewData?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null
+          manager_comments: mgrReviewData?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null,
+          evidence: evidenceValue
         };
       });
+      
+  
 
       setGoalRatings(combinedGoals);
 
@@ -624,7 +663,8 @@ export default function MyRating() {
           ...goal,
           self_rating: selfRating?.self_rating || null,
           manager_rating: preCalibratedRating || (preMgrReview?.hr_approved_at ? (mgrFeedbackItem?.rating || null) : null),
-          manager_comments: preMgrReview?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null
+          manager_comments: preMgrReview?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null,
+          evidence: selfRating?.evidence || null
         };
       });
       setPreTransitionGoalRatings(preCombinedGoals);
@@ -638,7 +678,8 @@ export default function MyRating() {
           ...goal,
           self_rating: selfRating?.self_rating || null,
           manager_rating: postCalibratedRating || (postMgrReview?.hr_approved_at ? (mgrFeedbackItem?.rating || null) : null),
-          manager_comments: postMgrReview?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null
+          manager_comments: postMgrReview?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null,
+          evidence: selfRating?.evidence || null
         };
       });
       setPostTransitionGoalRatings(postCombinedGoals);
@@ -809,7 +850,6 @@ export default function MyRating() {
         });
       }
       
-      console.log('Setting KRAs:', preKras.length, preKras);
       setKras(preKras);
       
       try {
@@ -831,7 +871,6 @@ export default function MyRating() {
                                   (!kpi.period_type && !kpi.transition_id); // Full quarter KPIs (no transition)
           return hasKraId && statusMatch && isPreTransition;
         });
-        console.log('Pre-transition KPIs fetched (after filtering by status and period):', preKpis.length, preKpis);
       } catch (error: any) {
         console.error('Error fetching pre-transition KPIs:', error);
         toast({
@@ -871,8 +910,7 @@ export default function MyRating() {
       }
       setCalibratedRating(preCalibratedRating);
       
-      // Combine pre-transition KPIs with ratings
-      console.log('Before combining goals - preKpis:', preKpis.length, 'preSelfRatings:', preSelfRatings.length, 'preMgrFeedback:', preMgrFeedback.length);
+
       
       // If we have KRAs but no KPIs, that's a data issue - log it
       if (preKras.length > 0 && preKpis.length === 0) {
@@ -904,7 +942,6 @@ export default function MyRating() {
           manager_comments: preMgrReview?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null
         };
       });
-      console.log('Pre-combined goals:', preCombinedGoals.length);
       setGoalRatings(preCombinedGoals);
       
       // Calculate pre-transition KRA ratings
@@ -941,17 +978,11 @@ export default function MyRating() {
             : null,
         quarter: kra.quarter || null,
       }));
-      console.log('Pre-transition KRA ratings data calculated:', preKraRatingsData.length, preKraRatingsData);
-      console.log('Pre-transition KRAs count:', preKras.length);
-      console.log('Pre-transition KPIs count:', preKpis.length);
-      console.log('Pre-transition calculated self KRA ratings:', preCalculatedSelfKRARatings);
-      console.log('Setting kraRatings with:', preKraRatingsData.length, 'items');
+      
       setKraRatings(preKraRatingsData);
       
       // Determine evaluation state for pre-transition
-      console.log('Pre-transition evaluation state check - preMgrReview:', preMgrReview, 'preCalibratedRating:', preCalibratedRating);
       if (!preMgrReview) {
-        console.log('Setting evaluation state to manager_pending');
         setEvaluationState('manager_pending');
       } else if (preMgrReview.employee_acknowledged_at) {
         console.log('Setting evaluation state to employee_accepted');
@@ -979,7 +1010,6 @@ export default function MyRating() {
     }
   }, [toast]);
 
-  console.log(calibratedRating);
 
   const handleAcceptRating = useCallback(async () => {
     if (!managerReview) return;
@@ -1490,6 +1520,7 @@ export default function MyRating() {
                           </div>
                           <CardTitle className="text-lg">{kra.title}</CardTitle>
                         </div>
+                        
                         <div className="text-right">
                           <div className="text-sm text-muted-foreground mb-1">KRA Rating</div>
                           <div className="text-sm font-medium">Self: {getRatingLabel(kra.self_rating)}</div>
@@ -1521,6 +1552,23 @@ export default function MyRating() {
                                 </div>
                               )}
                             </div>
+                            
+                            {(() => {
+                              const hasEvidence = kpi.evidence && kpi.evidence.trim() !== '';
+                              const hasEmployeeId = !!employeeId;
+           
+                              return hasEvidence && hasEmployeeId ? (
+                                <div className="mt-3 p-3 rounded bg-muted/30">
+                                  <KPIEvidenceView
+                                    evidence={kpi.evidence}
+                                    goalId={kpi.id}
+                                    employeeId={employeeId}
+                                    quarter={parseInt(selectedQuarter)}
+                                  />
+                                </div>
+                              ) : null;
+                            })()}
+                            
                             {kpi.manager_comments && (
                               <div className="mt-3 p-3 rounded bg-muted/20">
                                 <div className="text-xs text-muted-foreground mb-1">Manager Feedback</div>
@@ -1790,11 +1838,27 @@ export default function MyRating() {
                                         </div>
                                       </div>
                                       
-                                      <div className="mt-3">
+                                      <div className="mt-3 space-y-3">
                                         <div className="p-3 rounded bg-muted/30">
                                           <div className="text-xs text-muted-foreground mb-1">Your Self Rating</div>
                                           <div className="font-medium">{getRatingLabel(kpi.self_rating)}</div>
                                         </div>
+                                        
+                                        {(() => {
+                                          const hasEvidence = kpi.evidence && kpi.evidence.trim() !== '';
+                                          const hasEmployeeId = !!employeeId;
+                                
+                                          return hasEvidence && hasEmployeeId ? (
+                                            <div className="p-3 rounded bg-muted/30">
+                                              <KPIEvidenceView
+                                                evidence={kpi.evidence}
+                                                goalId={kpi.id}
+                                                employeeId={employeeId}
+                                                quarter={parseInt(selectedQuarter)}
+                                              />
+                                            </div>
+                                          ) : null;
+                                        })()}
                                       </div>                                      
                                     </div>
                                   ))}
@@ -1937,10 +2001,8 @@ export default function MyRating() {
                     manager_rating: null,
                     quarter: kra.quarter || null,
                   }))).map((kra) => {
-                    console.log(kra);
                     const kraKPIs = goalRatings.filter((kpi) => kpi.kra_id === kra.id);
                     const isExpanded = expandedKRAs[kra.id] || false;
-                    
                     return (
                       <Card key={kra.id} className="border-l-4 border-l-card-border">
                         <CardHeader className="pb-3">
@@ -1969,9 +2031,11 @@ export default function MyRating() {
                               <div className="text-sm  font-normal text-primary">
                                 <span className="text-right text-sm font-medium"> Self: </span> <span className="text-right ">{getRatingLabel(kra.self_rating)}</span>
                               </div>
-                              <div className="text-sm font-normal text-primary mt-1">
-                                 <span className="text-right text-sm font-medium"> Manager: </span> <span className="text-right ">{getRatingLabel(kra.manager_rating)}</span>
+                              {kra.manager_rating && (
+                                <div className="text-sm font-normal text-primary mt-1">
+                                  <span className="text-right text-sm font-medium"> Manager: </span> <span className="text-right ">{getRatingLabel(kra.manager_rating)}</span>
                                 </div>
+                              )}
                             </div>
                           </div>
                         </CardHeader>
@@ -1998,6 +2062,16 @@ export default function MyRating() {
                                         <div className="text-xs text-muted-foreground mb-1">Your Self Ratings</div>
                                         <div className="font-medium">{getRatingLabel(kpi.self_rating)}</div>
                                       </div>
+                                      {kpi.evidence && employeeId && (
+                                        <div className="p-3 rounded bg-muted/30">
+                                          <KPIEvidenceView
+                                            evidence={kpi.evidence}
+                                            goalId={kpi.id}
+                                            employeeId={employeeId}
+                                            quarter={parseInt(selectedQuarter)}
+                                          />
+                                        </div>
+                                      )}
                                     
                                     </div>
                                   </div>

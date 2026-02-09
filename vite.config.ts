@@ -18,6 +18,11 @@ export default defineConfig(({ mode }) => {
           target: env.VITE_BACKEND_URL,
           changeOrigin: true,
         },
+        // Proxy /public for static file serving (uploaded evidence files)
+        '/public': {
+          target: env.VITE_BACKEND_URL,
+          changeOrigin: true,
+        },
         // Proxy /external-auth to backend /api/external-auth for SSO
         '/external-auth': {
           target: env.VITE_BACKEND_URL ,

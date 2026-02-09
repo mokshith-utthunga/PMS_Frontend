@@ -17,6 +17,12 @@ interface KRAEvaluationCardProps {
   ratingScales: RatingScale[];
   canEdit: boolean;
   onRatingChange: (goalId: string, field: keyof GoalRating, value: unknown) => void;
+  empCode?: string;
+  quarter?: number;
+  year?: number;
+  employeeId?: string;
+  kraKpiRejections?: Record<string, any>; // Rejection data keyed by KPI ID
+  hasActiveRejections?: boolean; // Whether there are any active rejections
 }
 
 export function KRAEvaluationCard({
@@ -27,6 +33,12 @@ export function KRAEvaluationCard({
   ratingScales,
   canEdit,
   onRatingChange,
+  empCode,
+  quarter,
+  year,
+  employeeId,
+  kraKpiRejections = {},
+  hasActiveRejections = false,
 }: KRAEvaluationCardProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -64,16 +76,47 @@ export function KRAEvaluationCard({
 
       {expanded && (
         <CardContent className="space-y-4">
-          {kpis.map(kpi => (
-            <KPIRatingForm
-              key={kpi.id}
-              kpi={kpi}
-              rating={goalRatings[kpi.id]}
-              ratingScales={ratingScales}
-              canEdit={canEdit}
-              onRatingChange={onRatingChange}
-            />
-          ))}
+          {kpis.map(kpi => {
+            const rejection = kraKpiRejections[kpi.id];
+            const isRejected = rejection && !rejection.resubmitted_at;
+            // If there are active rejections, only allow editing rejected KPIs
+            // Otherwise, use the base canEdit value (normal editing flow)
+            const kpiCanEdit = hasActiveRejections ? isRejected : canEdit;
+            
+            // Debug logging
+            console.log('[KRAEvaluationCard] KPI editing check:', {
+              kpiId: kpi.id,
+              kpiTitle: kpi.title,
+              hasActiveRejections,
+              isRejected,
+              rejection: rejection ? { 
+                id: rejection.id, 
+                goal_id: rejection.goal_id,
+                kra_id: rejection.kra_id,
+                resubmitted_at: rejection.resubmitted_at,
+                rejection_reason: rejection.rejection_reason 
+              } : null,
+              canEdit,
+              kpiCanEdit,
+              allRejectionKeys: Object.keys(kraKpiRejections),
+            });
+            
+            return (
+              <KPIRatingForm
+                key={kpi.id}
+                kpi={kpi}
+                rating={goalRatings[kpi.id]}
+                ratingScales={ratingScales}
+                canEdit={kpiCanEdit}
+                onRatingChange={onRatingChange}
+                empCode={empCode}
+                quarter={quarter}
+                year={year}
+                employeeId={employeeId}
+                rejection={rejection}
+              />
+            );
+          })}
         </CardContent>
       )}
     </Card>

@@ -37,11 +37,7 @@ export function calculateRatingFromCalibration(
   // Sort by threshold ascending to match range display logic
   const sortedRules = [...calibration].sort((a, b) => a.threshold - b.threshold);
   
-  console.log('calculateRatingFromCalibration: after sorting', {
-    numericValue,
-    sortedRules: sortedRules.map(r => ({ threshold: r.threshold, rating: r.rating })),
-    firstRule: sortedRules[0] ? { threshold: sortedRules[0].threshold, rating: sortedRules[0].rating } : null
-  });
+
   
   if (sortedRules.length === 0) return null;
   
@@ -53,11 +49,7 @@ export function calculateRatingFromCalibration(
   // Handle value exactly equal to first threshold (including 0)
   // If first threshold is 0 and value is 0, return that threshold's rating
   if (numericValue === sortedRules[0].threshold) {
-    console.log('calculateRatingFromCalibration: value equals first threshold', {
-      numericValue,
-      firstThreshold: sortedRules[0].threshold,
-      firstRating: sortedRules[0].rating
-    });
+
     return sortedRules[0].rating;
   }
   

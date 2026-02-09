@@ -276,6 +276,18 @@ export const evaluationService = {
     },
   },
 
+  // ========== Manager Rating Rejections ==========
+  managerRatingRejections: {
+    get: (cycleId?: string, status?: string) => {
+      let url = '/api/evaluations/manager-rating-rejections';
+      const params = new URLSearchParams();
+      if (cycleId) params.append('cycle_id', cycleId);
+      if (status) params.append('status', status);
+      if (params.toString()) url += `?${params.toString()}`;
+      return api.get<{ data: any[] }>(url);
+    },
+  },
+
   // ========== Normalized Ratings Workflow ==========
   normalization: {
     normalize: (quarter: number, cycleId: string) =>
@@ -382,5 +394,89 @@ export const evaluationService = {
         rejection_reason: rejectionReason,
         cycle_id: cycleId,
       }),
+  },
+
+  // ========== KRA/KPI Rejection Workflow ==========
+  kraKpiRejections: {
+    get: (params: {
+      manager_review_id?: string;
+      employee_id?: string;
+      cycle_id?: string;
+      quarter?: number;
+      kra_id?: string;
+      goal_id?: string;
+    }) => {
+      let url = '/api/evaluations/kra-kpi-rejections';
+      const queryParams = new URLSearchParams();
+      if (params.manager_review_id) queryParams.append('manager_review_id', params.manager_review_id);
+      if (params.employee_id) queryParams.append('employee_id', params.employee_id);
+      if (params.cycle_id) queryParams.append('cycle_id', params.cycle_id);
+      if (params.quarter) queryParams.append('quarter', params.quarter.toString());
+      if (params.kra_id) queryParams.append('kra_id', params.kra_id);
+      if (params.goal_id) queryParams.append('goal_id', params.goal_id);
+      if (queryParams.toString()) url += `?${queryParams.toString()}`;
+      return api.get<{ data: any[] }>(url);
+    },
+
+    reject: (params: {
+      manager_review_id: string;
+      kra_id?: string;
+      goal_id?: string;
+      rejection_reason: string;
+      quarter: number;
+      cycle_id: string;
+      employee_id: string;
+    }) =>
+      api.post<{ data: any }>('/api/evaluations/reject-kra-kpi', params),
+
+    resubmit: (rejection_id: string) =>
+      api.post<{ data: any }>('/api/evaluations/resubmit-kra-kpi', { rejection_id }),
+  },
+
+  // ========== KPI Evidence File Upload ==========
+  kpiEvidence: {
+    upload: async (
+      goalId: string,
+      empCode: string,
+      quarter: number,
+      year: number,
+      file: File
+    ) => {
+      const formData = new FormData();
+      formData.append('goal_id', goalId);
+      formData.append('emp_code', empCode);
+      formData.append('quarter', quarter.toString());
+      formData.append('year', year.toString());
+      formData.append('file', file); // Single file upload
+
+      // Don't set Content-Type header - browser will set it automatically with boundary
+      return api.post<{ success: boolean; files: string[]; message: string }>(
+        '/api/evaluations/kpi-evidence/upload',
+        formData
+      );
+    },
+
+    getFiles: (goalId: string, employeeId: string, quarter: number) =>
+      api.get<{ files: string[] }>(
+        `/api/evaluations/kpi-evidence/files/${goalId}?employee_id=${employeeId}&quarter=${quarter}`
+      ),
+
+    deleteFile: (
+      goalId: string,
+      filePath: string,
+      empCode: string,
+      quarter: number,
+      year: number
+    ) =>
+      api.delete<{ success: boolean; message: string }>(
+        '/api/evaluations/kpi-evidence/file',
+        {
+          goal_id: goalId,
+          file_path: filePath,
+          emp_code: empCode,
+          quarter,
+          year,
+        }
+      ),
   },
 };

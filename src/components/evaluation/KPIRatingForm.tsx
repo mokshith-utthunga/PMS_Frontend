@@ -1,11 +1,14 @@
 // KPI Rating Form for Self Evaluation
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlertCircle } from 'lucide-react';
 import { Star } from 'lucide-react';
 import { AchievementSlider, parseNumericTarget } from '@/components/evaluation/AchievementSlider';
 import { CalibrationDisplay, calculateRatingFromCalibration } from '@/components/evaluation/CalibrationDisplay';
+import { KPIEvidenceUpload } from './KPIEvidenceUpload';
 import type { Goal, RatingScale } from '@/types';
 import type { GoalRating } from '@/hooks/useEvaluationsData';
 
@@ -15,6 +18,11 @@ interface KPIRatingFormProps {
   ratingScales: RatingScale[];
   canEdit: boolean;
   onRatingChange: (goalId: string, field: keyof GoalRating, value: unknown) => void;
+  empCode?: string;
+  quarter?: number;
+  year?: number;
+  employeeId?: string;
+  rejection?: any; // Rejection data for this KPI
 }
 
 export function KPIRatingForm({
@@ -23,7 +31,35 @@ export function KPIRatingForm({
   ratingScales,
   canEdit,
   onRatingChange,
+  empCode,
+  quarter,
+  year,
+  employeeId,
+  rejection,
 }: KPIRatingFormProps) {
+  // Parse existing evidence files from rating
+  const parseEvidenceFiles = (evidence: string | null | undefined): string[] => {
+    if (!evidence) return [];
+    try {
+      const parsed = JSON.parse(evidence);
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch (e) {
+      // Not JSON, treat as text (backward compatibility)
+    }
+    return [];
+  };
+
+  const [evidenceFiles, setEvidenceFiles] = useState<string[]>(() => 
+    parseEvidenceFiles(rating?.evidence)
+  );
+
+  // Update evidence files when rating changes
+  useEffect(() => {
+    const files = parseEvidenceFiles(rating?.evidence);
+    setEvidenceFiles(files);
+  }, [rating?.evidence]);
   const numericTarget = parseNumericTarget(kpi.target_value);
   console.log('currentAchieved',typeof rating?.achieved_value, rating?.achieved_value);
   // Explicitly handle 0 as a valid value (not undefined/null)
@@ -38,12 +74,7 @@ export function KPIRatingForm({
       // Explicitly pass 0 as a number, not as falsy
       const valueToCalculate = currentAchieved === 0 ? 0 : currentAchieved;
       const rating = calculateRatingFromCalibration(valueToCalculate, kpi.calibration);
-      console.log('calculateRatingFromCalibration', {
-        valueToCalculate,
-        calibration: kpi.calibration,
-        rating,
-        currentAchieved
-      });
+
       return rating;
     }
     return null;
@@ -75,13 +106,34 @@ export function KPIRatingForm({
     }
   };
 
+  const isRejected = rejection && !rejection.resubmitted_at;
+
   return (
-    <div className="border rounded-lg p-4 space-y-4">
+    <div className={`border rounded-lg p-4 space-y-4 ${isRejected ? 'border-orange-300 bg-orange-50/50 dark:bg-orange-900/10' : ''}`}>
+      {/* Show rejection feedback if rejected */}
+      {isRejected && (
+        <Alert className="border-orange-200 bg-orange-50 dark:bg-orange-900/20">
+          <AlertCircle className="h-4 w-4 text-orange-600" />
+          <AlertDescription className="text-orange-800 dark:text-orange-200">
+            <div className="font-semibold mb-1">Rejected by Manager</div>
+            <div className="text-sm">{rejection.rejection_reason}</div>
+            <div className="text-xs mt-2 italic">
+              Please review the feedback above, update this KPI, and resubmit your evaluation.
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Badge variant="secondary">KPI</Badge>
             <span className="text-sm text-muted-foreground">Weight: {kpi.weight}%</span>
+            {isRejected && (
+              <Badge variant="destructive" className="text-xs">
+                Rejected
+              </Badge>
+            )}
           </div>
           <h4 className="font-medium">{kpi.title}</h4>
           {kpi.description && (
@@ -154,17 +206,38 @@ export function KPIRatingForm({
         />
       </div>
 
-      {/* Evidence */}
-      <div className="space-y-2">
-        <Label>Evidence / Supporting Data</Label>
-        <Textarea
-          placeholder="Links, metrics, or references..."
-          value={rating?.evidence || ''}
-          onChange={e => onRatingChange(kpi.id, 'evidence', e.target.value)}
-          disabled={!canEdit}
-          rows={2}
+      {/* Evidence - File Upload */}
+      {empCode && quarter && year && employeeId ? (<>
+        {console.log('empCode', empCode, 'quarter', quarter, 'year', year, 'employeeId', employeeId)}
+        <KPIEvidenceUpload
+          goalId={kpi.id}
+          empCode={empCode}
+          quarter={quarter}
+          year={year}
+          employeeId={employeeId}
+          canEdit={canEdit}
+          existingFiles={evidenceFiles}
+          onFilesChange={(files) => {
+            setEvidenceFiles(files);
+            // Store file paths as JSON in evidence field for backward compatibility
+            const evidenceJson = files.length > 0 ? JSON.stringify(files) : null;
+            onRatingChange(kpi.id, 'evidence', evidenceJson);
+          }}
         />
-      </div>
+        </>
+      ) : (
+        // Fallback to textarea if props not available (backward compatibility)
+        <div className="space-y-2">
+          <Label>Evidence / Supporting Data</Label>
+          <Textarea
+            placeholder="Links, metrics, or references..."
+            value={rating?.evidence || ''}
+            onChange={e => onRatingChange(kpi.id, 'evidence', e.target.value)}
+            disabled={!canEdit}
+            rows={2}
+          />
+        </div>
+      )}
 
       {/* Show rating info if no calibration configured */}
       {(!kpi.calibration || kpi.calibration.length === 0) && (

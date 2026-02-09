@@ -143,7 +143,7 @@ export function AchievementSlider({
           {maxPercentage > 100 && (
             <div className="relative h-1">
               <div 
-                className="absolute w-0.5 h-2 bg-muted-foreground/50 -top-1"
+                className="absolute bg-[#00562c] w-0.5 h-2 bg-muted-foreground/50 -top-1"
                 style={{ left: `${(100 / maxPercentage) * 100}%` }}
                 title="100% Target"
               />
@@ -396,7 +396,6 @@ export function DualAchievementSlider({
   const managerDisplayPercentage = Math.min(managerPercentage, 100);
   const isEmployeeOverAchieved = employeePercentage > 100;
   const isManagerOverAchieved = managerPercentage > 100;
-
   return (
     <div className="space-y-4 p-3 rounded-lg border bg-muted/30">
       <div className="flex items-center justify-between">
@@ -419,7 +418,7 @@ export function DualAchievementSlider({
               "font-medium text-primary",
               isEmployeeOverAchieved && "text-purple-600 dark:text-purple-400"
             )}>
-              {employeeAchieved}%
+              {typeof employeeAchieved === 'number' ? employeeAchieved.toFixed(2) : Number(employeeAchieved).toFixed(2)}%
               {isEmployeeOverAchieved && " 🎯"}
             </span>
           )}
@@ -471,7 +470,7 @@ export function DualAchievementSlider({
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Manager's Assessment</span>
           <span className={cn(
-            "font-medium text-[#00562c] dark:text-[#00562c]",
+            "font-medium text-[#00562c] dark:text-[#00562c] ",
             isManagerOverAchieved && "text-purple-600 dark:text-purple-400"
           )}>
             {isNumberType ? (
@@ -533,20 +532,20 @@ export function DualAchievementSlider({
               min={0}
               step={1}
               disabled={disabled}
+              variant="manager"
               className={cn(
-                "[&_[data-radix-slider-range]]:bg-[#00562c] [&_[data-radix-slider-thumb]]:border-[#00562c]",
                 isManagerOverAchieved && "[&_[data-radix-slider-range]]:bg-purple-500 [&_[data-radix-slider-thumb]]:border-purple-500"
               )}
             />
             {maxPercentage > 100 && (
               <div className="relative h-0">
                 <div 
-                  className="absolute w-0.5 h-3 bg-muted-foreground/40 -top-3 rounded"
+                  className="absolute w-0.5 h-3 bg-muted-foreground/40 bg-[#00562c] -top-3 rounded"
                   style={{ left: `${(100 / maxPercentage) * 100}%` }}
                   title="100% Target"
                 />
                 <div 
-                  className="absolute text-[9px] text-muted-foreground -top-0.5"
+                  className="absolute text-[9px] text-muted-foreground -top-0.5 "
                   style={{ left: `${(100 / maxPercentage) * 100}%`, transform: 'translateX(-50%)' }}
                 >
                   target
