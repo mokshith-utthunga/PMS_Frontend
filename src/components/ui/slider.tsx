@@ -22,12 +22,12 @@ const Slider = React.forwardRef<
       <SliderPrimitive.Track className="relative h-2 w-full grow overflow-hidden rounded-full bg-secondary">
         <SliderPrimitive.Range className={cn(
           "absolute h-full",
-          isManager ? "bg-[#00562c]" : "bg-primary"
+          isManager ? "bg-[#00562c]" : "bg-[#0A72C6]"
         )} />
       </SliderPrimitive.Track>
       <SliderPrimitive.Thumb className={cn(
         "block h-5 w-5 rounded-full border-2 bg-background ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50",
-        isManager ? "border-[#00562c]" : "border-primary"
+        isManager ? "border-[#00562c]" : "border-[#0A72C6]"
       )} />
     </SliderPrimitive.Root>
   );

@@ -753,6 +753,8 @@ export default function CycleForm() {
         submitData.status = 'draft';
       }
 
+      let hasErrors = false;
+
       if (isEditMode && cycleId) {
         console.log('Updating cycle with data:', submitData);
         const updateResult = await cycleService.update(cycleId, submitData);
@@ -812,10 +814,15 @@ export default function CycleForm() {
               console.log(`Skipping Q${quarter} - no data to save`);
             }
           } catch (error: any) {
+            hasErrors = true;
             console.error(`Error saving Q${quarter} evaluations:`, error);
+            const errorMessage = error.message || 'Unknown error';
+            const errorDetails = error.details 
+              ? (Array.isArray(error.details) ? error.details.join(', ') : error.details)
+              : '';
             toast({
               title: 'Error',
-              description: `Failed to save Q${quarter} evaluation settings: ${error.message || error}`,
+              description: `Failed to save Q${quarter} evaluation settings: ${errorMessage}${errorDetails ? `. ${errorDetails}` : ''}`,
               variant: 'destructive'
             });
             // Don't return - continue saving other quarters
@@ -839,10 +846,15 @@ export default function CycleForm() {
                 console.log(`Saving Q${quarter} goals quarterly cycle:`, filteredData);
                 await cycleService.updateGoalsQuarterlyCycle(cycleId, quarter, filteredData);
               } catch (error: any) {
+                hasErrors = true;
                 console.error(`Error saving Q${quarter} goals:`, error);
+                const errorMessage = error.message || 'Unknown error';
+                const errorDetails = error.details 
+                  ? (Array.isArray(error.details) ? error.details.join(', ') : error.details)
+                  : '';
                 toast({
                   title: 'Error',
-                  description: `Failed to save Q${quarter} goals settings: ${error.message || error}`,
+                  description: `Failed to save Q${quarter} goals settings: ${errorMessage}${errorDetails ? `. ${errorDetails}` : ''}`,
                   variant: 'destructive'
                 });
                 // Don't return - continue saving other quarters
@@ -864,7 +876,17 @@ export default function CycleForm() {
                 try {
                   await cycleService.updateGoalsQuarterlyCycle(createdCycle.data.id, quarter, quarterData);
                 } catch (error: any) {
+                  hasErrors = true;
                   console.error(`Error saving Q${quarter} goals:`, error);
+                  const errorMessage = error.message || 'Unknown error';
+                  const errorDetails = error.details 
+                    ? (Array.isArray(error.details) ? error.details.join(', ') : error.details)
+                    : '';
+                  toast({
+                    title: 'Error',
+                    description: `Failed to save Q${quarter} goals settings: ${errorMessage}${errorDetails ? `. ${errorDetails}` : ''}`,
+                    variant: 'destructive'
+                  });
                 }
               }
             }
@@ -872,16 +894,26 @@ export default function CycleForm() {
         }
       }
 
-      console.log('All updates completed successfully');
-      toast({
-        title: isEditMode ? 'Cycle Updated' : 'Cycle Created',
-        description: `The performance cycle has been ${isEditMode ? 'updated' : 'created'} successfully.`
-      });
-      
-      // Small delay before navigation to ensure toast is visible
-      setTimeout(() => {
-        navigate('/admin/cycles');
-      }, 500);
+      // Only show success toast and navigate if no errors occurred
+      if (!hasErrors) {
+        console.log('All updates completed successfully');
+        toast({
+          title: isEditMode ? 'Cycle Updated' : 'Cycle Created',
+          description: `The performance cycle has been ${isEditMode ? 'updated' : 'created'} successfully.`
+        });
+        
+        // Small delay before navigation to ensure toast is visible
+        setTimeout(() => {
+          navigate('/admin/cycles');
+        }, 500);
+      } else {
+        // Show summary error if there were errors
+        toast({
+          title: 'Save Incomplete',
+          description: 'Some settings could not be saved. Please check the error messages above and try again.',
+          variant: 'destructive'
+        });
+      }
     } catch (error: any) {
       console.error('Error saving cycle:', error);
       toast({

@@ -102,9 +102,13 @@ export default function GoalsDeadlineConfig() {
       queryClient.invalidateQueries({ queryKey: ['goals-quarterly-cycle', cycleId, selectedQuarter] });
     },
     onError: (error: any) => {
+      const errorMessage = error.message || 'Failed to update goals deadline configuration';
+      const errorDetails = error.details 
+        ? (Array.isArray(error.details) ? error.details.join(', ') : error.details)
+        : '';
       toast({
         title: 'Error',
-        description: error.message || 'Failed to update goals deadline configuration',
+        description: `${errorMessage}${errorDetails ? `. ${errorDetails}` : ''}`,
         variant: 'destructive',
       });
     },

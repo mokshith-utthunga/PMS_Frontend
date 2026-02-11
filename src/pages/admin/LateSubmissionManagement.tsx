@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
@@ -33,14 +33,17 @@ import {
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { cycleService, permissionsService } from '@/services';
 import type { LateSubmissionEmployee } from '@/services/permissions.service';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { Users, CheckCircle2, XCircle, Clock, Loader2, UserCheck, UserX } from 'lucide-react';
+import { Users, CheckCircle2, XCircle, Clock, Loader2, UserCheck, UserX, Search, Filter } from 'lucide-react';
 import type { PerformanceCycle } from '@/lib/evaluationPeriods';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { useActiveCycle } from '@/contexts/ActiveCycleContext';
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious, PaginationEllipsis } from '@/components/ui/pagination';
+import { DEFAULT_PAGE_SIZE, LATE_SUBMISSION_GRANT_EXTENSION_DAYS } from '@/utils/constants';
 
 interface Employee {
   id: string;
@@ -75,22 +78,143 @@ export default function LateSubmissionManagement() {
   const [revokeDialogOpen, setRevokeDialogOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [targetEmployeeId, setTargetEmployeeId] = useState<string | null>(null);
-  const [submissionType, setSubmissionType] = useState<'goals' | 'evaluations' | 'manager-evaluations'>('goals');
-
-  // Get quarter and tab from URL - handle "year-end" as special case
+  
+  // Get quarter and tabs from URL - new structure: ?quarter=1&tab=employee&type=goals
+  // Also support old format: ?quarter=1&type=manager-evaluations
   const urlQuarter = searchParams.get('quarter');
-  const urlTab = searchParams.get('tab') as 'goals' | 'evaluations' | 'manager-evaluations' | null;
+  const urlTab = searchParams.get('tab') as 'employee' | 'manager' | null;
+  const urlType = searchParams.get('type') as 'goals' | 'evaluations' | 'manager-evaluations' | null;
+  
+  // Initialize state from URL (handle old format: type=manager-evaluations)
+  const getInitialTopLevelTab = (): 'employee' | 'manager' => {
+    if (urlTab === 'employee' || urlTab === 'manager') return urlTab;
+    if (urlType === 'manager-evaluations') return 'manager';
+    return 'employee';
+  };
+  
+  const getInitialSubType = (): 'goals' | 'evaluations' => {
+    if (urlType === 'goals' || urlType === 'evaluations') return urlType;
+    if (urlType === 'manager-evaluations') return 'evaluations';
+    return 'goals';
+  };
+  
+  // New tab structure: top-level (employee/manager) and sub-type (goals/evaluations)
+  const [topLevelTab, setTopLevelTab] = useState<'employee' | 'manager'>(getInitialTopLevelTab());
+  const [subType, setSubType] = useState<'goals' | 'evaluations'>(getInitialSubType());
+  
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(0);
+  
+  // Search and filter states
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [selectedDepartment, setSelectedDepartment] = useState<string>('all');
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+  
+  // Employee details search state
+  const [showDetails, setShowDetails] = useState(false);
+  const [quarterlyStatusData, setQuarterlyStatusData] = useState<any>(null);
+  const [quarterlyStatusLoading, setQuarterlyStatusLoading] = useState(false);
+  const [quarterlyStatusError, setQuarterlyStatusError] = useState<string | null>(null);
+  
+  // Ref to track if state update is from user interaction (prevents URL sync loop)
+  const isUserInteraction = useRef(false);
+
   const isYearEnd = urlQuarter === 'year-end';
   const selectedQuarter = isYearEnd ? null : (urlQuarter ? parseInt(urlQuarter, 10) : null);
   
-  // Sync submissionType with URL tab
+  // Sync state with URL params (handle both new and old URL formats)
+  // Only runs when URL changes, not when state changes from user interaction
   useEffect(() => {
-    if (urlTab && (urlTab === 'goals' || urlTab === 'evaluations' || urlTab === 'manager-evaluations')) {
-      setSubmissionType(urlTab);
+    // Skip if this update is from user interaction
+    if (isUserInteraction.current) {
+      isUserInteraction.current = false;
+      return;
     }
-  }, [urlTab]);
+    
+    // Handle old format: type=manager-evaluations means manager tab + evaluations
+    if (urlType === 'manager-evaluations') {
+      setTopLevelTab('manager');
+      setSubType('evaluations');
+      // Update URL to new format
+      const newParams = new URLSearchParams(searchParams);
+      newParams.set('tab', 'manager');
+      newParams.set('type', 'evaluations');
+      setSearchParams(newParams, { replace: true });
+      return;
+    }
+    
+    // Only update state if URL params differ from current state
+    if (urlTab === 'employee' || urlTab === 'manager') {
+      if (topLevelTab !== urlTab) {
+        setTopLevelTab(urlTab);
+      }
+    } else if (!urlTab && topLevelTab !== 'employee') {
+      // Default to employee if no tab in URL
+      setTopLevelTab('employee');
+    }
+    
+    if (urlType === 'goals' || urlType === 'evaluations') {
+      if (subType !== urlType) {
+        setSubType(urlType);
+      }
+    } else if (!urlType && subType !== 'goals') {
+      // Default to goals if no type in URL
+      setSubType('goals');
+    }
+  }, [urlTab, urlType, searchParams, setSearchParams, topLevelTab, subType]);
+  
+  // Update URL when tabs change (only if URL doesn't match state)
+  useEffect(() => {
+    const currentTab = searchParams.get('tab');
+    const currentType = searchParams.get('type');
+    
+    // Only update URL if it doesn't match current state
+    if (currentTab !== topLevelTab || currentType !== subType) {
+      // Mark as user interaction to prevent URL sync effect from running
+      isUserInteraction.current = true;
+      const newParams = new URLSearchParams(searchParams);
+      newParams.set('tab', topLevelTab);
+      newParams.set('type', subType);
+      setSearchParams(newParams, { replace: true });
+    }
+  }, [topLevelTab, subType, searchParams, setSearchParams]);
+  
+  // Reset pagination when filters change
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [selectedDepartment, debouncedSearchQuery, topLevelTab, subType, selectedQuarter]);
+  
+  // Map to API submissionType based on tab and type
+  const submissionType = useMemo(() => {
+    if (topLevelTab === 'manager' && subType === 'evaluations') {
+      return 'manager-evaluations' as const;
+    }
+    if (topLevelTab === 'manager' && subType === 'goals') {
+      return 'manager-goals-approval' as const;
+    }
+    // For employee + goals/evaluations, use the subType directly
+    return subType as 'goals' | 'evaluations';
+  }, [topLevelTab, subType]);
 
-  // Fetch all cycles (not just active)
+  // Debounce search query
+  useEffect(() => {
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current);
+    }
+
+    debounceTimer.current = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 300);
+
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current);
+      }
+    };
+  }, [searchQuery]);
+
+  // Fetch all cycles (not just active) 
   const { data: cycles = [] } = useQuery({
     queryKey: ['all-cycles'],
     queryFn: async () => {
@@ -102,6 +226,42 @@ export default function LateSubmissionManagement() {
   // Auto-select active cycle
   const activeCycle = cycles.find(c => c.status === 'active') as PerformanceCycle | undefined;
   const effectiveCycleId = selectedCycleId || activeCycle?.id || '';
+
+  // Handle details button click - search for employee quarterly status
+  const handleDetailsSearch = async () => {
+    if (!searchQuery.trim() || !effectiveCycleId) {
+      setQuarterlyStatusError('Please enter an employee code or email');
+      return;
+    }
+
+    setShowDetails(true);
+    setQuarterlyStatusLoading(true);
+    setQuarterlyStatusError(null);
+    setQuarterlyStatusData(null);
+
+    try {
+      // Try searching by emp_code first, then by email
+      const result = await permissionsService.lateSubmission.getEmployeeQuarterlyStatus(
+        searchQuery.trim(),
+        effectiveCycleId
+      );
+      setQuarterlyStatusData(result.data);
+    } catch (error: any) {
+      setQuarterlyStatusError(error.message || 'Failed to fetch employee quarterly status');
+      setQuarterlyStatusData(null);
+    } finally {
+      setQuarterlyStatusLoading(false);
+    }
+  };
+
+  // Clear details when search query changes
+  useEffect(() => {
+    if (showDetails) {
+      setShowDetails(false);
+      setQuarterlyStatusData(null);
+      setQuarterlyStatusError(null);
+    }
+  }, [searchQuery]);
 
   // Determine current active quarter based on business rules:
   // Case 1: If a quarter is currently active (between start and end), select it
@@ -258,12 +418,17 @@ export default function LateSubmissionManagement() {
     };
   }, [activeCycle]);
 
-  // Fetch employees who missed deadline from API (includes submission status and permissions)
+  // Fetch employees/managers who missed deadline from API (includes submission status and permissions)
   const { data: lateSubmissionEmployees = [], isLoading: employeesLoading, error: employeesError, refetch: refetchEmployees } = useQuery({
-    queryKey: ['late-submission-employees', effectiveCycleId, effectiveSelectedQuarter, submissionType],
+    queryKey: ['late-submission-employees', effectiveCycleId, effectiveSelectedQuarter, submissionType, topLevelTab],
     enabled: !!effectiveCycleId,
     queryFn: async () => {
-      const result = await permissionsService.lateSubmission.getByCycle(effectiveCycleId, effectiveSelectedQuarter, submissionType);
+      const result = await permissionsService.lateSubmission.getByCycle(
+        effectiveCycleId, 
+        effectiveSelectedQuarter, 
+        submissionType,
+        topLevelTab // Pass role parameter
+      );
       return result.data || [];
     },
   });
@@ -313,16 +478,124 @@ export default function LateSubmissionManagement() {
     hasStarted: false,
     startDate: null,
   };
+  const managerGoalsApprovalStats = submissionDetails?.managerGoalsApproval || {
+    submitted: 0,
+    missedDeadline: 0,
+    lateAccessGranted: 0,
+    quarter: null,
+    isPastDeadline: false,
+    hasStarted: false,
+    startDate: null,
+  };
+  
+  // Extract unique departments from employees
+  const uniqueDepartments = useMemo(() => {
+    const departments = new Set<string>();
+    lateSubmissionEmployees.forEach((emp: LateSubmissionEmployee) => {
+      if (emp.department) {
+        departments.add(emp.department);
+      }
+    });
+    return Array.from(departments).sort();
+  }, [lateSubmissionEmployees]);
+
+  // Filter employees/managers who missed the deadline (haven't submitted for the selected quarter)
+  const missedDeadlineEmployees = lateSubmissionEmployees.filter(
+    (emp: LateSubmissionEmployee) => !emp.has_submitted
+  );
+
+  // Apply search and department filters
+  const filteredMissedDeadlineEmployees = useMemo(() => {
+    let filtered = missedDeadlineEmployees;
+
+    // Apply department filter
+    if (selectedDepartment !== 'all') {
+      filtered = filtered.filter((emp: LateSubmissionEmployee) => emp.department === selectedDepartment);
+    }
+
+    // Apply search filter (emp_code and email)
+    if (debouncedSearchQuery.trim()) {
+      const searchLower = debouncedSearchQuery.toLowerCase().trim();
+      filtered = filtered.filter((emp: LateSubmissionEmployee) => {
+        const empCode = (emp.emp_code || '').toLowerCase();
+        const email = (emp.employee_email || '').toLowerCase();
+        return empCode.includes(searchLower) || email.includes(searchLower);
+      });
+    }
+
+    return filtered;
+  }, [missedDeadlineEmployees, selectedDepartment, debouncedSearchQuery]);
+
+  // Pagination for filtered employees
+  const totalPages = Math.ceil(filteredMissedDeadlineEmployees.length / DEFAULT_PAGE_SIZE);
+  const paginatedEmployees = useMemo(() => {
+    const start = currentPage * DEFAULT_PAGE_SIZE;
+    const end = start + DEFAULT_PAGE_SIZE;
+    return filteredMissedDeadlineEmployees.slice(start, end);
+  }, [filteredMissedDeadlineEmployees, currentPage]);
+
+  // Recalculate stats based on filtered employees
+  const filteredStats = useMemo(() => {
+    // Get all employees (not just missed deadline) for the selected department
+    let allFilteredEmployees = lateSubmissionEmployees;
+    
+    if (selectedDepartment !== 'all') {
+      allFilteredEmployees = allFilteredEmployees.filter(
+        (emp: LateSubmissionEmployee) => emp.department === selectedDepartment
+      );
+    }
+
+    // Apply search filter to all employees
+    if (debouncedSearchQuery.trim()) {
+      const searchLower = debouncedSearchQuery.toLowerCase().trim();
+      allFilteredEmployees = allFilteredEmployees.filter((emp: LateSubmissionEmployee) => {
+        const empCode = (emp.emp_code || '').toLowerCase();
+        const email = (emp.employee_email || '').toLowerCase();
+        return empCode.includes(searchLower) || email.includes(searchLower);
+      });
+    }
+
+    const totalFiltered = allFilteredEmployees.length;
+    const submittedFiltered = allFilteredEmployees.filter((emp: LateSubmissionEmployee) => emp.has_submitted).length;
+    const missedFiltered = allFilteredEmployees.filter((emp: LateSubmissionEmployee) => !emp.has_submitted).length;
+    const lateAccessFiltered = allFilteredEmployees.filter((emp: LateSubmissionEmployee) => 
+      emp.permission && !emp.permission.revoked_at
+    ).length;
+
+    return {
+      totalEmployees: totalFiltered,
+      submitted: submittedFiltered,
+      missedDeadline: missedFiltered,
+      lateAccessGranted: lateAccessFiltered,
+    };
+  }, [lateSubmissionEmployees, selectedDepartment, debouncedSearchQuery]);
   
   // Use stats based on selected type
-  const currentStats = submissionType === 'goals' 
+  const currentStats = submissionType === 'goals'
     ? goalsStats 
     : submissionType === 'evaluations' 
     ? evaluationsStats 
+    : submissionType === 'manager-goals-approval'
+    ? managerGoalsApprovalStats
     : managerEvaluationsStats;
-  const submittedCount = currentStats.submitted;
-  const missedCount = currentStats.missedDeadline;
-  const lateAccessCount = currentStats.lateAccessGranted;
+  
+  // Use filtered stats if filters are applied, otherwise use API stats
+  const hasActiveFilters = selectedDepartment !== 'all' || debouncedSearchQuery.trim() !== '';
+  const submittedCount = hasActiveFilters ? filteredStats.submitted : currentStats.submitted;
+  const missedCount = hasActiveFilters ? filteredStats.missedDeadline : currentStats.missedDeadline;
+  const lateAccessCount = hasActiveFilters ? filteredStats.lateAccessGranted : currentStats.lateAccessGranted;
+  // For manager views:
+  // - For manager-goals-approval: use totalEmployees (all managers from profiles table)
+  //   totalManagers (from API) represents managers with reportees who have goals
+  // - For manager-evaluations: use totalManagers (from API response)
+  // For employee views: use totalEmployees directly
+  const totalCount = hasActiveFilters 
+    ? filteredStats.totalEmployees 
+    : (submissionType === 'manager-goals-approval' 
+        ? totalEmployees  // Use totalEmployees (all managers from profiles) for display
+        : submissionType === 'manager-evaluations' 
+        ? totalManagers  // Use totalManagers from API for manager evaluations
+        : totalEmployees);
   const isPastDeadline = currentStats.isPastDeadline;
   const hasStarted = currentStats.hasStarted ?? true; // Default to true for backwards compatibility
   const startDate = currentStats.startDate;
@@ -350,11 +623,6 @@ export default function LateSubmissionManagement() {
     
     return now > endDate;
   }, [selectedQuarter, quarterlyCycles, isYearEnd]);
-
-  // Filter employees/managers who missed the deadline (haven't submitted for the selected quarter)
-  const missedDeadlineEmployees = lateSubmissionEmployees.filter(
-    (emp: LateSubmissionEmployee) => !emp.has_submitted
-  );
   
   // Group managers by pending reportees for manager-evaluations view
   const managersByPendingReportees = useMemo(() => {
@@ -372,7 +640,7 @@ export default function LateSubmissionManagement() {
       }>;
     }>();
     
-    missedDeadlineEmployees.forEach((manager: any) => {
+    filteredMissedDeadlineEmployees.forEach((manager: any) => {
       if (manager.pending_reportees && manager.pending_reportees.length > 0) {
         grouped.set(manager.employee_id, {
           manager_id: manager.employee_id,
@@ -384,7 +652,37 @@ export default function LateSubmissionManagement() {
     });
     
     return grouped;
-  }, [missedDeadlineEmployees, submissionType]);
+  }, [filteredMissedDeadlineEmployees, submissionType]);
+
+  // Group managers by pending employees for Manager tab with Goals
+  const managersByPendingEmployees = useMemo(() => {
+    if (topLevelTab !== 'manager' || subType !== 'goals') return new Map();
+    
+    const grouped = new Map<string, {
+      manager_id: string;
+      manager_emp_code: string;
+      manager_name: string;
+      employees: Array<{
+        employee_id: string;
+        emp_code: string;
+        employee_name: string;
+        pending_goals_count?: number;
+      }>;
+    }>();
+    
+    filteredMissedDeadlineEmployees.forEach((manager: any) => {
+      if (manager.pending_employees && manager.pending_employees.length > 0) {
+        grouped.set(manager.employee_id, {
+          manager_id: manager.employee_id,
+          manager_emp_code: manager.emp_code,
+          manager_name: manager.employee_name,
+          employees: manager.pending_employees
+        });
+      }
+    });
+    
+    return grouped;
+  }, [filteredMissedDeadlineEmployees, topLevelTab, subType]);
 
   // Group employees by manager for year-end view
   const employeesByManager = useMemo(() => {
@@ -397,7 +695,7 @@ export default function LateSubmissionManagement() {
       reportees: LateSubmissionEmployee[];
     }>();
     
-    missedDeadlineEmployees.forEach((emp: any) => {
+    filteredMissedDeadlineEmployees.forEach((emp: any) => {
       const managerCode = emp.manager_code || '__no_manager__';
       const managerName = emp.manager_name || 'No Manager Assigned';
       const managerEmpCode = emp.manager_emp_code || emp.manager_code || '-';
@@ -415,7 +713,7 @@ export default function LateSubmissionManagement() {
     });
     
     return grouped;
-  }, [missedDeadlineEmployees, isYearEnd]);
+  }, [filteredMissedDeadlineEmployees, isYearEnd]);
 
   // Check if employee has late permission
   const hasLatePermission = (employeeId: string) => {
@@ -423,17 +721,24 @@ export default function LateSubmissionManagement() {
     return emp?.permission && !emp.permission.revoked_at;
   };
 
-  // Grant permission mutation
+  // Grant permission mutation with configurable expiry
   const grantMutation = useMutation({
     mutationFn: async (employeeIds: string[]) => {
+      // Calculate expiry date using constant
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + LATE_SUBMISSION_GRANT_EXTENSION_DAYS);
+      expiresAt.setHours(23, 59, 59, 999); // End of day
+      
       for (const empId of employeeIds) {
         await permissionsService.lateSubmission.grant({
           cycle_id: effectiveCycleId,
           employee_id: empId,
           granted_by: user?.id || '',
           reason: reason || undefined,
+          expires_at: expiresAt.toISOString(),
           quarter: effectiveSelectedQuarter,  // Quarter-specific permission or 'year-end'
-          type: submissionType,  // Include type (goals, evaluations, or manager-evaluations)
+          type: submissionType,  // Include type (goals, evaluations, manager-goals-approval, or manager-evaluations)
+          role: topLevelTab,  // Include role (employee or manager) to scope the permission
         });
       }
     },
@@ -479,7 +784,7 @@ export default function LateSubmissionManagement() {
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedEmployees(new Set(missedDeadlineEmployees.filter(e => !hasLatePermission(e.employee_id)).map(e => e.employee_id)));
+      setSelectedEmployees(new Set(filteredMissedDeadlineEmployees.filter(e => !hasLatePermission(e.employee_id)).map(e => e.employee_id)));
     } else {
       setSelectedEmployees(new Set());
     }
@@ -579,7 +884,8 @@ export default function LateSubmissionManagement() {
             const newParams = new URLSearchParams(searchParams);
           if (value === 'year-end') {
             newParams.set('quarter', 'year-end');
-            newParams.delete('tab'); // Year-end doesn't have goals/evaluations tabs
+            newParams.set('tab', 'employee'); // Default to employee for year-end
+            newParams.set('type', 'goals');
           } else {
             const q = parseInt(value.replace('q', ''));
             // Don't allow switching to a quarter that hasn't started yet
@@ -587,9 +893,12 @@ export default function LateSubmissionManagement() {
               return;
             }
               newParams.set('quarter', q.toString());
-            // Ensure tab is set when switching to quarterly view
+            // Ensure tab and type are set when switching to quarterly view
             if (!newParams.get('tab')) {
-              newParams.set('tab', submissionType);
+              newParams.set('tab', topLevelTab);
+            }
+            if (!newParams.get('type')) {
+              newParams.set('type', subType);
             }
           }
           setSearchParams(newParams);
@@ -603,26 +912,34 @@ export default function LateSubmissionManagement() {
           </TabsList>
         </Tabs>
 
-        {/* Goals vs Evaluations vs Manager Evaluations Tabs */}
+        {/* Top-level Tabs: Employee / Manager */}
         {!isYearEnd && (
-          <Tabs value={submissionType} onValueChange={(value) => {
-            const newType = value as 'goals' | 'evaluations' | 'manager-evaluations';
-            setSubmissionType(newType);
-            // Update URL with tab parameter
-            const newParams = new URLSearchParams(searchParams);
-            newParams.set('tab', newType);
-            setSearchParams(newParams);
+          <Tabs value={topLevelTab} onValueChange={(value) => {
+            const newTab = value as 'employee' | 'manager';
+            // Mark as user interaction to prevent URL sync loop
+            isUserInteraction.current = true;
+            setTopLevelTab(newTab);
+            // Reset type to goals when switching top-level tabs
+            setSubType('goals');
+          }}>
+            <TabsList>
+              <TabsTrigger value="employee">Employee</TabsTrigger>
+              <TabsTrigger value="manager">Manager</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
+
+        {/* Sub-tabs: Goals / Evaluations (inside each top-level tab) */}
+        {!isYearEnd && (
+          <Tabs value={subType} onValueChange={(value) => {
+            const newType = value as 'goals' | 'evaluations';
+            // Mark as user interaction to prevent URL sync loop
+            isUserInteraction.current = true;
+            setSubType(newType);
           }}>
             <TabsList>
               <TabsTrigger value="goals">Goals</TabsTrigger>
               <TabsTrigger value="evaluations">Evaluations</TabsTrigger>
-              <TabsTrigger 
-                value="manager-evaluations"
-                disabled={!isManagerEvaluationsEligible}
-                aria-label="Manager Evaluations (only available after manager review window ends)"
-              >
-                Manager Evaluations
-              </TabsTrigger>
             </TabsList>
           </Tabs>
         )}
@@ -632,43 +949,43 @@ export default function LateSubmissionManagement() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">
-                {submissionType === 'manager-evaluations' ? 'Total Managers' : 'Total Employees'}
+                {submissionType === 'manager-evaluations' || submissionType === 'manager-goals-approval' ? 'Total Managers' : 'Total Employees'}
               </CardTitle>
-              <Users className="h-4 w-4 text-muted-foreground" />
+              <Users className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">
+              <div className="text-2xl font-bold" aria-live="polite" aria-atomic="true">
                 {(employeesLoading || detailsLoading) 
                   ? '-' 
-                  : submissionType === 'manager-evaluations' 
-                    ? totalManagers 
-                    : totalEmployees}
+                  : totalCount}
               </div>
+              {hasActiveFilters && (
+                <p className="text-xs text-muted-foreground mt-1" role="status">
+                  Filtered results
+                </p>
+              )}
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Submitted</CardTitle>
-              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              <CheckCircle2 className="h-4 w-4 text-green-500" aria-hidden="true" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-600">{submittedCount}</div>
-              <p className="text-xs text-muted-foreground mt-1">
-                {submissionType === 'manager-evaluations' 
-                  ? (totalManagers > 0 ? `${Math.round((submittedCount / totalManagers) * 100)}%` : '0%')
-                  : (totalEmployees > 0 ? `${Math.round((submittedCount / totalEmployees) * 100)}%` : '0%')
-                } of total
+              <div className="text-2xl font-bold text-green-600" aria-live="polite" aria-atomic="true">{submittedCount}</div>
+              <p className="text-xs text-muted-foreground mt-1" role="status">
+                {totalCount > 0 ? `${Math.round((submittedCount / totalCount) * 100)}%` : '0%'} of total
               </p>
             </CardContent>
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Missed Deadline</CardTitle>
-              <XCircle className="h-4 w-4 text-destructive" />
+              <XCircle className="h-4 w-4 text-destructive" aria-hidden="true" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-destructive">{missedCount}</div>
-              <p className="text-xs text-muted-foreground mt-1">
+              <div className="text-2xl font-bold text-destructive" aria-live="polite" aria-atomic="true">{missedCount}</div>
+              <p className="text-xs text-muted-foreground mt-1" role="status">
                 {isPastDeadline 
                   ? `${missedCount} not submitted` 
                   : 'Deadline not passed'}
@@ -678,11 +995,11 @@ export default function LateSubmissionManagement() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Late Access Granted</CardTitle>
-              <Clock className="h-4 w-4 text-amber-500" />
+              <Clock className="h-4 w-4 text-amber-500" aria-hidden="true" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-amber-600">{lateAccessCount}</div>
-              <p className="text-xs text-muted-foreground mt-1">
+              <div className="text-2xl font-bold text-amber-600" aria-live="polite" aria-atomic="true">{lateAccessCount}</div>
+              <p className="text-xs text-muted-foreground mt-1" role="status">
                 Active permissions
               </p>
             </CardContent>
@@ -692,36 +1009,203 @@ export default function LateSubmissionManagement() {
         {/* Employees Table / Accordion */}
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>
-                  {isYearEnd 
-                    ? `Managers with Pending Year-End Evaluations (${employeesByManager.size})`
-                    : submissionType === 'manager-evaluations'
-                    ? `Managers with Pending Reportee Reviews (${managersByPendingReportees.size})`
-                    : `Employees Who Missed ${submissionType === 'goals' ? 'Goals' : 'Evaluations'} Deadline (${missedCount})`}
-                </CardTitle>
-                <CardDescription>
-                  {isYearEnd
-                    ? 'Managers with reportees who have not submitted their year-end evaluations'
-                    : submissionType === 'manager-evaluations'
-                    ? 'Managers who have not completed reviews for all their reportees'
-                    : (isPastDeadline 
-                      ? `These employees have not submitted their ${submissionType === 'goals' ? 'goals' : 'self-evaluations'} for this quarter`
-                      : 'Deadline has not passed yet')}
-                </CardDescription>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>
+                    {isYearEnd 
+                      ? `Managers with Pending Year-End Evaluations (${employeesByManager.size})`
+                      : topLevelTab === 'manager'
+                      ? `Managers with Pending ${subType === 'goals' ? 'Goal Approvals' : 'Evaluation Approvals'} (${filteredMissedDeadlineEmployees.length})`
+                      : `Employees Who Missed ${subType === 'goals' ? 'Goals' : 'Evaluations'} Deadline (${filteredMissedDeadlineEmployees.length})`}
+                  </CardTitle>
+                  <CardDescription>
+                    {isYearEnd
+                      ? 'Managers with reportees who have not submitted their year-end evaluations'
+                      : topLevelTab === 'manager'
+                      ? (isPastDeadline 
+                        ? `Managers who have not approved ${subType === 'goals' ? 'goals' : 'evaluations'} for their reportees`
+                        : 'Deadline has not passed yet')
+                      : (isPastDeadline 
+                        ? `These employees have not submitted their ${subType === 'goals' ? 'goals' : 'self-evaluations'} for this quarter`
+                        : 'Deadline has not passed yet')}
+                  </CardDescription>
+                </div>
+                {selectedEmployees.size > 0 && (
+                  <Button onClick={() => setGrantDialogOpen(true)}>
+                    <UserCheck className="mr-2 h-4 w-4" aria-hidden="true" />
+                    Grant Access ({selectedEmployees.size})
+                  </Button>
+                )}
               </div>
-              {selectedEmployees.size > 0 && (
-                <Button onClick={() => setGrantDialogOpen(true)}>
-                  <UserCheck className="mr-2 h-4 w-4" />
-                  Grant Access ({selectedEmployees.size})
+              
+              {/* Search and Filter Controls */}
+              <div className="flex flex-col sm:flex-row gap-4">
+                <div className="relative flex-1">
+                  <Label htmlFor="employee-search" className="sr-only">
+                    Search employees by employee code or email
+                  </Label>
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  <Input
+                    id="employee-search"
+                    type="search"
+                    placeholder="Search by employee code or email..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9"
+                    aria-label="Search employees by employee code or email"
+                    aria-describedby="search-description"
+                  />
+                  <span id="search-description" className="sr-only">
+                    Enter employee code or email to filter the list. Results update automatically as you type.
+                  </span>
+                </div>
+                <Button
+                  onClick={handleDetailsSearch}
+                  disabled={!searchQuery.trim() || quarterlyStatusLoading}
+                  variant="outline"
+                  className="sm:w-auto"
+                  aria-label="View employee quarterly details"
+                >
+                  {quarterlyStatusLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <Search className="mr-2 h-4 w-4" aria-hidden="true" />
+                      Details
+                    </>
+                  )}
                 </Button>
-              )}
+                <div className="sm:w-[200px]">
+                  <Label htmlFor="department-filter" className="sr-only">
+                    Filter by department
+                  </Label>
+                  <Select 
+                    value={selectedDepartment} 
+                    onValueChange={setSelectedDepartment}
+                  >
+                    <SelectTrigger id="department-filter" aria-label="Filter by department">
+                      <Filter className="mr-2 h-4 w-4" aria-hidden="true" />
+                      <SelectValue placeholder="All Departments" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Departments</SelectItem>
+                      {uniqueDepartments.map((dept) => (
+                        <SelectItem key={dept} value={dept}>{dept}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
-            {!hasStarted && !isYearEnd && submissionType !== 'manager-evaluations' ? (
-              <div className="text-center py-8 text-muted-foreground">
+            {/* Quarterly Status Results (shown when Details button is clicked) */}
+            {showDetails && (
+              <>
+                {quarterlyStatusError && (
+                  <Alert variant="destructive" className="mb-4">
+                    <AlertDescription>{quarterlyStatusError}</AlertDescription>
+                  </Alert>
+                )}
+                
+                {quarterlyStatusLoading && (
+                  <div className="text-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2" aria-hidden="true" />
+                    <p className="text-sm text-muted-foreground">Loading quarterly status...</p>
+                  </div>
+                )}
+                
+                {quarterlyStatusData && !quarterlyStatusLoading && (
+                  <div className="mb-6 space-y-4">
+                    <div className="border-b pb-3 mb-4">
+                      <h3 className="font-semibold text-lg">{quarterlyStatusData.employee.full_name}</h3>
+                      <p className="text-sm text-muted-foreground">
+                        {quarterlyStatusData.employee.emp_code} • {quarterlyStatusData.employee.department}
+                      </p>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      {quarterlyStatusData.quarters.map((q: any) => (
+                        <Card key={q.quarter}>
+                          <CardHeader>
+                            <CardTitle className="text-base">Q{q.quarter}</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            {/* Goals Section */}
+                            <div>
+                              <h4 className="font-medium mb-3">Goals</h4>
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                  <span className="text-muted-foreground">Employee: </span>
+                                  <Badge variant={q.goals.employee_status === 'submitted' ? 'default' : 'destructive'}>
+                                    {q.goals.employee_status}
+                                  </Badge>
+                                  {q.goals.employee_submitted_at && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Submitted: {new Date(q.goals.employee_submitted_at).toLocaleDateString()}
+                                    </p>
+                                  )}
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Manager: </span>
+                                  <Badge variant={q.goals.manager_status === 'approved' ? 'default' : 'destructive'}>
+                                    {q.goals.manager_status}
+                                  </Badge>
+                                  {q.goals.manager_approved_at && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Approved: {new Date(q.goals.manager_approved_at).toLocaleDateString()}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {/* Evaluations Section */}
+                            <div>
+                              <h4 className="font-medium mb-3">Evaluations</h4>
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                  <span className="text-muted-foreground">Employee: </span>
+                                  <Badge variant={q.evaluations.employee_status === 'submitted' ? 'default' : 'destructive'}>
+                                    {q.evaluations.employee_status}
+                                  </Badge>
+                                  {q.evaluations.employee_submitted_at && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Submitted: {new Date(q.evaluations.employee_submitted_at).toLocaleDateString()}
+                                    </p>
+                                  )}
+                                </div>
+                                <div>
+                                  <span className="text-muted-foreground">Manager: </span>
+                                  <Badge variant={q.evaluations.manager_status === 'submitted' ? 'default' : 'destructive'}>
+                                    {q.evaluations.manager_status}
+                                  </Badge>
+                                  {q.evaluations.manager_submitted_at && (
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Submitted: {new Date(q.evaluations.manager_submitted_at).toLocaleDateString()}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+            
+            {/* Original content - only show if details is not active */}
+            {!showDetails && (
+              <>
+                {!hasStarted && !isYearEnd && submissionType !== 'manager-evaluations' && submissionType !== 'manager-goals-approval' ? (
+                  <div className="text-center py-8 text-muted-foreground">
                 <p className="text-lg font-medium mb-2">
                   {submissionType === 'goals' ? 'Goal submission period' : 'Evaluation period'} has not started yet
                 </p>
@@ -731,7 +1215,7 @@ export default function LateSubmissionManagement() {
                     : 'Start date is not configured for this quarter.'}
                 </p>
               </div>
-            ) : !isPastDeadline && !isYearEnd && submissionType !== 'manager-evaluations' ? (
+            ) : !isPastDeadline && !isYearEnd && submissionType !== 'manager-evaluations' && submissionType !== 'manager-goals-approval' ? (
               <div className="text-center py-8 text-muted-foreground">
                 <p className="text-lg font-medium mb-2">
                   {submissionType === 'goals' ? 'Goal submission' : 'Evaluation'} period is still ongoing
@@ -749,7 +1233,7 @@ export default function LateSubmissionManagement() {
                   Manager evaluations late submission data will be available after the manager review deadline has passed.
                 </p>
               </div>
-            ) : (isYearEnd ? (
+            ) : isYearEnd ? (
               // Year-End Accordion View
               employeesByManager.size === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
@@ -858,7 +1342,99 @@ export default function LateSubmissionManagement() {
                   })}
                 </Accordion>
               )
-            ) : submissionType === 'manager-evaluations' ? (
+            ) : submissionType === 'manager-goals-approval' ? (
+              // Manager Goals Accordion View
+              // Only show managers who have reportees with pending goal approvals
+              managersByPendingEmployees.size === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p className="text-lg font-medium mb-2">All managers have approved all pending goals on time!</p>
+                  <p className="text-sm">No managers with pending goal approvals found.</p>
+                </div>
+              ) : (
+                <Accordion type="single" collapsible className="w-full">
+                  {Array.from(managersByPendingEmployees.entries()).map(([managerId, managerData]) => {
+                    const pendingCount = managerData.employees.length;
+                    const hasPermission = hasLatePermission(managerId);
+                    
+                    return (
+                      <AccordionItem key={managerId} value={managerId}>
+                        <AccordionTrigger className="hover:no-underline">
+                          <div className="flex items-center justify-between w-full pr-4">
+                            <div className="flex items-center gap-4">
+                              <div className="text-left">
+                                <div className="font-medium">
+                                  {managerData.manager_name} ({managerData.manager_emp_code})
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                  {pendingCount} reportee{pendingCount !== 1 ? 's' : ''} with pending goal{pendingCount !== 1 ? 's' : ''}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {hasPermission ? (
+                                <>
+                                  <Badge className="bg-amber-500 hover:bg-amber-600">
+                                    <Clock className="mr-1 h-3 w-3" aria-hidden="true" />
+                                    Granted
+                                  </Badge>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRevokeSingle(managerId);
+                                    }}
+                                    aria-label={`Revoke late submission access for ${managerData.manager_name}`}
+                                  >
+                                    <UserX className="mr-1 h-3 w-3" aria-hidden="true" />
+                                    Revoke
+                                  </Button>
+                                </>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTargetEmployeeId(managerId);
+                                    setGrantDialogOpen(true);
+                                  }}
+                                  aria-label={`Grant late submission access to ${managerData.manager_name} for goal approvals`}
+                                >
+                                  <UserCheck className="mr-1 h-3 w-3" aria-hidden="true" />
+                                  Grant Access
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="space-y-2 pt-2">
+                            {managerData.employees.map((employee) => {
+                              return (
+                                <div
+                                  key={employee.employee_id}
+                                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+                                >
+                                  <div className="flex-1">
+                                    <div className="font-medium">{employee.employee_name || 'Unknown'}</div>
+                                    <div className="text-sm text-muted-foreground">
+                                      {employee.emp_code} • {employee.pending_goals_count || 0} goal{(employee.pending_goals_count || 0) !== 1 ? 's' : ''} pending approval
+                                    </div>
+                                  </div>
+                                  <Badge variant="destructive" aria-label="Approval pending">
+                                    Approval Pending
+                                  </Badge>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    );
+                  })}
+                </Accordion>
+              )
+            ) : (topLevelTab === 'manager' && subType === 'evaluations') || submissionType === 'manager-evaluations' ? (
               // Manager Evaluations Accordion View
               managersByPendingReportees.size === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
@@ -944,95 +1520,172 @@ export default function LateSubmissionManagement() {
                   })}
                 </Accordion>
               )
-            ) : missedDeadlineEmployees.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                All employees have submitted their {submissionType === 'goals' ? 'goals' : 'self-evaluations'} on time!
+            ) : filteredMissedDeadlineEmployees.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground" role="status">
+                {hasActiveFilters ? (
+                  <div>
+                    <p className="text-lg font-medium mb-2">No employees found matching your filters</p>
+                    <p className="text-sm">Try adjusting your search or department filter</p>
+                  </div>
+                ) : (
+                  <p>All employees have submitted their {submissionType === 'goals' ? 'goals' : 'self-evaluations'} on time!</p>
+                )}
               </div>
             ) : (
-              // Regular Quarter Table View
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">
-                      <Checkbox
-                        checked={
-                          missedDeadlineEmployees.filter(e => !hasLatePermission(e.employee_id)).length > 0 &&
-                          selectedEmployees.size === missedDeadlineEmployees.filter(e => !hasLatePermission(e.employee_id)).length
-                        }
-                        onCheckedChange={handleSelectAll}
-                      />
-                    </TableHead>
-                    <TableHead>Employee</TableHead>
-                    <TableHead>Department</TableHead>
-                    <TableHead>Manager</TableHead>
-                    <TableHead>{submissionType === 'goals' ? 'Goal Status' : 'Evaluation Status'}</TableHead>
-                    <TableHead>Late Access</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {missedDeadlineEmployees.map((emp) => {
-                    const hasPermission = hasLatePermission(emp.employee_id);
-                    return (
-                      <TableRow key={emp.employee_id}>
-                        <TableCell>
+              // Regular Quarter Table View with Pagination
+              <>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">
                           <Checkbox
-                            checked={selectedEmployees.has(emp.employee_id)}
-                            onCheckedChange={(checked) => handleSelectEmployee(emp.employee_id, !!checked)}
-                            disabled={hasPermission}
+                            checked={
+                              paginatedEmployees.filter(e => !hasLatePermission(e.employee_id)).length > 0 &&
+                              paginatedEmployees.filter(e => !hasLatePermission(e.employee_id)).every(e => selectedEmployees.has(e.employee_id))
+                            }
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                const pageEmployeeIds = paginatedEmployees
+                                  .filter(e => !hasLatePermission(e.employee_id))
+                                  .map(e => e.employee_id);
+                                setSelectedEmployees(new Set([...Array.from(selectedEmployees), ...pageEmployeeIds]));
+                              } else {
+                                const pageEmployeeIds = new Set(paginatedEmployees.map(e => e.employee_id));
+                                setSelectedEmployees(new Set(Array.from(selectedEmployees).filter(id => !pageEmployeeIds.has(id))));
+                              }
+                            }}
+                            aria-label="Select all employees on this page"
                           />
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <div className="font-medium">
-                              {emp.employee_name || 'Unknown'}
-                            </div>
-                            <div className="text-xs text-muted-foreground">{emp.emp_code}</div>
-                          </div>
-                        </TableCell>
-                        <TableCell>{emp.department}</TableCell>
-                        <TableCell>{emp.manager_name}</TableCell>
-                        <TableCell>
-                          <Badge variant={emp.has_submitted ? 'default' : 'destructive'}>
-                            {emp.has_submitted ? 'Submitted' : 'Not Submitted'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {hasPermission ? (
-                            <Badge className="bg-amber-500 hover:bg-amber-600">
-                              <Clock className="mr-1 h-3 w-3" />
-                              Granted
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline">Not Granted</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {hasPermission ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleRevokeSingle(emp.employee_id)}
-                            >
-                              <UserX className="mr-1 h-3 w-3" />
-                              Revoke
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              onClick={() => handleGrantSingle(emp.employee_id)}
-                            >
-                              <UserCheck className="mr-1 h-3 w-3" />
-                              Grant
-                            </Button>
-                          )}
-                        </TableCell>
+                        </TableHead>
+                        <TableHead>Employee</TableHead>
+                        <TableHead>Department</TableHead>
+                        <TableHead>Manager</TableHead>
+                        <TableHead>{submissionType === 'goals' ? 'Goal Status' : 'Evaluation Status'}</TableHead>
+                        <TableHead>Late Access</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            ))}
+                    </TableHeader>
+                    <TableBody>
+                      {paginatedEmployees.map((emp) => {
+                      const hasPermission = hasLatePermission(emp.employee_id);
+                      return (
+                        <TableRow key={emp.employee_id}>
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedEmployees.has(emp.employee_id)}
+                              onCheckedChange={(checked) => handleSelectEmployee(emp.employee_id, !!checked)}
+                              disabled={hasPermission}
+                              aria-label={`Select ${emp.employee_name || emp.emp_code}`}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <div>
+                              <div className="font-medium">
+                                {emp.employee_name || 'Unknown'}
+                              </div>
+                              <div className="text-xs text-muted-foreground">{emp.emp_code}</div>
+                            </div>
+                          </TableCell>
+                          <TableCell>{emp.department}</TableCell>
+                          <TableCell>{emp.manager_name || '-'}</TableCell>
+                          <TableCell>
+                            <Badge variant={emp.has_submitted ? 'default' : 'destructive'} aria-label={emp.has_submitted ? 'Submitted' : 'Not submitted'}>
+                              {emp.has_submitted ? 'Submitted' : 'Not Submitted'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {hasPermission ? (
+                              <Badge className="bg-amber-500 hover:bg-amber-600" aria-label="Late access granted">
+                                <Clock className="mr-1 h-3 w-3" aria-hidden="true" />
+                                Granted
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" aria-label="Late access not granted">Not Granted</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {hasPermission ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleRevokeSingle(emp.employee_id)}
+                                aria-label={`Revoke late access for ${emp.employee_name || emp.emp_code}`}
+                              >
+                                <UserX className="mr-1 h-3 w-3" aria-hidden="true" />
+                                Revoke
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                onClick={() => handleGrantSingle(emp.employee_id)}
+                                aria-label={`Grant late access for ${emp.employee_name || emp.emp_code}`}
+                              >
+                                <UserCheck className="mr-1 h-3 w-3" aria-hidden="true" />
+                                Grant
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+                </div>
+                
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="mt-4 flex items-center justify-between">
+                    <div className="text-sm text-muted-foreground">
+                      Showing {currentPage * DEFAULT_PAGE_SIZE + 1} to {Math.min((currentPage + 1) * DEFAULT_PAGE_SIZE, filteredMissedDeadlineEmployees.length)} of {filteredMissedDeadlineEmployees.length} employees
+                    </div>
+                    <Pagination>
+                      <PaginationContent>
+                        <PaginationItem>
+                          <PaginationPrevious 
+                            onClick={() => setCurrentPage(prev => Math.max(0, prev - 1))}
+                            className={currentPage === 0 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                            aria-disabled={currentPage === 0}
+                          />
+                        </PaginationItem>
+                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                          let pageNum;
+                          if (totalPages <= 5) {
+                            pageNum = i;
+                          } else if (currentPage < 3) {
+                            pageNum = i;
+                          } else if (currentPage > totalPages - 4) {
+                            pageNum = totalPages - 5 + i;
+                          } else {
+                            pageNum = currentPage - 2 + i;
+                          }
+                          return (
+                            <PaginationItem key={pageNum}>
+                              <PaginationLink
+                                onClick={() => setCurrentPage(pageNum)}
+                                isActive={currentPage === pageNum}
+                                className="cursor-pointer"
+                              >
+                                {pageNum + 1}
+                              </PaginationLink>
+                            </PaginationItem>
+                          );
+                        })}
+                        <PaginationItem>
+                          <PaginationNext 
+                            onClick={() => setCurrentPage(prev => Math.min(totalPages - 1, prev + 1))}
+                            className={currentPage >= totalPages - 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                            aria-disabled={currentPage >= totalPages - 1}
+                          />
+                        </PaginationItem>
+                      </PaginationContent>
+                    </Pagination>
+                  </div>
+                )}
+              </>
+                )}
+              </>
+            )}
           </CardContent>
         </Card>
 

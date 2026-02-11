@@ -27,9 +27,9 @@ import {
   Eye
 } from 'lucide-react';
 
-const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+const statusColors: Record<string, 'default' | 'secondary' | 'destructive' | 'outline' |'active'> = {
   draft: 'secondary',
-  active: 'default',
+  active: 'active',
   closed: 'outline',
   archived: 'destructive'
 };
@@ -168,10 +168,10 @@ export default function CycleList() {
                       <TableHead>Year</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Applicable Teams</TableHead>
-                      <TableHead>Goal Setting</TableHead>
+                      {/* <TableHead>Goal Setting</TableHead>
                       <TableHead>Quarterly Reviews</TableHead>
-                      <TableHead>Manager Eval</TableHead>
-                      <TableHead>Release</TableHead>
+                      <TableHead>Manager Eval</TableHead> */}
+                      <TableHead>Released On</TableHead>
                       <TableHead className="w-[50px]"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -197,7 +197,7 @@ export default function CycleList() {
                         <TableCell className="text-xs">
                           {getApplicableTeamsDisplay(cycle)}
                         </TableCell>
-                        <TableCell className="text-xs">
+                        {/* <TableCell className="text-xs">
                           {formatDate(cycle.goal_submission_start)} - {formatDate(cycle.goal_submission_end)}
                         </TableCell>
                         <TableCell className="text-xs">
@@ -209,7 +209,7 @@ export default function CycleList() {
                         </TableCell>
                         <TableCell className="text-xs">
                           {formatDate(cycle.manager_evaluation_start)} - {formatDate(cycle.manager_evaluation_end)}
-                        </TableCell>
+                        </TableCell> */}
                         <TableCell className="text-xs">
                           {formatDate(cycle.release_date)}
                         </TableCell>

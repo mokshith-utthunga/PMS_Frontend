@@ -452,7 +452,7 @@ export function DualAchievementSlider({
             <Progress 
               value={employeeDisplayPercentage} 
               className={cn(
-                "h-3",
+                "h-3 [&>div]:bg-[#0A72C6]",
                 isEmployeeOverAchieved && "[&>div]:bg-purple-500"
               )} 
             />

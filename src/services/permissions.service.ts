@@ -33,6 +33,12 @@ export interface LateSubmissionEmployee {
     employee_name: string;
     date_of_joining?: string;
   }>;
+  pending_employees?: Array<{
+    employee_id: string;
+    emp_code: string;
+    employee_name: string;
+    pending_goals_count?: number;
+  }>;
 }
 
 export interface LateSubmissionDetails {
@@ -66,17 +72,29 @@ export interface LateSubmissionDetails {
     hasStarted?: boolean;
     startDate?: string | null;
   };
+  managerGoalsApproval?: {
+    submitted: number;
+    missedDeadline: number;
+    lateAccessGranted: number;
+    quarter: number | null;
+    isPastDeadline: boolean;
+    hasStarted?: boolean;
+    startDate?: string | null;
+  };
 }
 
 export const permissionsService = {
   lateSubmission: {
-    getByCycle: (cycleId: string, quarter?: number | 'year-end', type?: 'goals' | 'evaluations' | 'manager-evaluations') => {
+    getByCycle: (cycleId: string, quarter?: number | 'year-end', type?: 'goals' | 'evaluations' | 'manager-evaluations' | 'manager-goals-approval', role?: 'employee' | 'manager') => {
       let url = `/api/permissions/late-submission?cycle_id=${cycleId}`;
       if (quarter) {
         url += `&quarter=${quarter}`;
       }
       if (type) {
         url += `&type=${type}`;
+      }
+      if (role) {
+        url += `&role=${role}`;
       }
       return api.get<{ data: LateSubmissionEmployee[] }>(url);
     },
@@ -86,7 +104,7 @@ export const permissionsService = {
         `/api/permissions/late-submission/check?cycle_id=${cycleId}${quarter ? `&quarter=${quarter}` : ''}`
       ),
 
-    grant: (data: { cycle_id: string; employee_id: string; granted_by: string; reason?: string; expires_at?: string; quarter?: number | 'year-end'; type?: 'goals' | 'evaluations' | 'manager-evaluations' }) => 
+    grant: (data: { cycle_id: string; employee_id: string; granted_by: string; reason?: string; expires_at?: string; quarter?: number | 'year-end'; type?: 'goals' | 'evaluations' | 'manager-evaluations' | 'manager-goals-approval'; role?: 'employee' | 'manager' }) => 
       api.post<{ data: LateSubmissionPermission }>(
         '/api/permissions/late-submission',
         data
@@ -98,7 +116,7 @@ export const permissionsService = {
         quarter ? { quarter } : {}
       ),
 
-    getDetails: (cycleId: string, quarter?: number | 'year-end', type?: 'goals' | 'evaluations' | 'manager-evaluations') => {
+    getDetails: (cycleId: string, quarter?: number | 'year-end', type?: 'goals' | 'evaluations' | 'manager-evaluations' | 'manager-goals-approval') => {
       let url = `/api/permissions/late-submission-details?cycle_id=${cycleId}`;
       if (quarter) {
         url += `&quarter=${quarter}`;
@@ -107,6 +125,34 @@ export const permissionsService = {
         url += `&type=${type}`;
       }
       return api.get<{ data: LateSubmissionDetails }>(url);
+    },
+    getEmployeeQuarterlyStatus: (empCode: string, cycleId: string) => {
+      return api.get<{ 
+        data: {
+          employee: {
+            id: string;
+            emp_code: string;
+            full_name: string;
+            email: string;
+            department: string;
+          };
+          quarters: Array<{
+            quarter: number;
+            goals: {
+              employee_status: 'submitted' | 'pending';
+              employee_submitted_at: string | null;
+              manager_status: 'approved' | 'pending';
+              manager_approved_at: string | null;
+            };
+            evaluations: {
+              employee_status: 'submitted' | 'pending';
+              employee_submitted_at: string | null;
+              manager_status: 'submitted' | 'pending';
+              manager_submitted_at: string | null;
+            };
+          }>;
+        }
+      }>(`/api/permissions/employee-quarterly-status?emp_code=${empCode}&cycle_id=${cycleId}`);
     },
   },
 };

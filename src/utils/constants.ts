@@ -47,6 +47,9 @@ export const METRIC_TYPE_LABELS: Record<string, string> = {
 // Pagination
 export const DEFAULT_PAGE_SIZE = 20;
 
+// Late Submission Permissions
+export const LATE_SUBMISSION_GRANT_EXTENSION_DAYS = 10; // Temporary access granted for 10 days
+
 // KRA/KPI constraints
 export const MIN_KRAS = 3;
 export const MAX_KRAS = 5;

@@ -13,7 +13,8 @@ const badgeVariants = cva(
         destructive: "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
         outline: "text-foreground",
         statusSuccess: " ring-1 bg-status-success text-status-success-foreground/50 hover:bg-status-success border-2 border-status-success",
-        submitted:"bg-green-600/70 text-white hover:bg-green-600 "
+        submitted:"bg-green-600/70 text-white hover:bg-green-600 ",
+        active:"bg-[#0A72C6] text-white hover:bg-[#0A72C6] "
 
       },
     },

@@ -1391,10 +1391,10 @@ export default function ManagerEvaluation() {
   }, []);
 
   const handleConfirmRejection = useCallback(async () => {
-    if (!rejectingItem || !rejectionReason.trim() || !managerEvaluation?.id || !activeCycle || !employeeId) {
+    if (!rejectingItem || !rejectionReason.trim() || !activeCycle || !employeeId || !managerId) {
       toast({
         title: 'Error',
-        description: 'Please provide a rejection reason',
+        description: !rejectionReason.trim() ? 'Please provide a rejection reason' : 'Missing required information',
         variant: 'destructive',
       });
       return;
@@ -1402,8 +1402,70 @@ export default function ManagerEvaluation() {
 
     setSaving(true);
     try {
+      // If manager evaluation doesn't exist, create it first
+      let currentManagerEvaluation = managerEvaluation;
+      if (!currentManagerEvaluation?.id) {
+        // Get transition info if applicable
+        let periodType: 'full_quarter' | 'pre_transition' | 'post_transition' | null = null;
+        let transitionId: string | null = null;
+        let periodStartDate: string | undefined = undefined;
+        let periodEndDate: string | undefined = undefined;
+
+        if (transition && transition.quarter === selectedQuarter) {
+          transitionId = transition.id;
+          
+          if (managerRole === 'new_manager') {
+            // New manager always reviews post-transition
+            periodType = 'post_transition';
+            periodStartDate = transition.post_period_start_date || undefined;
+            periodEndDate = transition.post_period_end_date || undefined;
+          } else if (managerRole === 'old_manager') {
+            // Old manager always reviews pre-transition
+            periodType = 'pre_transition';
+            periodStartDate = transition.pre_period_start_date || undefined;
+            periodEndDate = transition.pre_period_end_date || undefined;
+          } else if (managerRole === 'same_manager' || !managerRole) {
+            // Same manager reviews based on which nested tab is active
+            if (nestedTab === 'transition') {
+              // Transition tab = post-transition
+              periodType = 'post_transition';
+              periodStartDate = transition.post_period_start_date || undefined;
+              periodEndDate = transition.post_period_end_date || undefined;
+            } else {
+              // Pre-transition tab = pre-transition
+              periodType = 'pre_transition';
+              periodStartDate = transition.pre_period_start_date || undefined;
+              periodEndDate = transition.pre_period_end_date || undefined;
+            }
+          }
+        }
+
+        // Create manager review
+        const createReviewResult = await evaluationService.managerReviews.upsert({
+          employee_id: employeeId,
+          cycle_id: activeCycle.id,
+          quarter: selectedQuarter,
+          reviewer_id: managerId,
+          overall_comments: '',
+          guidance: '',
+          calculated_overall_rating: null,
+          status: 'in_progress',
+          period_type: periodType,
+          transition_id: transitionId,
+          period_start_date: periodStartDate,
+          period_end_date: periodEndDate,
+        });
+
+        if (createReviewResult.data) {
+          currentManagerEvaluation = createReviewResult.data;
+          setManagerEvaluation(createReviewResult.data);
+        } else {
+          throw new Error('Failed to create manager review');
+        }
+      }
+
       await evaluationService.kraKpiRejections.reject({
-        manager_review_id: managerEvaluation.id,
+        manager_review_id: currentManagerEvaluation.id,
         [rejectingItem.type === 'kra' ? 'kra_id' : 'goal_id']: rejectingItem.id,
         rejection_reason: rejectionReason.trim(),
         quarter: selectedQuarter,
@@ -1418,7 +1480,7 @@ export default function ManagerEvaluation() {
 
       // Refresh rejections and manager evaluation
       const rejectionsResult = await evaluationService.kraKpiRejections.get({
-        manager_review_id: managerEvaluation.id,
+        manager_review_id: currentManagerEvaluation.id,
         employee_id: employeeId,
         cycle_id: activeCycle.id,
         quarter: selectedQuarter,
@@ -1438,8 +1500,8 @@ export default function ManagerEvaluation() {
         employeeId,
         activeCycle.id,
         selectedQuarter,
-        managerEvaluation.period_type,
-        managerEvaluation.transition_id
+        currentManagerEvaluation.period_type,
+        currentManagerEvaluation.transition_id
       );
       if (mgrReviewResult.data) {
         setManagerEvaluation(mgrReviewResult.data);
@@ -1457,7 +1519,7 @@ export default function ManagerEvaluation() {
     } finally {
       setSaving(false);
     }
-  }, [rejectingItem, rejectionReason, managerEvaluation, activeCycle, employeeId, selectedQuarter, toast]);
+  }, [rejectingItem, rejectionReason, managerEvaluation, activeCycle, employeeId, selectedQuarter, managerId, transition, managerRole, nestedTab, quarterlyCycles, toast]);
 
   const handleTabChange = useCallback((value: string) => {
     setEvaluationTab(value);
@@ -1789,16 +1851,7 @@ export default function ManagerEvaluation() {
                       )}
                       {(() => {
                         const evidence = relevantGoalSelfRatings[kpi.id]?.evidence;
-                        console.log('[ManagerEvaluation] Evidence for KPI:', {
-                          kpiId: kpi.id,
-                          kpiTitle: kpi.title,
-                          evidence,
-                          hasEvidence: !!evidence,
-                          evidenceType: typeof evidence,
-                          evidenceLength: evidence?.length,
-                          ratingExists: !!relevantGoalSelfRatings[kpi.id],
-                          allRatingFields: relevantGoalSelfRatings[kpi.id]
-                        });
+
                         // Show evidence if it exists and is not empty string
                         if (evidence && evidence.trim() !== '') {
                           return (
@@ -1894,29 +1947,29 @@ export default function ManagerEvaluation() {
                   </div>
 
                   {/* Reject Button */}
-                  {!isSubmitted && managerEvaluation?.id && (
-                    <div className="flex justify-end pt-2 border-t">
-                      {(() => {
-                        const rejection = kraKpiRejections[kpi.id];
-                        const isRejected = rejection && !rejection.resubmitted_at;
-                        const canReject = !isRejected; // Can only reject if not already rejected
-                        
-                        return (
-                          <Button
-                            type="button"
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => handleRejectKraKpi('kpi', kpi.id, kpi.title)}
-                            disabled={!canReject || saving}
-                            aria-label={`Reject KPI: ${kpi.title}`}
-                          >
-                            <XCircle className="h-4 w-4 mr-2" />
-                            {isRejected ? 'Already Rejected' : 'Reject KPI'}
-                          </Button>
-                        );
-                      })()}
-                    </div>
-                  )}
+                  {/* Reject Button - will automatically create manager review if needed */}
+                  <div className="flex justify-end pt-2 border-t">
+                    {(() => {
+                      const rejection = kraKpiRejections[kpi.id];
+                      const isRejected = rejection && !rejection.resubmitted_at;
+                      const canReject = !isRejected; // Can only reject if not already rejected
+                      
+                      return (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleRejectKraKpi('kpi', kpi.id, kpi.title)}
+                          disabled={!canReject || saving}
+                          aria-label={`Reject KPI: ${kpi.title}`}
+                          title={isRejected ? 'This KPI has already been rejected' : 'Reject this KPI'}
+                        >
+                          <XCircle className="h-4 w-4 mr-2" />
+                          {isRejected ? 'Already Rejected' : 'Reject KPI'}
+                        </Button>
+                      );
+                    })()}
+                  </div>
 
                   {/* Show rejection feedback if rejected */}
                   {(() => {

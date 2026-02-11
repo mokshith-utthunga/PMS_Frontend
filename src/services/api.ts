@@ -9,7 +9,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public statusCode?: number,
-    public originalError?: unknown
+    public originalError?: unknown,
+    public details?: string[] | string
   ) {
     super(message);
     this.name = 'ApiError';
@@ -85,9 +86,13 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     }
 
     if (!res.ok) {
+      const errorMessage = data?.error || data?.message || 'Request failed';
+      const errorDetails = data?.details;
       throw new ApiError(
-        data?.error || data?.message || 'Request failed',
-        res.status
+        errorMessage,
+        res.status,
+        undefined,
+        errorDetails
       );
     }
 
