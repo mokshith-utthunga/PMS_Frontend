@@ -1,72 +1,113 @@
-// KPI Evidence File Upload Component
-import { useState, useEffect, useRef } from 'react';
+// Manager Evidence File Upload Component
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Upload, File, X, Download, Loader2,EyeIcon } from 'lucide-react';
+import { Upload, File, X, Download, Loader2 } from 'lucide-react';
 import { evaluationService } from '@/services';
 import { useToast } from '@/hooks/use-toast';
-import { API_BASE_URL } from '@/services/api';
 
-interface KPIEvidenceUploadProps {
+interface ManagerEvidenceUploadProps {
   goalId: string;
+  managerReviewId: string;
   empCode: string;
   quarter: number;
   year: number;
-  employeeId: string;
   canEdit: boolean;
   existingFiles?: string[];
   onFilesChange?: (files: string[]) => void;
 }
 
-export function KPIEvidenceUpload({
+export function ManagerEvidenceUpload({
   goalId,
+  managerReviewId,
   empCode,
   quarter,
   year,
-  employeeId,
   canEdit,
   existingFiles = [],
   onFilesChange,
-}: KPIEvidenceUploadProps) {
+}: ManagerEvidenceUploadProps) {
   const [files, setFiles] = useState<string[]>(existingFiles);
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const isInitialMount = useRef(true);
+  const lastSyncedFiles = useRef<string>(JSON.stringify(existingFiles));
+  const justLoadedFromServer = useRef(false);
 
-  // Sync with existingFiles prop
-  useEffect(() => {
-    console.log('[KPIEvidenceUpload] existingFiles prop changed:', existingFiles);
-    if (existingFiles && existingFiles.length > 0) {
-      setFiles(existingFiles);
-    }
-  }, [existingFiles]);
-
-  // Load existing files on mount
-  useEffect(() => {
-    if (goalId && employeeId && quarter) {
-      loadFiles();
-    }
-  }, [goalId, employeeId, quarter]);
-
-  const loadFiles = async () => {
+  // Load existing files from server - useCallback to prevent stale closures
+  const loadFiles = useCallback(async () => {
     try {
       setLoading(true);
-      const result = await evaluationService.kpiEvidence.getFiles(goalId, employeeId, quarter);
-      if (result?.files && Array.isArray(result.files)) {
-        console.log('[KPIEvidenceUpload] Setting files from server:', result.files);
-        setFiles(result.files);
-        onFilesChange?.(result.files);
-      } else {
-        setFiles([]);
-        onFilesChange?.([]);
-      }
+      justLoadedFromServer.current = true; // Set flag to prevent prop sync
+      const result = await evaluationService.managerEvidence.getFiles(goalId, managerReviewId);
+      const serverFiles = result?.files && Array.isArray(result.files) ? result.files : [];
+      const serverFilesStr = JSON.stringify(serverFiles);
+      
+      // Only update state if files actually changed
+      setFiles(prevFiles => {
+        const prevFilesStr = JSON.stringify(prevFiles);
+        
+        if (prevFilesStr !== serverFilesStr) {
+          // Update last synced ref to prevent prop sync from overwriting server data
+          lastSyncedFiles.current = serverFilesStr;
+          // Only notify parent if files changed
+          onFilesChange?.(serverFiles);
+          return serverFiles;
+        }
+        return prevFiles;
+      });
+      
+      // Clear flag after a short delay to allow prop updates from other sources
+      setTimeout(() => {
+        justLoadedFromServer.current = false;
+      }, 100);
     } catch (error) {
-      console.error('[KPIEvidenceUpload] Error loading files:', error);
+      console.error('[ManagerEvidenceUpload] Error loading files:', error);
+      justLoadedFromServer.current = false;
+      // On error, keep existing files state
     } finally {
       setLoading(false);
     }
-  };
+  }, [goalId, managerReviewId, onFilesChange]);
+
+  // Load existing files on mount or when goalId/managerReviewId changes
+  useEffect(() => {
+    if (goalId && managerReviewId) {
+      loadFiles();
+      isInitialMount.current = false;
+    }
+  }, [goalId, managerReviewId, loadFiles]);
+
+  // Sync with existingFiles prop only if it's different from last synced value
+  // This prevents unnecessary updates and loops
+  useEffect(() => {
+    // Skip sync on initial mount (server load handles that)
+    if (isInitialMount.current) return;
+    
+    // Skip sync if we just loaded from server (prevents overwriting server data with prop)
+    if (justLoadedFromServer.current) return;
+    
+    // Only sync if existingFiles is explicitly provided and different from last synced
+    if (existingFiles !== undefined) {
+      const existingFilesStr = JSON.stringify([...existingFiles].sort());
+      const lastSyncedStr = lastSyncedFiles.current;
+      
+      // Only update if truly different (not just a reference change)
+      if (existingFilesStr !== lastSyncedStr) {
+        setFiles(prevFiles => {
+          // Also check if it's different from current state
+          const currentFilesStr = JSON.stringify([...prevFiles].sort());
+          if (existingFilesStr !== currentFilesStr) {
+            lastSyncedFiles.current = existingFilesStr;
+            return existingFiles;
+          }
+          return prevFiles;
+        });
+      }
+    }
+  }, [existingFiles]);
 
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = event.target.files;
@@ -110,7 +151,8 @@ export function KPIEvidenceUpload({
   const uploadFiles = async (fileToUpload: File) => {
     try {
       setUploading(true);
-      const result = await evaluationService.kpiEvidence.upload(
+      const result = await evaluationService.managerEvidence.upload(
+        managerReviewId,
         goalId,
         empCode,
         quarter,
@@ -119,23 +161,29 @@ export function KPIEvidenceUpload({
       );
 
       if (result?.success) {
-        // Backend returns { success: true, files: [fileUrl], message: string }
-        // Get the uploaded file URL from the files array
-        const uploadedFiles = result?.files || result?.data?.files || [];
+        // Retry loading files with exponential backoff to handle backend processing delay
+        let retries = 3;
+        let delay = 500; // Start with 500ms
         
-        if (uploadedFiles.length > 0) {
-          // Update local state with the new file URLs (should be just one file)
-          const newFiles = [...files, ...uploadedFiles];
-          setFiles(newFiles);
-          // Update parent component via onFilesChange (updates evidence field in kpiRatings state)
-          // This updates the evidence field in local state without triggering a refetch
-          onFilesChange?.(newFiles);
+        while (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, delay));
+          await loadFiles();
+          
+          // Check if the uploaded file is now in the list
+          // We can't check by name since we don't know the exact server filename,
+          // so we just verify the count increased or wait a bit more
+          retries--;
+          if (retries > 0) {
+            delay *= 1.5; // Exponential backoff: 500ms, 750ms, 1125ms
+          }
         }
         
         toast({
           title: 'Upload successful',
           description: result?.message || 'File uploaded successfully',
         });
+      } else {
+        throw new Error(result?.message || 'Upload failed');
       }
     } catch (error: any) {
       console.error('Upload error:', error);
@@ -144,6 +192,8 @@ export function KPIEvidenceUpload({
         description: error.message || 'Failed to upload file',
         variant: 'destructive',
       });
+      // Reload files to ensure state is correct even after error
+      await loadFiles();
     } finally {
       setUploading(false);
     }
@@ -153,16 +203,23 @@ export function KPIEvidenceUpload({
     if (!confirm('Are you sure you want to delete this file?')) return;
 
     try {
-      await evaluationService.kpiEvidence.deleteFile(goalId, filePath, empCode, quarter, year);
-      const newFiles = files.filter(f => f !== filePath);
-      setFiles(newFiles);
-      onFilesChange?.(newFiles);
+      // Optimistically update UI
+      const optimisticFiles = files.filter(f => f !== filePath);
+      setFiles(optimisticFiles);
+      
+      await evaluationService.managerEvidence.deleteFile(managerReviewId, goalId, filePath);
+      
+      // Reload from server to confirm deletion and get accurate state
+      await loadFiles();
+      
       toast({
         title: 'File deleted',
         description: 'File has been removed',
       });
     } catch (error: any) {
       console.error('Delete error:', error);
+      // Reload from server to restore correct state if deletion failed
+      await loadFiles();
       toast({
         title: 'Delete failed',
         description: error.message || 'Failed to delete file',
@@ -177,9 +234,7 @@ export function KPIEvidenceUpload({
       return filePath;
     }
     // Backward compatibility: if it's a local path, construct URL
-    const backendUrl = API_BASE_URL || '';
-    const cleanPath = filePath.startsWith('/') ? filePath : `/${filePath}`;
-    return `${backendUrl}/public${cleanPath}`;
+    return filePath;
   };
 
   const getFileName = (filePath: string) => {
@@ -191,7 +246,7 @@ export function KPIEvidenceUpload({
 
   return (
     <div className="space-y-2">
-      <Label>Evidence / Supporting Data</Label>
+      <Label>Manager Evidence / Supporting Documents</Label>
       
       {canEdit && (
         <div className="flex items-center gap-2">

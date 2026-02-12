@@ -166,4 +166,23 @@ export const goalsService = {
         }
       ),
   },
+
+  // ========== Goal Rejection Operations ==========
+  goalRejections: {
+    get: (params: { employee_id?: string; cycle_id?: string; quarter?: number; kra_id?: string; goal_id?: string }) => {
+      const queryParams = new URLSearchParams();
+      if (params.employee_id) queryParams.append('employee_id', params.employee_id);
+      if (params.cycle_id) queryParams.append('cycle_id', params.cycle_id);
+      if (params.quarter) queryParams.append('quarter', params.quarter.toString());
+      if (params.kra_id) queryParams.append('kra_id', params.kra_id);
+      if (params.goal_id) queryParams.append('goal_id', params.goal_id);
+      return api.get<{ data: any[] }>(`/api/goals/goal-rejections?${queryParams.toString()}`);
+    },
+    reject: (data: { kra_id?: string; goal_id?: string; rejection_reason: string; quarter: number; cycle_id: string; employee_id: string }) =>
+      api.post<{ data: any }>('/api/goals/reject-goal', data),
+    rejectAll: (data: { rejection_reason: string; quarter: number; cycle_id: string; employee_id: string; kra_ids?: string[]; goal_ids?: string[] }) =>
+      api.post<{ data: { rejected_kras: string[]; rejected_goals: string[]; errors: any[]; total_rejected: number; total_errors: number } }>('/api/goals/reject-all-goals', data),
+    resubmit: (rejectionId: string) =>
+      api.post<{ data: any }>('/api/goals/resubmit-goal', { rejection_id: rejectionId }),
+  },
 };

@@ -578,11 +578,14 @@ export default function CycleForm() {
       if (nextQuarterStart) {
         const currentEnd = new Date(currentQuarterEnd);
         const nextStart = new Date(nextQuarterStart);
-        currentEnd.setHours(23, 59, 59, 999);
-        nextStart.setHours(0, 0, 0, 0);
         
-        if (currentEnd >= nextStart) {
-          errors[`${quarter}_quarter_end_date`] = `Quarter ${quarterNum} end date must be before Quarter ${quarterNum + 1} start date`;
+        // Compare dates only (ignore time) - allow same day
+        const currentEndDate = new Date(currentEnd.getFullYear(), currentEnd.getMonth(), currentEnd.getDate());
+        const nextStartDate = new Date(nextStart.getFullYear(), nextStart.getMonth(), nextStart.getDate());
+        
+        // Q1 end date must be before or equal to Q2 start date (same day is valid)
+        if (currentEndDate > nextStartDate) {
+          errors[`${quarter}_quarter_end_date`] = `Quarter ${quarterNum} end date must be before or equal to Quarter ${quarterNum + 1} start date`;
         }
       }
     }
@@ -596,11 +599,14 @@ export default function CycleForm() {
       if (prevQuarterEnd && currentQuarterStart) {
         const prevEnd = new Date(prevQuarterEnd);
         const currentStart = new Date(currentQuarterStart);
-        prevEnd.setHours(23, 59, 59, 999);
-        currentStart.setHours(0, 0, 0, 0);
         
-        if (prevEnd >= currentStart) {
-          errors[`${quarter}_quarter_start_date`] = `Quarter ${quarterNum} start date must be after Quarter ${quarterNum - 1} end date`;
+        // Compare dates only (ignore time) - allow same day
+        const prevEndDate = new Date(prevEnd.getFullYear(), prevEnd.getMonth(), prevEnd.getDate());
+        const currentStartDate = new Date(currentStart.getFullYear(), currentStart.getMonth(), currentStart.getDate());
+        
+        // Q2 start date must be after or equal to Q1 end date (same day is valid)
+        if (prevEndDate > currentStartDate) {
+          errors[`${quarter}_quarter_start_date`] = `Quarter ${quarterNum} start date must be after or equal to Quarter ${quarterNum - 1} end date`;
         }
       }
     }

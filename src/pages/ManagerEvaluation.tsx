@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import MainLayout from '@/components/layout/MainLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,12 +42,16 @@ import {
   XCircle,
   ArrowRight,
   Clock,
+  Upload,
+  File as FileIcon,
+  X,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DualAchievementSlider, parseNumericTarget } from '@/components/evaluation/AchievementSlider';
 import { CalibrationDisplay, calculateRatingFromCalibration } from '@/components/evaluation/CalibrationDisplay';
 import { EvaluationPeriodTabs } from '@/components/evaluation/EvaluationPeriodTabs';
 import { KPIEvidenceView } from '@/components/evaluation/KPIEvidenceView';
+import { ManagerEvidenceUpload } from '@/components/evaluation/ManagerEvidenceUpload';
 import { 
   calculateAllKRARatings, 
   calculateQuarterRating, 
@@ -158,6 +162,7 @@ interface GoalManagerRating {
   comments: string;
   manager_achieved_value?: number | null;
   progress_percentage?: number | null;
+  evidence?: string | null;
 }
 
 interface RatingScaleDisplay {
@@ -254,6 +259,10 @@ export default function ManagerEvaluation() {
   const [rejectionDialogOpen, setRejectionDialogOpen] = useState(false);
   const [rejectingItem, setRejectingItem] = useState<{ type: 'kra' | 'kpi'; id: string; title: string } | null>(null);
   const [rejectionReason, setRejectionReason] = useState('');
+  const [rejectAllDialogOpen, setRejectAllDialogOpen] = useState(false);
+  const [rejectAllReason, setRejectAllReason] = useState('');
+  const [rejectAllFiles, setRejectAllFiles] = useState<File[]>([]);
+  const rejectAllFileInputRef = useRef<HTMLInputElement>(null);
   
   // Fetch transition data for the selected quarter
   const { transition, loading: transitionLoading } = useTransition({
@@ -720,17 +729,12 @@ export default function ManagerEvaluation() {
         setGoalSelfRatings(qGoalRatingsMap[4] || {});
       }
 
-      // Fetch or create quarterly manager review (instead of manager_evaluations)
-      // For transition employees, fetch period-specific manager review based on manager role
-      // activeCycleFromContext is already checked above, so it's safe to use .id
+
       let mgrReviewsResult;
       
-      // For transition employees, we need to fetch ALL manager reviews to check submission status
-      // This allows us to check if pre-transition review has been submitted (by old manager)
-      // and if post-transition review has been submitted (by new manager)
+
       if (transition && transition.quarter === selectedQuarter) {
-        // Fetch pre-transition and post-transition reviews separately to bypass manager role filtering
-        // This ensures we can check submission status for both periods
+
         const [preTransitionResult, postTransitionResult, allReviewsResult] = await Promise.all([
           evaluationService.managerReviews.get(
             employeeId, 
@@ -767,81 +771,59 @@ export default function ManagerEvaluation() {
         );
         
         mgrReviewsResult = { data: uniqueReviews };
-        console.log(`[ManagerEvaluation] Fetched all manager reviews for transition employee (quarter ${selectedQuarter}):`, {
-          preTransition: preTransitionResult.data,
-          postTransition: postTransitionResult.data,
-          allReviews: allReviewsResult.data,
-          combined: uniqueReviews
-        });
+
       } else {
         // No transition for this quarter, fetch all manager reviews normally
         mgrReviewsResult = await evaluationService.managerReviews.get(employeeId, activeCycleFromContext!.id);
       }
       
-      // Create maps for both pre and post-transition reviews
       const preTransitionReview: any = null;
       const postTransitionReview: any = null;
       const mgrReviewsByQuarter: Record<number, any> = {};
       
       (mgrReviewsResult.data || []).forEach((r: any) => {
-        // For transition employees, separate pre and post-transition reviews
         if (transition && transition.quarter === r.quarter && r.transition_id === transition.id) {
           if (r.period_type === 'pre_transition') {
-            // Store pre-transition review separately
             if (!preTransitionReview || (r.status === 'submitted' && preTransitionReview.status !== 'submitted')) {
-              // Prefer submitted review if multiple exist
             }
           } else if (r.period_type === 'post_transition') {
-            // Store post-transition review separately
             if (!postTransitionReview || (r.status === 'submitted' && postTransitionReview.status !== 'submitted')) {
-              // Prefer submitted review if multiple exist
             }
           }
         }
         
-        // Filter based on manager role AND nestedTab for the main review to display
         if (transition && transition.quarter === r.quarter) {
           const isPostTransition = r.period_type === 'post_transition';
           const isPreTransition = r.period_type === 'pre_transition';
           
-          // Filter based on manager role AND nestedTab state
           let shouldInclude = false;
           
           if (computedManagerRole === 'new_manager' && isPostTransition && r.transition_id === transition.id) {
-            // New manager: only post-transition
             shouldInclude = true;
           } else if (computedManagerRole === 'old_manager' && isPreTransition && r.transition_id === transition.id) {
-            // Old manager: only pre-transition
             shouldInclude = true;
           } else if (computedManagerRole === 'same_manager' || !computedManagerRole) {
-            // Same manager or no role: filter based on nestedTab
             if (isTransitionTab && isPostTransition && r.transition_id === transition.id) {
-              // Transition tab selected: include post-transition
               shouldInclude = true;
             } else if (!isTransitionTab && isPreTransition && r.transition_id === transition.id) {
-              // Pre-transition tab selected: include pre-transition
               shouldInclude = true;
             }
           }
           
           if (shouldInclude) {
-            // Use the most recent or submitted review if multiple exist
             if (!mgrReviewsByQuarter[r.quarter] || (r.status === 'submitted' && mgrReviewsByQuarter[r.quarter].status !== 'submitted')) {
               mgrReviewsByQuarter[r.quarter] = r;
             }
           }
         } else {
-          // No transition for this quarter, include normally
           mgrReviewsByQuarter[r.quarter] = r;
         }
       });
 
-      // Find pre and post-transition reviews separately for submission status checking
       let preTransitionReviewForStatus: any = null;
       let postTransitionReviewForStatus: any = null;
       
       if (transition && transition.quarter === selectedQuarter) {
-        console.log(`[ManagerEvaluation] Checking manager reviews for transition (quarter ${selectedQuarter}, transition_id: ${transition.id}):`, mgrReviewsResult.data);
         (mgrReviewsResult.data || []).forEach((r: any) => {
           if (r.quarter === selectedQuarter && r.transition_id === transition.id) {
             if (r.period_type === 'pre_transition') {
@@ -855,7 +837,6 @@ export default function ManagerEvaluation() {
             }
           }
         });
-        console.log(`[ManagerEvaluation] Pre-transition review found:`, preTransitionReviewForStatus);
         console.log(`[ManagerEvaluation] Post-transition review found:`, postTransitionReviewForStatus);
       }
 
@@ -867,49 +848,24 @@ export default function ManagerEvaluation() {
       if (transition && transition.quarter === selectedQuarter) {
         if (!preTransitionReviewForStatus && existingReview && existingReview.period_type === 'pre_transition' && existingReview.transition_id === transition.id) {
           preTransitionReviewForStatus = existingReview;
-          console.log(`[ManagerEvaluation] Using existingReview as pre-transition review fallback:`, {
-            existingReview: {
-              id: existingReview.id,
-              status: existingReview.status,
-              period_type: existingReview.period_type,
-              transition_id: existingReview.transition_id
-            }
-          });
+         
         }
         if (!postTransitionReviewForStatus && existingReview && existingReview.period_type === 'post_transition' && existingReview.transition_id === transition.id) {
           postTransitionReviewForStatus = existingReview;
-          console.log(`[ManagerEvaluation] Using existingReview as post-transition review fallback:`, {
-            existingReview: {
-              id: existingReview.id,
-              status: existingReview.status,
-              period_type: existingReview.period_type,
-              transition_id: existingReview.transition_id
-            }
-          });
+  
         }
         
-        // Also check all reviews in mgrReviewsResult.data for fallback
-        // This ensures we catch reviews that might not be in mgrReviewsByQuarter
+    
         if (!preTransitionReviewForStatus || !postTransitionReviewForStatus) {
           (mgrReviewsResult.data || []).forEach((r: any) => {
             if (r.quarter === selectedQuarter && r.transition_id === transition.id) {
               if (!preTransitionReviewForStatus && r.period_type === 'pre_transition') {
                 preTransitionReviewForStatus = r;
-                console.log(`[ManagerEvaluation] Found pre-transition review in all reviews:`, {
-                  id: r.id,
-                  status: r.status,
-                  period_type: r.period_type,
-                  transition_id: r.transition_id
-                });
+         
               }
               if (!postTransitionReviewForStatus && r.period_type === 'post_transition') {
                 postTransitionReviewForStatus = r;
-                console.log(`[ManagerEvaluation] Found post-transition review in all reviews:`, {
-                  id: r.id,
-                  status: r.status,
-                  period_type: r.period_type,
-                  transition_id: r.transition_id
-                });
+                
               }
             }
           });
@@ -953,6 +909,7 @@ export default function ManagerEvaluation() {
                 comments: r.comments || '',
                 manager_achieved_value: managerAchievedValue,
                 progress_percentage: r.progress_percentage,
+                evidence: r.evidence || null,
               };
             });
           } catch (error) {
@@ -982,6 +939,65 @@ export default function ManagerEvaluation() {
         });
         setQuarterlyRatings(qRatings as any);
       } else {
+        // No existing review - create one automatically so manager can upload evidence
+        // This allows managers to upload evidence before submitting the review
+        try {
+          let periodType: 'full_quarter' | 'pre_transition' | 'post_transition' |null |undefined = undefined;
+          let transitionId: string | undefined = undefined;
+          let periodStartDate: string | undefined = undefined;
+          let periodEndDate: string | undefined = undefined;
+
+          if (transition && transition.quarter === selectedQuarter) {
+            transitionId = transition.id;
+            // Determine period type based on manager role and nested tab
+            // Use the computed managerRole from useMemo instead of calling a non-existent method
+
+            if (managerRole === 'new_manager') {
+              periodType = 'post_transition';
+              periodStartDate = transition.post_period_start_date || undefined;
+              periodEndDate = transition.post_period_end_date || undefined;
+            } else if (managerRole === 'old_manager') {
+              periodType = 'pre_transition';
+              periodStartDate = transition.pre_period_start_date || undefined;
+              periodEndDate = transition.pre_period_end_date || undefined;
+            } else if (managerRole === 'same_manager' || !managerRole) {
+              if (nestedTab === 'transition') {
+                periodType = 'post_transition';
+                periodStartDate = transition.post_period_start_date || undefined;
+                periodEndDate = transition.post_period_end_date || undefined;
+              } else {
+                periodType = 'pre_transition';
+                periodStartDate = transition.pre_period_start_date || undefined;
+                periodEndDate = transition.pre_period_end_date || undefined;
+              }
+            }
+          }
+
+          // Create manager review with 'in_progress' status
+          const createReviewResult = await evaluationService.managerReviews.upsert({
+            employee_id: employeeId,
+            cycle_id: activeCycle.id,
+            quarter: selectedQuarter,
+            reviewer_id: managerId,
+            overall_comments: '',
+            guidance: '',
+            calculated_overall_rating: null,
+            status: 'in_progress',
+            period_type: periodType,
+            transition_id: transitionId,
+            period_start_date: periodStartDate,
+            period_end_date: periodEndDate,
+          });
+
+          if (createReviewResult.data) {
+            setManagerEvaluation(createReviewResult.data);
+            console.log('[ManagerEvaluation] Created manager review for evidence upload:', createReviewResult.data.id);
+          }
+        } catch (error) {
+          console.error('[ManagerEvaluation] Error creating manager review:', error);
+          // Continue even if creation fails - manager can still rate, just can't upload evidence yet
+        }
+
         // Initialize empty manager ratings
         const emptyRatingsMap: Record<string, GoalManagerRating> = {};
         filteredKpis.forEach((g: any) => {
@@ -1204,6 +1220,22 @@ export default function ManagerEvaluation() {
     }
     setExpandedKRAs(newExpanded);
   };
+
+  // Helper function to parse evidence files from manager feedback
+  const parseEvidenceFiles = useCallback((goalId: string): string[] => {
+    const feedback = goalManagerRatings[goalId];
+    if (feedback?.evidence) {
+      try {
+        const parsed = JSON.parse(feedback.evidence);
+        if (Array.isArray(parsed)) {
+          return parsed;
+        }
+      } catch (e) {
+        // Not JSON, return empty array
+      }
+    }
+    return [];
+  }, [goalManagerRatings]);
 
   const handleGoalRatingChange = (goalId: string, field: keyof GoalManagerRating, value: any) => {
     setGoalManagerRatings((prev) => {
@@ -1479,47 +1511,545 @@ export default function ManagerEvaluation() {
       });
 
       // Refresh rejections and manager evaluation
-      const rejectionsResult = await evaluationService.kraKpiRejections.get({
-        manager_review_id: currentManagerEvaluation.id,
-        employee_id: employeeId,
-        cycle_id: activeCycle.id,
-        quarter: selectedQuarter,
-      });
-      
-      const rejectionsMap: Record<string, any> = {};
-      (rejectionsResult.data || []).forEach((rejection: any) => {
-        const key = rejection.kra_id || rejection.goal_id;
-        if (key) {
-          rejectionsMap[key] = rejection;
-        }
-      });
-      setKraKpiRejections(rejectionsMap);
+      try {
+        const rejectionsResult = await evaluationService.kraKpiRejections.get({
+          manager_review_id: currentManagerEvaluation.id,
+          employee_id: employeeId,
+          cycle_id: activeCycle.id,
+          quarter: selectedQuarter,
+        });
+        
+        const rejectionsMap: Record<string, any> = {};
+        (rejectionsResult.data || []).forEach((rejection: any) => {
+          const key = rejection.kra_id || rejection.goal_id;
+          if (key) {
+            rejectionsMap[key] = rejection;
+          }
+        });
+        setKraKpiRejections(rejectionsMap);
+      } catch (error: any) {
+        console.error('Error refreshing rejections:', error);
+        toast({
+          title: 'Warning',
+          description: 'Rejection was processed, but failed to refresh the list. Please refresh the page.',
+          variant: 'destructive',
+        });
+      }
 
       // Refresh manager evaluation to get updated status
-      const mgrReviewResult = await evaluationService.managerReviews.getByQuarter(
-        employeeId,
-        activeCycle.id,
-        selectedQuarter,
-        currentManagerEvaluation.period_type,
-        currentManagerEvaluation.transition_id
-      );
-      if (mgrReviewResult.data) {
-        setManagerEvaluation(mgrReviewResult.data);
+      try {
+        const mgrReviewResult = await evaluationService.managerReviews.getByQuarter(
+          employeeId,
+          activeCycle.id,
+          selectedQuarter,
+          currentManagerEvaluation.period_type,
+          currentManagerEvaluation.transition_id
+        );
+        if (mgrReviewResult.data) {
+          setManagerEvaluation(mgrReviewResult.data);
+        }
+      } catch (error: any) {
+        console.error('Error refreshing manager evaluation:', error);
+        toast({
+          title: 'Warning',
+          description: 'Rejection was processed, but failed to refresh manager evaluation status.',
+          variant: 'destructive',
+        });
       }
 
       setRejectionDialogOpen(false);
       setRejectingItem(null);
       setRejectionReason('');
     } catch (error: any) {
+      console.error('Error in rejection operation:', error);
+      // Extract error message - ApiError includes hint in message, but check for fallbacks
+      const errorMessage = error.message || error.error || 'Failed to reject KRA/KPI';
+      
       toast({
         title: 'Error',
-        description: error.message || 'Failed to reject KRA/KPI',
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {
       setSaving(false);
     }
   }, [rejectingItem, rejectionReason, managerEvaluation, activeCycle, employeeId, selectedQuarter, managerId, transition, managerRole, nestedTab, quarterlyCycles, toast]);
+
+  // Handle reject all KRAs and KPIs
+  const handleRejectAll = useCallback(() => {
+    setRejectAllDialogOpen(true);
+    setRejectAllReason('');
+    setRejectAllFiles([]);
+  }, []);
+
+  const handleConfirmRejectAll = useCallback(async () => {
+    console.log('[Reject All] handleConfirmRejectAll called');
+    console.log('[Reject All] rejectAllFiles at start:', rejectAllFiles);
+    console.log('[Reject All] rejectAllFiles.length at start:', rejectAllFiles.length);
+    
+    if (!rejectAllReason.trim() || !activeCycle || !employeeId || !managerId) {
+      toast({
+        title: 'Error',
+        description: !rejectAllReason.trim() ? 'Please provide a rejection reason' : 'Missing required information',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Prevent multiple simultaneous calls
+    if (saving) {
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // If manager evaluation doesn't exist, create it first
+      let currentManagerEvaluation = managerEvaluation;
+      if (!currentManagerEvaluation?.id) {
+        // Get transition info if applicable
+        let periodType: 'full_quarter' | 'pre_transition' | 'post_transition' | null = null;
+        let transitionId: string | null = null;
+        let periodStartDate: string | undefined = undefined;
+        let periodEndDate: string | undefined = undefined;
+
+        if (transition && transition.quarter === selectedQuarter) {
+          transitionId = transition.id;
+          
+          if (managerRole === 'new_manager') {
+            periodType = 'post_transition';
+            periodStartDate = transition.post_period_start_date || undefined;
+            periodEndDate = transition.post_period_end_date || undefined;
+          } else if (managerRole === 'old_manager') {
+            periodType = 'pre_transition';
+            periodStartDate = transition.pre_period_start_date || undefined;
+            periodEndDate = transition.pre_period_end_date || undefined;
+          } else if (managerRole === 'same_manager' || !managerRole) {
+            if (nestedTab === 'transition') {
+              periodType = 'post_transition';
+              periodStartDate = transition.post_period_start_date || undefined;
+              periodEndDate = transition.post_period_end_date || undefined;
+            } else {
+              periodType = 'pre_transition';
+              periodStartDate = transition.pre_period_start_date || undefined;
+              periodEndDate = transition.pre_period_end_date || undefined;
+            }
+          }
+        }
+
+        // Create manager review
+        const createReviewResult = await evaluationService.managerReviews.upsert({
+          employee_id: employeeId,
+          cycle_id: activeCycle.id,
+          quarter: selectedQuarter,
+          reviewer_id: managerId,
+          overall_comments: '',
+          guidance: '',
+          calculated_overall_rating: null,
+          status: 'in_progress',
+          period_type: periodType,
+          transition_id: transitionId,
+          period_start_date: periodStartDate,
+          period_end_date: periodEndDate,
+        });
+
+        if (createReviewResult.data) {
+          currentManagerEvaluation = createReviewResult.data;
+          setManagerEvaluation(createReviewResult.data);
+        } else {
+          throw new Error('Failed to create manager review');
+        }
+      }
+
+      // Get all KRAs and KPIs for the current quarter/period based on context
+      // Use the same filtering logic as in renderQuarterlyRatingContent
+      const relevantKras = evaluationMode === 'quarterly' 
+        ? kras.filter((k: any) => k.quarter === selectedQuarter)
+        : kras;
+      const relevantKpis = evaluationMode === 'quarterly' 
+        ? kpis.filter((k: any) => k.quarter === selectedQuarter)
+        : kpis;
+
+      // Filter by transition period if applicable - use the same logic as displayPreTransitionKras/displayPostTransitionKras
+      let krasToReject = relevantKras;
+      let kpisToReject = relevantKpis;
+
+      if (transition && transition.quarter === selectedQuarter) {
+        const transitionIdStr = transition.id ? String(transition.id) : null;
+        
+        if (managerRole === 'old_manager' || (managerRole === 'same_manager' && nestedTab === 'pre-transition')) {
+          // Pre-transition: include KRAs/KPIs with no transition_id, full_quarter, or pre_transition
+          krasToReject = relevantKras.filter((k: any) => {
+            if (!k.transition_id) return true;
+            if (k.period_type === 'full_quarter') return true;
+            return k.period_type === 'pre_transition' && String(k.transition_id) === transitionIdStr;
+          });
+          kpisToReject = relevantKpis.filter((k: any) => {
+            if (!k.transition_id) return true;
+            if (k.period_type === 'full_quarter') return true;
+            return k.period_type === 'pre_transition' && String(k.transition_id) === transitionIdStr;
+          });
+        } else if (managerRole === 'new_manager' || (managerRole === 'same_manager' && nestedTab === 'transition')) {
+          // Post-transition: only include post_transition KRAs/KPIs
+          krasToReject = relevantKras.filter((k: any) => 
+            k.period_type === 'post_transition' && k.transition_id && String(k.transition_id) === transitionIdStr
+          );
+          kpisToReject = relevantKpis.filter((k: any) => 
+            k.period_type === 'post_transition' && k.transition_id && String(k.transition_id) === transitionIdStr
+          );
+        }
+      } else {
+        // No transition - use full quarter KRAs/KPIs (same as fullQuarterKras/fullQuarterKpis logic)
+        krasToReject = relevantKras.filter((k: any) => !k.period_type || k.period_type === 'full_quarter' || !k.transition_id);
+        kpisToReject = relevantKpis.filter((k: any) => !k.period_type || k.period_type === 'full_quarter' || !k.transition_id);
+      }
+
+      // Check if all items are already rejected
+      const allKrasRejected = krasToReject.length === 0 || krasToReject.every((kra: any) => {
+        const rejection = kraKpiRejections[kra.id];
+        return rejection && !rejection.resubmitted_at;
+      });
+      const allKpisRejected = kpisToReject.length === 0 || kpisToReject.every((kpi: any) => {
+        const rejection = kraKpiRejections[kpi.id];
+        return rejection && !rejection.resubmitted_at;
+      });
+
+      if (allKrasRejected && allKpisRejected && krasToReject.length > 0) {
+        toast({
+          title: 'Already Rejected',
+          description: 'All KRAs and KPIs have already been rejected.',
+          variant: 'destructive',
+        });
+        setRejectAllDialogOpen(false);
+        setSaving(false);
+        return;
+      }
+
+      // Reject all KRAs
+      const kraRejections = [];
+      const kraErrors: Array<{ id: string; title: string; error: string }> = [];
+      const processedKraIds = new Set<string>(); // Track processed KRAs to avoid duplicates
+      
+      console.log(`[Reject All] Processing ${krasToReject.length} KRAs and ${kpisToReject.length} KPIs`);
+      console.log(`[Reject All] rejectAllFiles state:`, rejectAllFiles);
+      console.log(`[Reject All] rejectAllFiles.length:`, rejectAllFiles.length);
+      console.log(`[Reject All] employee?.emp_code:`, employee?.emp_code);
+      
+      // Upload rejection documents if any files are selected
+      let rejectionDocumentPaths: string[] = [];
+      if (rejectAllFiles.length > 0 && employee?.emp_code) {
+        console.log(`[Reject All] Starting file upload for ${rejectAllFiles.length} files`);
+        try {
+          // Use performance cycle year (matches backend validation)
+          // Backend validates year against cycle year, not quarter calendar year
+          const year = activeCycle?.year || new Date().getFullYear();
+          console.log('[Reject All] Using year for upload:', year, 'from activeCycle.year:', activeCycle?.year);
+          
+          // Upload each file
+          for (const file of rejectAllFiles) {
+            try {
+              console.log('[Reject All] Uploading file:', file.name);
+              const result = await evaluationService.kraKpiRejections.uploadDocuments(
+                employee.emp_code,
+                selectedQuarter,
+                year,
+                file
+              );
+              console.log('[Reject All] Upload result:', result);
+              // Handle different response structures
+              const fileUrl = result?.fileUrl || result?.data?.fileUrl || result?.url;
+              if (fileUrl) {
+                rejectionDocumentPaths.push(fileUrl);
+                console.log('[Reject All] Added file URL:', fileUrl);
+              } else {
+                console.warn('[Reject All] Upload result missing fileUrl. Full result:', JSON.stringify(result, null, 2));
+                toast({
+                  title: 'Warning',
+                  description: `File ${file.name} uploaded but URL not returned. Check console for details.`,
+                  variant: 'default',
+                });
+              }
+            } catch (fileError: any) {
+              console.error(`[Reject All] Error uploading file ${file.name}:`, fileError);
+              toast({
+                title: 'File upload error',
+                description: `Failed to upload ${file.name}: ${fileError.message || 'Unknown error'}`,
+                variant: 'destructive',
+              });
+            }
+          }
+          console.log('[Reject All] Final rejectionDocumentPaths:', rejectionDocumentPaths);
+          if (rejectionDocumentPaths.length === 0 && rejectAllFiles.length > 0) {
+            console.warn('[Reject All] WARNING: Files were selected but no URLs were captured!');
+            toast({
+              title: 'Warning',
+              description: 'Files were selected but failed to upload. Rejection will continue without documents.',
+              variant: 'default',
+            });
+          }
+        } catch (error: any) {
+          console.error('[Reject All] Error uploading rejection documents:', error);
+          toast({
+            title: 'Warning',
+            description: `Failed to upload documents: ${error.message || 'Unknown error'}. Continuing with rejection...`,
+            variant: 'default',
+          });
+          // Don't throw - continue with rejection even if file upload fails
+        }
+      } else if (rejectAllFiles.length > 0 && !employee?.emp_code) {
+        console.warn('[Reject All] WARNING: Files selected but employee emp_code is missing!');
+        toast({
+          title: 'Warning',
+          description: 'Cannot upload files: Employee code is missing. Rejection will continue without documents.',
+          variant: 'default',
+        });
+      }
+      
+      console.log('[Reject All] About to reject with documents array:', rejectionDocumentPaths);
+      
+      for (const kra of krasToReject) {
+        // Skip if already processed (duplicate check)
+        if (processedKraIds.has(kra.id)) {
+          console.warn(`[Reject All] Skipping duplicate KRA: ${kra.id}`);
+          continue;
+        }
+        processedKraIds.add(kra.id);
+        
+        const existingRejection = kraKpiRejections[kra.id];
+        if (!existingRejection || existingRejection.resubmitted_at) {
+          try {
+            console.log(`[Reject All] Rejecting KRA: ${kra.id} - ${kra.title}`);
+            // Pass the array directly - api.post will JSON.stringify the entire params object
+            // So we don't need to stringify rejectionDocumentPaths here
+            const rejectionDocumentsValue = rejectionDocumentPaths.length > 0 ? JSON.stringify(rejectionDocumentPaths) : undefined;
+            console.log(`[Reject All] Rejecting KRA ${kra.id} with documents array:`, rejectionDocumentPaths);
+            console.log(`[Reject All] Rejecting KRA ${kra.id} with documents JSON string:`, rejectionDocumentsValue);
+            const rejectionResult = await evaluationService.kraKpiRejections.reject({
+              manager_review_id: currentManagerEvaluation.id,
+              kra_id: kra.id,
+              rejection_reason: rejectAllReason.trim(),
+              quarter: selectedQuarter,
+              cycle_id: activeCycle.id,
+              employee_id: employeeId,
+              rejection_documents: rejectionDocumentsValue,
+            });
+            console.log(`[Reject All] KRA rejection result:`, rejectionResult);
+            kraRejections.push(kra.id);
+            // Immediately update state to disable button
+            if (rejectionResult.data) {
+              setKraKpiRejections((prev: Record<string, any>) => ({
+                ...prev,
+                [kra.id]: rejectionResult.data
+              }));
+            }
+          } catch (error: any) {
+            console.error(`Failed to reject KRA ${kra.id}:`, error);
+            // Extract error message - ApiError includes hint in message, but check for fallbacks
+            const errorMessage = error.message || error.error || 'Failed to reject KRA';
+            
+            kraErrors.push({
+              id: kra.id,
+              title: kra.title || 'Unknown KRA',
+              error: errorMessage
+            });
+            // Show individual error toast
+            toast({
+              title: 'Error rejecting KRA',
+              description: `Failed to reject "${kra.title || 'KRA'}": ${errorMessage}`,
+              variant: 'destructive',
+            });
+            // Continue with other rejections even if one fails
+          }
+        }
+      }
+
+      // Reject all KPIs
+      const kpiRejections = [];
+      const kpiErrors: Array<{ id: string; title: string; error: string }> = [];
+      const processedKpiIds = new Set<string>(); // Track processed KPIs to avoid duplicates
+      
+      for (const kpi of kpisToReject) {
+        // Skip if already processed (duplicate check)
+        if (processedKpiIds.has(kpi.id)) {
+          console.warn(`[Reject All] Skipping duplicate KPI: ${kpi.id}`);
+          continue;
+        }
+        processedKpiIds.add(kpi.id);
+        
+        const existingRejection = kraKpiRejections[kpi.id];
+        if (!existingRejection || existingRejection.resubmitted_at) {
+          try {
+            console.log(`[Reject All] Rejecting KPI: ${kpi.id} - ${kpi.title}`);
+            // Pass the array directly - api.post will JSON.stringify the entire params object
+            // So we don't need to stringify rejectionDocumentPaths here
+            const rejectionDocumentsValue = rejectionDocumentPaths.length > 0 ? JSON.stringify(rejectionDocumentPaths) : undefined;
+            console.log(`[Reject All] Rejecting KPI ${kpi.id} with documents array:`, rejectionDocumentPaths);
+            console.log(`[Reject All] Rejecting KPI ${kpi.id} with documents JSON string:`, rejectionDocumentsValue);
+            const rejectionResult = await evaluationService.kraKpiRejections.reject({
+              manager_review_id: currentManagerEvaluation.id,
+              goal_id: kpi.id,
+              rejection_reason: rejectAllReason.trim(),
+              quarter: selectedQuarter,
+              cycle_id: activeCycle.id,
+              employee_id: employeeId,
+              rejection_documents: rejectionDocumentsValue,
+            });
+            console.log(`[Reject All] KPI rejection result:`, rejectionResult);
+            kpiRejections.push(kpi.id);
+            // Immediately update state to disable button
+            if (rejectionResult.data) {
+              setKraKpiRejections((prev: Record<string, any>) => ({
+                ...prev,
+                [kpi.id]: rejectionResult.data
+              }));
+            }
+          } catch (error: any) {
+            console.error(`Failed to reject KPI ${kpi.id}:`, error);
+            // Extract error message - ApiError includes hint in message, but check for fallbacks
+            const errorMessage = error.message || error.error || 'Failed to reject KPI';
+            
+            kpiErrors.push({
+              id: kpi.id,
+              title: kpi.title || 'Unknown KPI',
+              error: errorMessage
+            });
+            // Show individual error toast
+            toast({
+              title: 'Error rejecting KPI',
+              description: `Failed to reject "${kpi.title || 'KPI'}": ${errorMessage}`,
+              variant: 'destructive',
+            });
+            // Continue with other rejections even if one fails
+          }
+        }
+      }
+
+      // Show summary toast
+      const totalRejected = kraRejections.length + kpiRejections.length;
+      const totalErrors = kraErrors.length + kpiErrors.length;
+      const totalItems = krasToReject.length + kpisToReject.length;
+      const totalSkipped = totalItems - totalRejected - totalErrors;
+      
+      // Check if all errors are due to "already rejected"
+      const allErrorsAreAlreadyRejected = totalErrors > 0 && kraErrors.every(e => 
+        e.error.includes('already been rejected') || e.error.includes('Cannot reject again')
+      ) && kpiErrors.every(e => 
+        e.error.includes('already been rejected') || e.error.includes('Cannot reject again')
+      );
+      
+      // If all items were skipped (already rejected), show appropriate message
+      if (totalRejected === 0 && totalErrors === 0 && totalSkipped > 0) {
+        toast({
+          title: 'Already Rejected',
+          description: 'All KRAs and KPIs have already been rejected.',
+          variant: 'destructive',
+        });
+      } else if (totalRejected === 0 && totalErrors > 0) {
+        // All items failed
+        if (allErrorsAreAlreadyRejected) {
+          toast({
+            title: 'Already Rejected',
+            description: 'All KRAs and KPIs have already been rejected.',
+            variant: 'destructive',
+          });
+        } else {
+          toast({
+            title: 'Rejection Failed',
+            description: `Failed to reject all ${totalErrors} item(s). Check individual error messages above.`,
+            variant: 'destructive',
+          });
+        }
+      } else if (totalErrors > 0) {
+        // Partial success
+        toast({
+          title: 'Partial rejection completed',
+          description: `Successfully rejected ${totalRejected} item(s), but ${totalErrors} item(s) failed. Check individual error messages above.`,
+          variant: 'default',
+        });
+      } else if (totalRejected > 0) {
+        // All successful
+        toast({
+          title: 'Rejection submitted',
+          description: `Successfully rejected ${kraRejections.length} KRA(s) and ${kpiRejections.length} KPI(s).`,
+        });
+      } else {
+        // No items to process
+        toast({
+          title: 'No items to reject',
+          description: 'There are no KRAs or KPIs available to reject.',
+          variant: 'default',
+        });
+      }
+
+      // Refresh rejections and manager evaluation
+      try {
+        const rejectionsResult = await evaluationService.kraKpiRejections.get({
+          manager_review_id: currentManagerEvaluation.id,
+          employee_id: employeeId,
+          cycle_id: activeCycle.id,
+          quarter: selectedQuarter,
+        });
+        
+        const rejectionsMap: Record<string, any> = {};
+        (rejectionsResult.data || []).forEach((rejection: any) => {
+          const key = rejection.kra_id || rejection.goal_id;
+          if (key) {
+            rejectionsMap[key] = rejection;
+          }
+        });
+        setKraKpiRejections(rejectionsMap);
+      } catch (error: any) {
+        console.error('Error refreshing rejections:', error);
+        toast({
+          title: 'Warning',
+          description: 'Rejections were processed, but failed to refresh the list. Please refresh the page.',
+          variant: 'destructive',
+        });
+      }
+
+      // Refresh manager evaluation to get updated status
+      try {
+        const mgrReviewResult = await evaluationService.managerReviews.getByQuarter(
+          employeeId,
+          activeCycle.id,
+          selectedQuarter,
+          currentManagerEvaluation.period_type,
+          currentManagerEvaluation.transition_id
+        );
+        if (mgrReviewResult.data) {
+          setManagerEvaluation(mgrReviewResult.data);
+        }
+      } catch (error: any) {
+        console.error('Error refreshing manager evaluation:', error);
+        toast({
+          title: 'Warning',
+          description: 'Rejections were processed, but failed to refresh manager evaluation status.',
+          variant: 'destructive',
+        });
+      }
+
+      setRejectAllDialogOpen(false);
+      setRejectAllReason('');
+      setRejectAllFiles([]);
+      
+      // Refresh the page to ensure all state is properly updated
+      // Only reload if there were successful rejections or if all items were already rejected
+      if (totalRejected > 0 || (totalRejected === 0 && totalErrors === 0 && totalSkipped > 0)) {
+        // setTimeout(() => {
+        //   window.location.reload();
+        // }, 1000); // Small delay to allow toast to show
+      } else {
+        setSaving(false);
+      }
+    } catch (error: any) {
+      console.error('Error in reject all operation:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to reject all KRAs/KPIs',
+        variant: 'destructive',
+      });
+      setSaving(false);
+    }
+  }, [rejectAllReason, rejectAllFiles, employee, managerEvaluation, activeCycle, employeeId, selectedQuarter, managerId, transition, managerRole, nestedTab, quarterlyCycles, kras, kpis, kraKpiRejections, evaluationMode, toast]);
 
   const handleTabChange = useCallback((value: string) => {
     setEvaluationTab(value);
@@ -1693,6 +2223,7 @@ export default function ManagerEvaluation() {
           rating: rating.rating,
           comments: rating.comments,
             progress_percentage: progressPercentage ?? rating.progress_percentage ?? null,
+            evidence: rating.evidence ?? null,
           };
         });
 
@@ -1935,6 +2466,51 @@ export default function ManagerEvaluation() {
                     </RadioGroup>
                   </div>
 
+                  {/* Manager Evidence Upload - Above Comments */}
+                  {employee?.emp_code && managerEvaluation?.id && (
+                    (() => {
+                      // Use performance cycle year (matches backend validation)
+                      // Backend validates year against cycle year, not quarter calendar year
+                      const year = activeCycle?.year;
+                      
+                      return year ? (
+                        <ManagerEvidenceUpload
+                          goalId={kpi.id}
+                          managerReviewId={managerEvaluation.id}
+                          empCode={employee.emp_code}
+                          quarter={quarter}
+                          year={year}
+                          canEdit={!isSubmitted}
+                          existingFiles={parseEvidenceFiles(kpi.id)}
+                          onFilesChange={(files) => {
+                            // Only update if files actually changed to prevent loops
+                            const currentEvidence = goalManagerRatings[kpi.id]?.evidence;
+                            let currentFiles: string[] = [];
+                            
+                            if (currentEvidence) {
+                              try {
+                                const parsed = JSON.parse(currentEvidence);
+                                if (Array.isArray(parsed)) {
+                                  currentFiles = parsed;
+                                }
+                              } catch (e) {
+                                // Not JSON, ignore
+                              }
+                            }
+                            
+                            // Only update if files actually changed
+                            const currentFilesStr = JSON.stringify(currentFiles.sort());
+                            const newFilesStr = JSON.stringify(files.sort());
+                            
+                            if (currentFilesStr !== newFilesStr) {
+                              const evidenceJson = files.length > 0 ? JSON.stringify(files) : null;
+                              handleGoalRatingChange(kpi.id, 'evidence' as keyof GoalManagerRating, evidenceJson);
+                            }
+                          }}
+                        />
+                      ) : null;
+                    })()
+                  )}
                   <div className="space-y-2">
                     <Label>Comments</Label>
                     <Textarea
@@ -2005,7 +2581,7 @@ export default function ManagerEvaluation() {
         )}
       </Card>
     );
-  }, [expandedKRAs, toggleKRA, calculatedKRARatings, goalManagerRatings, handleGoalRatingChange, ratingScales, getRatingLabel, managerEvaluation, kraKpiRejections, handleRejectKraKpi, saving]);
+  }, [expandedKRAs, toggleKRA, calculatedKRARatings, goalManagerRatings, handleGoalRatingChange, ratingScales, getRatingLabel, managerEvaluation, kraKpiRejections, handleRejectKraKpi, saving, parseEvidenceFiles]);
 
   // ALL HOOKS AND COMPUTED VALUES MUST BE CALLED BEFORE ANY EARLY RETURNS
   // This ensures React Rules of Hooks are followed (hooks must be called in the same order every render)
@@ -2786,6 +3362,36 @@ export default function ManagerEvaluation() {
                   </TabsList>
 
                   <TabsContent value="goals" className="space-y-6">
+                    {/* Reject All Button */}
+                    <div className="flex justify-end mb-4">
+                      {(() => {
+                        // Check if all KRAs and KPIs are already rejected
+                        const allKrasRejected = displayPreTransitionKras.length > 0 && displayPreTransitionKras.every((kra: any) => {
+                          const rejection = kraKpiRejections[kra.id];
+                          return rejection && !rejection.resubmitted_at;
+                        });
+                        const allKpisRejected = displayPreTransitionKpis.length > 0 && displayPreTransitionKpis.every((kpi: any) => {
+                          const rejection = kraKpiRejections[kpi.id];
+                          return rejection && !rejection.resubmitted_at;
+                        });
+                        const allRejected = (displayPreTransitionKras.length === 0 || allKrasRejected) && (displayPreTransitionKpis.length === 0 || allKpisRejected);
+                        
+                        return (
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={handleRejectAll}
+                            disabled={saving || allRejected || isSubmitted}
+                            aria-label="Reject all KRAs and KPIs"
+                            title={isSubmitted ? 'Manager review has been submitted. Cannot reject items.' : (allRejected ? 'All KRAs and KPIs have already been rejected' : 'Reject all KRAs and KPIs in this period')}
+                          >
+                            <XCircle className="h-4 w-4 mr-2" />
+                            {allRejected ? 'All Rejected' : 'Reject All'}
+                          </Button>
+                        );
+                      })()}
+                    </div>
                     {displayPreTransitionKras.length > 0 ? (
                       displayPreTransitionKras.map((kra) => {
                         const kraKpis = displayPreTransitionKpis.filter(k => k.kra_id === kra.id);
@@ -3115,6 +3721,36 @@ export default function ManagerEvaluation() {
                   </TabsList>
 
                   <TabsContent value="goals" className="space-y-6">
+                    {/* Reject All Button */}
+                    <div className="flex justify-end mb-4">
+                      {(() => {
+                        // Check if all KRAs and KPIs are already rejected
+                        const allKrasRejected = displayPostTransitionKras.length > 0 && displayPostTransitionKras.every((kra: any) => {
+                          const rejection = kraKpiRejections[kra.id];
+                          return rejection && !rejection.resubmitted_at;
+                        });
+                        const allKpisRejected = displayPostTransitionKpis.length > 0 && displayPostTransitionKpis.every((kpi: any) => {
+                          const rejection = kraKpiRejections[kpi.id];
+                          return rejection && !rejection.resubmitted_at;
+                        });
+                        const allRejected = (displayPostTransitionKras.length === 0 || allKrasRejected) && (displayPostTransitionKpis.length === 0 || allKpisRejected);
+                        
+                        return (
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={handleRejectAll}
+                            disabled={saving || allRejected || isSubmitted}
+                            aria-label="Reject all KRAs and KPIs"
+                            title={isSubmitted ? 'Manager review has been submitted. Cannot reject items.' : (allRejected ? 'All KRAs and KPIs have already been rejected' : 'Reject all KRAs and KPIs in this period')}
+                          >
+                            <XCircle className="h-4 w-4 mr-2" />
+                            {allRejected ? 'All Rejected' : 'Reject All'}
+                          </Button>
+                        );
+                      })()}
+                    </div>
                     {displayPostTransitionKras.length > 0 ? (
                       displayPostTransitionKras.map((kra) => {
                         const kraKpis = displayPostTransitionKpis.filter(k => k.kra_id === kra.id);
@@ -3446,6 +4082,37 @@ export default function ManagerEvaluation() {
                 </TabsList>
 
                 <TabsContent value="goals" className="space-y-6">
+                  {/* Reject All Button */}
+                  <div className="flex justify-end mb-4">
+                    {(() => {
+                      // Check if all KRAs and KPIs are already rejected
+                      const allKrasRejected = displayPreTransitionKras.length > 0 && displayPreTransitionKras.every((kra: any) => {
+                        const rejection = kraKpiRejections[kra.id];
+                        return rejection && !rejection.resubmitted_at;
+                      });
+                      const allKpisRejected = displayPreTransitionKpis.length > 0 && displayPreTransitionKpis.every((kpi: any) => {
+                        const rejection = kraKpiRejections[kpi.id];
+                        return rejection && !rejection.resubmitted_at;
+                      });
+                      const allRejected = (displayPreTransitionKras.length === 0 || allKrasRejected) && (displayPreTransitionKpis.length === 0 || allKpisRejected);
+                      
+                      return (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={handleRejectAll}
+                          disabled={saving || allRejected || isSubmitted}
+                          aria-label="Reject all KRAs and KPIs"
+                          title={isSubmitted ? 'Manager review has been submitted. Cannot reject items.' : (allRejected ? 'All KRAs and KPIs have already been rejected' : 'Reject all KRAs and KPIs in this period')}
+                        >
+                          <XCircle className="h-4 w-4 mr-2" />
+                          {allRejected ? 'All Rejected' : 'Reject All'}
+                        </Button>
+                      );
+                    })()}
+                  </div>
+
                   {/* <Card className="border-2 border-primary/20 bg-primary/5">
                     <CardContent className="py-6">
                       <div className="flex items-center justify-between">
@@ -3802,6 +4469,37 @@ export default function ManagerEvaluation() {
                 </TabsList>
 
                 <TabsContent value="goals" className="space-y-6">
+                  {/* Reject All Button */}
+                  <div className="flex justify-end mb-4">
+                    {(() => {
+                      // Check if all KRAs and KPIs are already rejected
+                      const allKrasRejected = displayPostTransitionKras.length > 0 && displayPostTransitionKras.every((kra: any) => {
+                        const rejection = kraKpiRejections[kra.id];
+                        return rejection && !rejection.resubmitted_at;
+                      });
+                      const allKpisRejected = displayPostTransitionKpis.length > 0 && displayPostTransitionKpis.every((kpi: any) => {
+                        const rejection = kraKpiRejections[kpi.id];
+                        return rejection && !rejection.resubmitted_at;
+                      });
+                      const allRejected = (displayPostTransitionKras.length === 0 || allKrasRejected) && (displayPostTransitionKpis.length === 0 || allKpisRejected);
+                      
+                      return (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={handleRejectAll}
+                          disabled={saving || allRejected || isSubmitted}
+                          aria-label="Reject all KRAs and KPIs"
+                          title={isSubmitted ? 'Manager review has been submitted. Cannot reject items.' : (allRejected ? 'All KRAs and KPIs have already been rejected' : 'Reject all KRAs and KPIs in this period')}
+                        >
+                          <XCircle className="h-4 w-4 mr-2" />
+                          {allRejected ? 'All Rejected' : 'Reject All'}
+                        </Button>
+                      );
+                    })()}
+                  </div>
+
                   {/* <Card className="border-2 border-primary/20 bg-primary/5">
                     <CardContent className="py-6">
                       <div className="flex items-center justify-between">
@@ -4142,6 +4840,44 @@ export default function ManagerEvaluation() {
           </TabsList>
 
           <TabsContent value="goals" className="space-y-6">
+            {/* Reject All Button - Show at the top when there are KRAs or KPIs */}
+            {(quarterKras.length > 0 || quarterKpis.length > 0) && (
+              <div className="flex justify-end mb-4">
+                {(() => {
+                  // For non-transition employees, use fullQuarterKras/KPIs
+                  // For transition employees, this button will be in nested tabs, but show here too for consistency
+                  const krasToCheck = transition ? quarterKras : fullQuarterKras;
+                  const kpisToCheck = transition ? quarterKpis : fullQuarterKpis;
+                  
+                  // Check if all KRAs and KPIs are already rejected
+                  const allKrasRejected = krasToCheck.length > 0 && krasToCheck.every((kra: any) => {
+                    const rejection = kraKpiRejections[kra.id];
+                    return rejection && !rejection.resubmitted_at;
+                  });
+                  const allKpisRejected = kpisToCheck.length > 0 && kpisToCheck.every((kpi: any) => {
+                    const rejection = kraKpiRejections[kpi.id];
+                    return rejection && !rejection.resubmitted_at;
+                  });
+                  const allRejected = (krasToCheck.length === 0 || allKrasRejected) && (kpisToCheck.length === 0 || allKpisRejected);
+                  
+                  return (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="default"
+                      onClick={handleRejectAll}
+                      disabled={saving || allRejected || isSubmitted}
+                      aria-label="Reject all KRAs and KPIs"
+                      title={isSubmitted ? 'Manager review has been submitted. Cannot reject items.' : (allRejected ? 'All KRAs and KPIs have already been rejected' : 'Reject all KRAs and KPIs in this quarter')}
+                    >
+                      <XCircle className="h-4 w-4 mr-2" />
+                      {allRejected ? 'All Rejected' : 'Reject All'}
+                    </Button>
+                  );
+                })()}
+              </div>
+            )}
+
             <Card className="border-2 border-primary/20 bg-primary/5">
               <CardContent className="py-6">
                 <div className="flex items-center justify-between">
@@ -4842,6 +5578,144 @@ export default function ManagerEvaluation() {
                   <XCircle className="mr-2 h-4 w-4" />
                   Reject {rejectingItem?.type.toUpperCase()}
                 </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reject All Dialog */}
+      <Dialog open={rejectAllDialogOpen} onOpenChange={setRejectAllDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Reject All KRAs and KPIs</DialogTitle>
+            <DialogDescription>
+              This will reject <strong>all KRAs and KPIs</strong> for this evaluation period. The employee will need to review and resubmit everything.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="reject-all-reason">Rejection Reason *</Label>
+              <Textarea
+                id="reject-all-reason"
+                value={rejectAllReason}
+                onChange={(e) => setRejectAllReason(e.target.value)}
+                placeholder="Explain why all KRAs and KPIs are being rejected and what needs to be improved..."
+                rows={5}
+                aria-required="true"
+                aria-label="Rejection reason for all items"
+              />
+              <p className="text-xs text-muted-foreground">
+                This feedback will be sent to the employee for all rejected items. This action can only be performed once per quarter.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reject-all-files">Supporting Documents (Optional)</Label>
+              <div className="space-y-2">
+                <input
+                  ref={rejectAllFileInputRef}
+                  type="file"
+                  id="reject-all-files"
+                  accept=".pdf,.xlsx,.xls"
+                  multiple
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    // Validate file types and sizes
+                    const validFiles = files.filter(file => {
+                      const validTypes = ['application/pdf', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel'];
+                      if (!validTypes.includes(file.type)) {
+                        toast({
+                          title: 'Invalid file type',
+                          description: `${file.name} is not a PDF or Excel file`,
+                          variant: 'destructive',
+                        });
+                        return false;
+                      }
+                      if (file.size > 5 * 1024 * 1024) {
+                        toast({
+                          title: 'File too large',
+                          description: `${file.name} exceeds 5MB limit`,
+                          variant: 'destructive',
+                        });
+                        return false;
+                      }
+                      return true;
+                    });
+                    console.log('[Reject All Dialog] Files selected:', validFiles.map(f => f.name));
+                    setRejectAllFiles(prev => {
+                      const updated = [...prev, ...validFiles];
+                      console.log('[Reject All Dialog] Updated files state:', updated.map(f => f.name));
+                      return updated;
+                    });
+                  }}
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => rejectAllFileInputRef.current?.click()}
+                  disabled={saving}
+                >
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload Files (PDF, Excel)
+                </Button>
+                {rejectAllFiles.length > 0 && (
+                  <div className="space-y-1 mt-2">
+                    {rejectAllFiles.map((file, index) => (
+                      <div key={index} className="flex items-center justify-between p-2 bg-muted rounded text-sm">
+                        <div className="flex items-center gap-2">
+                          <FileIcon className="h-4 w-4" />
+                          <span className="truncate">{file.name}</span>
+                          <span className="text-muted-foreground">
+                            ({(file.size / 1024 / 1024).toFixed(2)} MB)
+                          </span>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setRejectAllFiles(prev => prev.filter((_, i) => i !== index));
+                          }}
+                          disabled={saving}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Upload PDF or Excel files (max 5MB each) to provide additional context for the rejection.
+                </p>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setRejectAllDialogOpen(false);
+                setRejectAllReason('');
+                setRejectAllFiles([]);
+              }}
+              disabled={saving}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleConfirmRejectAll}
+              disabled={!rejectAllReason.trim() || saving}
+            >
+              {saving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Rejecting All...
+                </>
+              ) : (
+                'Reject All'
               )}
             </Button>
           </DialogFooter>

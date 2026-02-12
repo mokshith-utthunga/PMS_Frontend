@@ -136,10 +136,16 @@ export default function Evaluations() {
   // KRA/KPI rejection state - track rejections per quarter
   const [kraKpiRejections, setKraKpiRejections] = useState<Record<number, Record<string, any>>>({});
 
+  // Update quarterly reviews when they change
   useEffect(() => {
     setQuarterlyReviews(initialQuarterlyReviews);
+  }, [initialQuarterlyReviews]);
+
+  // Use initialKpiRatings directly from useEvaluationsData
+  // File uploads update local state via onFilesChange, no refetch needed
+  useEffect(() => {
     setKpiRatings(initialKpiRatings);
-  }, [initialQuarterlyReviews, initialKpiRatings]);
+  }, [initialKpiRatings]);
 
   // Only auto-select quarter if URL doesn't have a valid quarter
   // This should only run once on initial load, not when URL changes
@@ -421,18 +427,36 @@ export default function Evaluations() {
   }, [activeQuarter, transitions, transition, quarterlyCycles, isTransitionTab]);
 
   // Callback to update ratings after save
+  // Simple merge: update with new data from backend, preserving existing local state
+  // Evidence is updated via onFilesChange (file upload), so it's already in local state
   const handleRatingsUpdate = useCallback((quarter: number, newRatings: Record<string, any>) => {
     setKpiRatings(prev => {
       const quarterRatings = prev[quarter] || {};
-      // Merge the new ratings with existing ratings for this quarter
-      // This ensures we don't lose ratings for other KPIs in the same quarter
       const updatedRatings = { ...quarterRatings };
+      
       Object.keys(newRatings).forEach(goalId => {
+        const existing: KpiRating = updatedRatings[goalId] || { 
+          goal_id: goalId, 
+          self_rating: null 
+        };
+        const newData: KpiRating = newRatings[goalId] || { 
+          goal_id: goalId, 
+          self_rating: null 
+        };
+        
+        // Merge: use new data from backend, but preserve evidence from local state
+        // (evidence is updated via file upload and may not be in backend response yet)
         updatedRatings[goalId] = {
-          ...updatedRatings[goalId],
-          ...newRatings[goalId],
+          ...existing,
+          ...newData,
+          goal_id: goalId,
+          // Preserve evidence from local state if newData doesn't have it or it's empty
+          evidence: (newData.evidence && newData.evidence.trim()) 
+            ? newData.evidence 
+            : (existing.evidence || ''),
         };
       });
+      
       return {
         ...prev,
         [quarter]: updatedRatings,
@@ -518,12 +542,41 @@ export default function Evaluations() {
     evalOps.saveProgress(q, currentComments, calculatedRating ?? undefined, setQuarterlyReviews);
   }, [activeQuarter, getCurrentPeriodComments, evalOps, calculateOverallRatingForQuarter]);
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = useCallback(async () => {
     const q = activeQuarter;
     const calculatedRating = calculateOverallRatingForQuarter(q);
     const currentComments = getCurrentPeriodComments(q);
-    evalOps.submitEvaluation(q, currentComments, calculatedRating ?? undefined, setQuarterlyReviews);
-  }, [activeQuarter, getCurrentPeriodComments, evalOps, calculateOverallRatingForQuarter]);
+    await evalOps.submitEvaluation(q, currentComments, calculatedRating ?? undefined, setQuarterlyReviews);
+    
+    // After successful submission, refetch rejections to update hasActiveRejections
+    // This ensures buttons are hidden if all rejections are now resubmitted
+    if (employeeId && activeCycle?.id) {
+      try {
+        const rejectionsResult = await evaluationService.kraKpiRejections.get({
+          employee_id: employeeId,
+          cycle_id: activeCycle.id,
+          quarter: q,
+        });
+        
+        const rejectionsMap: Record<string, any> = {};
+        (rejectionsResult.data || []).forEach((rejection: any) => {
+          const key = rejection.kra_id || rejection.goal_id;
+          if (key) {
+            if (!rejectionsMap[key] || new Date(rejection.rejected_at) > new Date(rejectionsMap[key].rejected_at)) {
+              rejectionsMap[key] = rejection;
+            }
+          }
+        });
+        
+        setKraKpiRejections(prev => ({
+          ...prev,
+          [q]: rejectionsMap,
+        }));
+      } catch (error) {
+        console.error('Error refetching rejections after submission:', error);
+      }
+    }
+  }, [activeQuarter, getCurrentPeriodComments, evalOps, calculateOverallRatingForQuarter, employeeId, activeCycle?.id]);
 
   const handleNext = useCallback(async () => {
     const q = activeQuarter;
@@ -1008,11 +1061,9 @@ export default function Evaluations() {
     const qKraRatings = calculateAllKRARatings(displayKras, qKpisWithKra, qKpiRatingsForCalc);
     const qOverallCalc = calculateQuarterRating(displayKras, qKraRatings);
     
-    // Determine year from quarter dates (prefer quarter_start_date, fallback to cycle year)
-    const quarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === quarterNum);
-    const quarterYear = quarterlyCycle?.quarter_start_date 
-      ? new Date(quarterlyCycle.quarter_start_date).getFullYear()
-      : (activeCycle?.year || new Date().getFullYear());
+    // Use performance cycle year (matches backend validation)
+    // Backend validates year against cycle year, not quarter calendar year
+    const quarterYear = activeCycle?.year || new Date().getFullYear();
     
     return (
       <>

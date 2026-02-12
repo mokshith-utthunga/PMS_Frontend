@@ -245,15 +245,15 @@ export function CalibrationDisplay({
 
   return (
     <Card className={className}>
-      <CardHeader>
-        <CardTitle className="text-base">Rating Correlation Analysis</CardTitle>
-        <CardDescription className='flex justify-between items-center'>
+      {/* <CardHeader> */}
+        {/* <CardTitle className="text-base">Rating Correlation Analysis</CardTitle> */}
+        {/* <CardDescription className='flex justify-between items-center'>
           Rating thresholds for this KPI.
           {targetValue && (
             <span className="block mt-1">Target: <strong>{targetValue}</strong></span>
           )}
-        </CardDescription>
-      </CardHeader>
+        </CardDescription> */}
+      {/* </CardHeader> */}
       <CardContent   >
         {/* {achievedValue !== null && achievedValue !== undefined && currentRating !== null && (
           <div className="mb-4 p-3 rounded-lg bg-primary/5 border border-primary/20">

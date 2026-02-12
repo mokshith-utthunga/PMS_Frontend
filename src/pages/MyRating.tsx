@@ -54,6 +54,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { formatRating, calculateAllKRARatings, calculateKRARating } from '@/lib/ratingCalculations';
 import type { YearEndEvaluationData } from '@/services/evaluation.service';
 import { KPIEvidenceView } from '@/components/evaluation/KPIEvidenceView';
+import { ManagerEvidenceView } from '@/components/evaluation/ManagerEvidenceView';
 
 interface GoalRating {
   id: string;
@@ -64,6 +65,8 @@ interface GoalRating {
   manager_rating: number | null;
   manager_comments: string | null;
   evidence?: string | null;
+  manager_evidence?: string | null;
+  manager_review_id?: string | null;
   kra_id?: string | null;
   quarter?: number | null;
 }
@@ -417,14 +420,23 @@ export default function MyRating() {
         const mgrFeedbackItem = mgrFeedback.find((r: any) => r.goal_id === goal.id);
 
         const evidenceValue = selfRating?.evidence || null;
+        const managerEvidenceValue = mgrReviewData?.hr_approved_at && mgrFeedbackItem?.evidence 
+          ? mgrFeedbackItem.evidence 
+          : null;
 
+        // Manager rating should only be set if HR has approved (hr_approved_at exists) or calibrated rating exists
+        const managerRatingValue = (mgrReviewData?.hr_approved_at || fetchedCalibratedRating !== null) 
+          ? (mgrFeedbackItem?.rating || null)
+          : null;
 
         return {
           ...goal,
           self_rating: selfRating?.self_rating || null,
-          manager_rating: calibratedRating ? (calibratedRating || null) : null,
+          manager_rating: managerRatingValue,
           manager_comments: mgrReviewData?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null,
-          evidence: evidenceValue
+          evidence: evidenceValue,
+          manager_evidence: managerEvidenceValue,
+          manager_review_id: mgrReviewData?.id || null,
         };
       });
       
@@ -659,12 +671,19 @@ export default function MyRating() {
         const selfRating = preSelfRatings.find((r: any) => r.goal_id === goal.id);
         const mgrFeedbackItem = preMgrFeedback.find((r: any) => r.goal_id === goal.id);
         
+        const evidenceValue = selfRating?.evidence || null;
+        const managerEvidenceValue = preMgrReview?.hr_approved_at && mgrFeedbackItem?.evidence 
+          ? mgrFeedbackItem.evidence 
+          : null;
+        
         return {
           ...goal,
           self_rating: selfRating?.self_rating || null,
           manager_rating: preCalibratedRating || (preMgrReview?.hr_approved_at ? (mgrFeedbackItem?.rating || null) : null),
           manager_comments: preMgrReview?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null,
-          evidence: selfRating?.evidence || null
+          evidence: evidenceValue,
+          manager_evidence: managerEvidenceValue,
+          manager_review_id: preMgrReview?.id || null
         };
       });
       setPreTransitionGoalRatings(preCombinedGoals);
@@ -674,12 +693,19 @@ export default function MyRating() {
         const selfRating = postSelfRatings.find((r: any) => r.goal_id === goal.id);
         const mgrFeedbackItem = postMgrFeedback.find((r: any) => r.goal_id === goal.id);
         
+        const evidenceValue = selfRating?.evidence || null;
+        const managerEvidenceValue = postMgrReview?.hr_approved_at && mgrFeedbackItem?.evidence 
+          ? mgrFeedbackItem.evidence 
+          : null;
+        
         return {
           ...goal,
           self_rating: selfRating?.self_rating || null,
           manager_rating: postCalibratedRating || (postMgrReview?.hr_approved_at ? (mgrFeedbackItem?.rating || null) : null),
           manager_comments: postMgrReview?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null,
-          evidence: selfRating?.evidence || null
+          evidence: evidenceValue,
+          manager_evidence: managerEvidenceValue,
+          manager_review_id: postMgrReview?.id || null
         };
       });
       setPostTransitionGoalRatings(postCombinedGoals);
@@ -935,11 +961,19 @@ export default function MyRating() {
         const selfRating = preSelfRatings.find((r: any) => r.goal_id === goal.id);
         const mgrFeedbackItem = preMgrFeedback.find((r: any) => r.goal_id === goal.id);
         
+        const evidenceValue = selfRating?.evidence || null;
+        const managerEvidenceValue = preMgrReview?.hr_approved_at && mgrFeedbackItem?.evidence 
+          ? mgrFeedbackItem.evidence 
+          : null;
+        
         return {
           ...goal,
           self_rating: selfRating?.self_rating || null,
           manager_rating: preCalibratedRating || (preMgrReview?.hr_approved_at ? (mgrFeedbackItem?.rating || null) : null),
-          manager_comments: preMgrReview?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null
+          manager_comments: preMgrReview?.hr_approved_at ? (mgrFeedbackItem?.comments || null) : null,
+          evidence: evidenceValue,
+          manager_evidence: managerEvidenceValue,
+          manager_review_id: preMgrReview?.id || null
         };
       });
       setGoalRatings(preCombinedGoals);
@@ -1484,7 +1518,8 @@ export default function MyRating() {
           <CardContent className="space-y-6">
             {/* Post-Transition Overall Rating - Only show after HR approval */}
             {postApproved && postOverallRating !== null && (
-              <div className="p-4 rounded-lg bg-muted/30 border">
+              
+              <div className="p-4 text-center rounded-lg bg-amber-100/100 border-2 border-amber-300">
                 <div className="text-sm text-muted-foreground mb-1">Post-Transition Overall Rating</div>
                 <div className="text-2xl font-bold">{formatRating(postOverallRating)}</div>
               </div>
@@ -1524,7 +1559,8 @@ export default function MyRating() {
                         <div className="text-right">
                           <div className="text-sm text-muted-foreground mb-1">KRA Rating</div>
                           <div className="text-sm font-medium">Self: {getRatingLabel(kra.self_rating)}</div>
-                          {kra.manager_rating && (
+                          {/* Manager Rating - Only show after HR approval */}
+                          {postApproved && kra.manager_rating && (
                             <div className="text-sm font-medium mt-1">Manager: {getRatingLabel(kra.manager_rating)}</div>
                           )}
                         </div>
@@ -1545,7 +1581,8 @@ export default function MyRating() {
                                 <div className="text-xs text-muted-foreground mb-1">Self Rating</div>
                                 <div className="font-medium">{getRatingLabel(kpi.self_rating)}</div>
                               </div>
-                              {kpi.manager_rating && (
+                              {/* Manager Rating - Only show after HR approval */}
+                              {postApproved && kpi.manager_rating && (
                                 <div className="p-3 rounded bg-primary/5">
                                   <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
                                   <div className="font-medium">{getRatingLabel(kpi.manager_rating)}</div>
@@ -1569,10 +1606,22 @@ export default function MyRating() {
                               ) : null;
                             })()}
                             
-                            {kpi.manager_comments && (
+                            {/* Manager Comments - Only show after HR approval */}
+                            {postApproved && kpi.manager_comments && (
                               <div className="mt-3 p-3 rounded bg-muted/20">
                                 <div className="text-xs text-muted-foreground mb-1">Manager Feedback</div>
                                 <p className="text-sm">{kpi.manager_comments}</p>
+                              </div>
+                            )}
+
+                            {/* Manager Evidence - Only show after HR publishes */}
+                            {postApproved && kpi.manager_evidence && kpi.manager_review_id && (
+                              <div className="mt-3">
+                                <ManagerEvidenceView
+                                  evidence={kpi.manager_evidence}
+                                  goalId={kpi.id}
+                                  managerReviewId={kpi.manager_review_id}
+                                />
                               </div>
                             )}
                           </div>
@@ -1586,8 +1635,8 @@ export default function MyRating() {
           </CardContent>
         </Card>
         
-        {/* Manager Feedback */}
-        {postTransitionManagerReview?.overall_comments && (
+        {/* Manager Feedback - Only show after HR approval */}
+        {postApproved && postTransitionManagerReview?.overall_comments && (
           <Card>
             <CardHeader>
               <CardTitle>Overall Feedback</CardTitle>
@@ -1598,7 +1647,8 @@ export default function MyRating() {
           </Card>
         )}
 
-        {postTransitionManagerReview?.guidance && (
+        {/* Development Recommendations - Only show after HR approval */}
+        {postApproved && postTransitionManagerReview?.guidance && (
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1849,7 +1899,7 @@ export default function MyRating() {
                                           const hasEmployeeId = !!employeeId;
                                 
                                           return hasEvidence && hasEmployeeId ? (
-                                            <div className="p-3 rounded bg-muted/30">
+                                            <div className="mt-3 p-3 rounded bg-muted/30">
                                               <KPIEvidenceView
                                                 evidence={kpi.evidence}
                                                 goalId={kpi.id}
@@ -1859,6 +1909,17 @@ export default function MyRating() {
                                             </div>
                                           ) : null;
                                         })()}
+                                        
+                                        {/* Manager Evidence - Only show after HR publishes */}
+                                        {kpi.manager_evidence && kpi.manager_review_id && (
+                                          <div className="mt-3">
+                                            <ManagerEvidenceView
+                                              evidence={kpi.manager_evidence}
+                                              goalId={kpi.id}
+                                              managerReviewId={kpi.manager_review_id}
+                                            />
+                                          </div>
+                                        )}
                                       </div>                                      
                                     </div>
                                   ))}
@@ -2031,7 +2092,8 @@ export default function MyRating() {
                               <div className="text-sm  font-normal text-primary">
                                 <span className="text-right text-sm font-medium"> Self: </span> <span className="text-right ">{getRatingLabel(kra.self_rating)}</span>
                               </div>
-                              {kra.manager_rating && (
+                              {/* Manager Rating - Only show after HR approval */}
+                              {preApproved && kra.manager_rating && (
                                 <div className="text-sm font-normal text-primary mt-1">
                                   <span className="text-right text-sm font-medium"> Manager: </span> <span className="text-right ">{getRatingLabel(kra.manager_rating)}</span>
                                 </div>
@@ -2062,13 +2124,42 @@ export default function MyRating() {
                                         <div className="text-xs text-muted-foreground mb-1">Your Self Ratings</div>
                                         <div className="font-medium">{getRatingLabel(kpi.self_rating)}</div>
                                       </div>
+                                      {/* Manager Rating - Only show after HR approval */}
+                                      {preApproved && kpi.manager_rating && (
+                                        <div className="mt-3 p-3 rounded bg-primary/5">
+                                          <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
+                                          <div className="font-medium">{getRatingLabel(kpi.manager_rating)}</div>
+                                        </div>
+                                      )}
                                       {kpi.evidence && employeeId && (
-                                        <div className="p-3 rounded bg-muted/30">
+                                        <div className="mt-3 p-3 rounded bg-muted/30">
                                           <KPIEvidenceView
                                             evidence={kpi.evidence}
                                             goalId={kpi.id}
                                             employeeId={employeeId}
                                             quarter={parseInt(selectedQuarter)}
+                                          />
+                                        </div>
+                                      )}
+                                      
+                                      {/* Manager Comments - Only show after HR approval */}
+                                      {preApproved && kpi.manager_comments && (
+                                        <div className="mt-3 p-3 rounded bg-muted/20">
+                                          <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                                            <MessageSquare className="h-3 w-3" />
+                                            Manager Feedback
+                                          </div>
+                                          <p className="text-sm">{kpi.manager_comments}</p>
+                                        </div>
+                                      )}
+                                      
+                                      {/* Manager Evidence - Only show after HR publishes */}
+                                      {preApproved && kpi.manager_evidence && kpi.manager_review_id && (
+                                        <div className="mt-3">
+                                          <ManagerEvidenceView
+                                            evidence={kpi.manager_evidence}
+                                            goalId={kpi.id}
+                                            managerReviewId={kpi.manager_review_id}
                                           />
                                         </div>
                                       )}
@@ -2091,31 +2182,34 @@ export default function MyRating() {
 
         {(evaluationState === 'hr_approved' || evaluationState === 'employee_accepted' || evaluationState === 'employee_rejected') && (
           <>
-            <Card >
-              <CardHeader >
-                <CardTitle className="flex items-center gap-2 ">
-                  <Calculator className="h-5 w-5" />
-                  Overall Assessment
-                  {isPreTransitionView && (
-                    <Badge variant="outline" className="ml-2">
-                      Pre-Transition
-                    </Badge>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center rounded-lg bg-amber-100/100 border-2 border-amber-300">
-                  <div className="text-sm text-muted-foreground mb-2">Performance Rating</div>
-                  <div className="text-4xl font-bold text-primary mb-2">
-                    {calibratedRating !== null && calibratedRating !== undefined
-                      ? formatRating(calibratedRating)
-                      : managerReview?.calculated_overall_rating 
-                        ? formatRating(managerReview.calculated_overall_rating)
-                        : '-'}
+            {/* Only show overall rating after HR approval */}
+            {(managerReview?.hr_approved_at || calibratedRating !== null) && (
+              <Card >
+                <CardHeader >
+                  <CardTitle className="flex items-center gap-2 ">
+                    <Calculator className="h-5 w-5" />
+                    Overall Assessment
+                    {isPreTransitionView && (
+                      <Badge variant="outline" className="ml-2">
+                        Pre-Transition
+                      </Badge>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center rounded-lg bg-amber-100/100 border-2 border-amber-300">
+                    <div className="text-sm text-muted-foreground mb-2">Performance Rating</div>
+                    <div className="text-4xl font-bold text-primary mb-2">
+                      {calibratedRating !== null && calibratedRating !== undefined
+                        ? formatRating(calibratedRating)
+                        : managerReview?.calculated_overall_rating 
+                          ? formatRating(managerReview.calculated_overall_rating)
+                          : '-'}
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            )}
 
           {/* KRA and KPI Ratings */}
           <Card className=" hover:shadow-md transition-shadow ">
@@ -2164,7 +2258,8 @@ export default function MyRating() {
                               KRA Rating
                             </div>
                             <div className="text-right flex flex-col justify-between items-start gap-1">
-                            {kra.manager_rating && (
+                            {/* Manager Rating - Only show after HR approval */}
+                            {(managerReview?.hr_approved_at || calibratedRating !== null) && kra.manager_rating && (
                               <div className="text-sm font-normal text-primary mt-1">
                                <span className="text-right text-sm font-medium"> Manager: </span> <span className="text-right ">{getRatingLabel(kra.manager_rating)}</span>
                               </div>
@@ -2199,7 +2294,8 @@ export default function MyRating() {
                                       <div className="text-xs text-muted-foreground mb-1">Your Self Rating</div>
                                       <div className="font-medium">{getRatingLabel(kpi.self_rating)}</div>
                                     </div>
-                                    {kpi.manager_rating && (
+                                    {/* Manager Rating - Only show after HR approval */}
+                                    {(managerReview?.hr_approved_at || calibratedRating !== null) && kpi.manager_rating && (
                                       <div className="p-3 rounded bg-primary/5">
                                         <div className="text-xs text-muted-foreground mb-1">Manager Rating</div>
                                         <div className="font-medium">{getRatingLabel(kpi.manager_rating)}</div>
@@ -2207,13 +2303,37 @@ export default function MyRating() {
                                     )}
                                   </div>
 
-                                  {kpi.manager_comments && (
+                                  {/* Employee Evidence */}
+                                  {kpi.evidence && employeeId && (
+                                    <div className="mt-3 p-3 rounded bg-muted/30">
+                                      <KPIEvidenceView
+                                        evidence={kpi.evidence}
+                                        goalId={kpi.id}
+                                        employeeId={employeeId}
+                                        quarter={parseInt(selectedQuarter)}
+                                      />
+                                    </div>
+                                  )}
+
+                                  {/* Manager Comments - Only show after HR approval */}
+                                  {(managerReview?.hr_approved_at || calibratedRating !== null) && kpi.manager_comments && (
                                     <div className="mt-3 p-3 rounded bg-muted/20">
                                       <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
                                         <MessageSquare className="h-3 w-3" />
                                         Manager Feedback
                                       </div>
                                       <p className="text-sm">{kpi.manager_comments}</p>
+                                    </div>
+                                  )}
+
+                                  {/* Manager Evidence - Only show after HR publishes */}
+                                  {(managerReview?.hr_approved_at || calibratedRating !== null) && kpi.manager_evidence && kpi.manager_review_id && (
+                                    <div className="mt-3">
+                                      <ManagerEvidenceView
+                                        evidence={kpi.manager_evidence}
+                                        goalId={kpi.id}
+                                        managerReviewId={kpi.manager_review_id}
+                                      />
                                     </div>
                                   )}
                                 </div>

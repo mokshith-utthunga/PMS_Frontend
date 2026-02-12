@@ -7,7 +7,11 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { AlertCircle, Target, Lock, ArrowRight } from 'lucide-react';
+import { AlertCircle, Target, Lock, ArrowRight, XCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { PageLoader } from '@/loaders';
 import { useTeamMemberGoals, useGoalApproval, useTransition, useCurrentEmployee } from '@/hooks';
 import { useQuarterFromUrl } from '@/hooks/useQuarterFromUrl';
@@ -248,12 +252,60 @@ export default function TeamMemberGoals() {
     id: null,
   });
 
+  // Reject All dialog state
+  const [rejectAllDialogOpen, setRejectAllDialogOpen] = useState(false);
+  const [rejectAllReason, setRejectAllReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [goalRejections, setGoalRejections] = useState<Record<string, any>>({});
+  
+  // Fetch ALL goals for the quarter (for approval check) - not filtered by period
+  const [allQuarterKras, setAllQuarterKras] = useState<any[]>([]);
+  const [allQuarterKpis, setAllQuarterKpis] = useState<any[]>([]);
+  
+  // Fetch all goals for the quarter to check if all are approved
+  useEffect(() => {
+    if (employeeId && activeCycle?.id && quarter) {
+      // Fetch all goals for the quarter without period filtering
+      Promise.all([
+        goalsService.kras.getByEmployee(employeeId, activeCycle.id, undefined, quarter, undefined, undefined),
+        goalsService.kpis.getByEmployee(employeeId, activeCycle.id, undefined, quarter, undefined, undefined),
+      ]).then(([krasResult, kpisResult]) => {
+        setAllQuarterKras(krasResult.data || []);
+        setAllQuarterKpis((kpisResult.data || []).filter((g: any) => g.kra_id) as any[]);
+      }).catch(error => {
+        console.error('Error fetching all quarter goals:', error);
+      });
+    }
+  }, [employeeId, activeCycle?.id, quarter]);
+
   const approval = useGoalApproval({
     employee,
     kras,
     kpis,
     onSuccess: refetch,
   });
+
+  // Fetch goal rejections for the current quarter
+  useEffect(() => {
+    if (employeeId && activeCycle?.id && quarter) {
+      goalsService.goalRejections.get({
+        employee_id: employeeId,
+        cycle_id: activeCycle.id,
+        quarter: quarter,
+      }).then(result => {
+        const rejectionsMap: Record<string, any> = {};
+        (result.data || []).forEach((rejection: any) => {
+          const key = rejection.kra_id || rejection.goal_id;
+          if (key) {
+            rejectionsMap[key] = rejection;
+          }
+        });
+        setGoalRejections(rejectionsMap);
+      }).catch(error => {
+        console.error('Error fetching goal rejections:', error);
+      });
+    }
+  }, [employeeId, activeCycle?.id, quarter]);
 
   // Calculate submitted count based on displayed goals (current nested tab)
   // Only count submitted goals that are visible in the current nested tab
@@ -321,6 +373,140 @@ export default function TeamMemberGoals() {
       });
     }
   };
+
+  // Reject All handlers
+  const handleRejectAll = useCallback(() => {
+    setRejectAllDialogOpen(true);
+    setRejectAllReason('');
+  }, []);
+
+  const handleConfirmRejectAll = useCallback(async () => {
+    if (!rejectAllReason.trim() || !activeCycle || !employeeId || !quarter) {
+      toast({
+        title: 'Error',
+        description: !rejectAllReason.trim() ? 'Please provide a rejection reason' : 'Missing required information',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    // Prevent multiple simultaneous calls
+    if (saving) {
+      return;
+    }
+
+    setSaving(true);
+    try {
+      // Filter goals based on current context (transition/non-transition, period)
+      let krasToReject = displayKras.filter((kra: any) => {
+        // Only reject submitted KRAs that haven't been rejected
+        const rejection = goalRejections[kra.id];
+        return kra.status === 'submitted' && (!rejection || rejection.resubmitted_at);
+      });
+
+      let kpisToReject = displayKpis.filter((kpi: any) => {
+        // Only reject submitted KPIs that haven't been rejected
+        const rejection = goalRejections[kpi.id];
+        return kpi.status === 'submitted' && (!rejection || rejection.resubmitted_at);
+      });
+
+      if (krasToReject.length === 0 && kpisToReject.length === 0) {
+        toast({
+          title: 'No items to reject',
+          description: 'All goals have already been rejected or are not in submitted status.',
+          variant: 'default',
+        });
+        setRejectAllDialogOpen(false);
+        setRejectAllReason('');
+        setSaving(false);
+        return;
+      }
+
+      const kraIds = krasToReject.map((kra: any) => kra.id);
+      const goalIds = kpisToReject.map((kpi: any) => kpi.id);
+
+      const result = await goalsService.goalRejections.rejectAll({
+        rejection_reason: rejectAllReason.trim(),
+        quarter: quarter,
+        cycle_id: activeCycle.id,
+        employee_id: employeeId,
+        kra_ids: kraIds.length > 0 ? kraIds : undefined,
+        goal_ids: goalIds.length > 0 ? goalIds : undefined,
+      });
+
+      const totalRejected = result.data.total_rejected;
+      const totalErrors = result.data.total_errors;
+
+      // Show individual error toasts
+      result.data.errors.forEach((error: any) => {
+        toast({
+          title: `Error rejecting ${error.type}`,
+          description: error.error,
+          variant: 'destructive',
+        });
+      });
+
+      // Show summary toast
+      if (totalErrors > 0) {
+        if (totalRejected === 0) {
+          toast({
+            title: 'Rejection Failed',
+            description: `Failed to reject all ${totalErrors} item(s). Check individual error messages above.`,
+            variant: 'destructive',
+          });
+        } else {
+          toast({
+            title: 'Partial rejection completed',
+            description: `Successfully rejected ${totalRejected} item(s), but ${totalErrors} item(s) failed. Check individual error messages above.`,
+            variant: 'default',
+          });
+        }
+      } else if (totalRejected > 0) {
+        toast({
+          title: 'Rejection submitted',
+          description: `Successfully rejected ${result.data.rejected_kras.length} KRA(s) and ${result.data.rejected_goals.length} KPI(s).`,
+        });
+      }
+
+      // Refresh data
+      await refetch();
+      
+      // Refresh rejections
+      const rejectionsResult = await goalsService.goalRejections.get({
+        employee_id: employeeId,
+        cycle_id: activeCycle.id,
+        quarter: quarter,
+      });
+      const rejectionsMap: Record<string, any> = {};
+      (rejectionsResult.data || []).forEach((rejection: any) => {
+        const key = rejection.kra_id || rejection.goal_id;
+        if (key) {
+          rejectionsMap[key] = rejection;
+        }
+      });
+      setGoalRejections(rejectionsMap);
+
+      setRejectAllDialogOpen(false);
+      setRejectAllReason('');
+      
+      // Refresh the page to ensure all state is properly updated
+      if (totalRejected > 0) {
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000); // Small delay to allow toast to show
+      } else {
+        setSaving(false);
+      }
+    } catch (error: any) {
+      console.error('Error in reject all operation:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to reject all goals',
+        variant: 'destructive',
+      });
+      setSaving(false);
+    }
+  }, [rejectAllReason, activeCycle, employeeId, quarter, displayKras, displayKpis, goalRejections, refetch, saving, toast]);
 
   // Loading state
   if (loading || isLoadingCycle || transitionLoading) {
@@ -510,6 +696,52 @@ export default function TeamMemberGoals() {
                                 </CardContent>
                               </Card>
 
+                              {/* Reject All Button */}
+                              {(() => {
+                                // Check if all goals for the quarter are approved (not just current tab)
+                                const allKrasApproved = allQuarterKras.length > 0 && allQuarterKras.every((kra: any) => kra.status === 'approved');
+                                const allKpisApproved = allQuarterKpis.length > 0 && allQuarterKpis.every((kpi: any) => kpi.status === 'approved');
+                                const allApproved = (allQuarterKras.length === 0 || allKrasApproved) && (allQuarterKpis.length === 0 || allKpisApproved);
+                                
+                                // Check if all goals are rejected
+                                const allKrasRejected = displayKras.length > 0 && displayKras.every((kra: any) => {
+                                  const rejection = goalRejections[kra.id];
+                                  return rejection && !rejection.resubmitted_at;
+                                });
+                                const allKpisRejected = displayKpis.length > 0 && displayKpis.every((kpi: any) => {
+                                  const rejection = goalRejections[kpi.id];
+                                  return rejection && !rejection.resubmitted_at;
+                                });
+                                const allRejected = (displayKras.length === 0 || allKrasRejected) && (displayKpis.length === 0 || allKpisRejected);
+                                
+                                // Don't show button if all goals for the quarter are approved
+                                if (allApproved) {
+                                  return null;
+                                }
+                                
+                                // Show button if there are goals to reject
+                                if (displayKras.length > 0 || displayKpis.length > 0) {
+                                  return (
+                                    <div className="flex justify-end">
+                                      <Button
+                                        type="button"
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={handleRejectAll}
+                                        disabled={saving || allRejected}
+                                        aria-label="Reject all goals"
+                                        title={allRejected ? 'All goals in this period have already been rejected' : 'Reject all goals in this period'}
+                                      >
+                                        <XCircle className="h-4 w-4 mr-2" />
+                                        {allRejected ? 'All Rejected' : 'Reject All'}
+                                      </Button>
+                                    </div>
+                                  );
+                                }
+                                
+                                return null;
+                              })()}
+
                               {/* Pre-Transition Goals Display */}
                               {displayKras.length > 0 ? (
                                 <div className="space-y-4">
@@ -594,6 +826,52 @@ export default function TeamMemberGoals() {
                                 </CardContent>
                               </Card>
 
+                              {/* Reject All Button */}
+                              {(() => {
+                                // Check if all goals for the quarter are approved (not just current tab)
+                                const allKrasApproved = allQuarterKras.length > 0 && allQuarterKras.every((kra: any) => kra.status === 'approved');
+                                const allKpisApproved = allQuarterKpis.length > 0 && allQuarterKpis.every((kpi: any) => kpi.status === 'approved');
+                                const allApproved = (allQuarterKras.length === 0 || allKrasApproved) && (allQuarterKpis.length === 0 || allKpisApproved);
+                                
+                                // Check if all goals are rejected
+                                const allKrasRejected = displayKras.length > 0 && displayKras.every((kra: any) => {
+                                  const rejection = goalRejections[kra.id];
+                                  return rejection && !rejection.resubmitted_at;
+                                });
+                                const allKpisRejected = displayKpis.length > 0 && displayKpis.every((kpi: any) => {
+                                  const rejection = goalRejections[kpi.id];
+                                  return rejection && !rejection.resubmitted_at;
+                                });
+                                const allRejected = (displayKras.length === 0 || allKrasRejected) && (displayKpis.length === 0 || allKpisRejected);
+                                
+                                // Don't show button if all goals for the quarter are approved
+                                if (allApproved) {
+                                  return null;
+                                }
+                                
+                                // Show button if there are goals to reject
+                                if (displayKras.length > 0 || displayKpis.length > 0) {
+                                  return (
+                                    <div className="flex justify-end">
+                                      <Button
+                                        type="button"
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={handleRejectAll}
+                                        disabled={saving || allRejected}
+                                        aria-label="Reject all goals"
+                                        title={allRejected ? 'All goals in this period have already been rejected' : 'Reject all goals in this period'}
+                                      >
+                                        <XCircle className="h-4 w-4 mr-2" />
+                                        {allRejected ? 'All Rejected' : 'Reject All'}
+                                      </Button>
+                                    </div>
+                                  );
+                                }
+                                
+                                return null;
+                              })()}
+
                               {/* Post-Transition Goals */}
                               {displayKras.length > 0 ? (
                                 <div className="space-y-4">
@@ -656,6 +934,52 @@ export default function TeamMemberGoals() {
                           </CardContent>
                         </Card>
 
+                        {/* Reject All Button */}
+                        {(() => {
+                          // Check if all goals for the quarter are approved (not just current tab)
+                          const allKrasApproved = allQuarterKras.length > 0 && allQuarterKras.every((kra: any) => kra.status === 'approved');
+                          const allKpisApproved = allQuarterKpis.length > 0 && allQuarterKpis.every((kpi: any) => kpi.status === 'approved');
+                          const allApproved = (allQuarterKras.length === 0 || allKrasApproved) && (allQuarterKpis.length === 0 || allKpisApproved);
+                          
+                          // Check if all goals are rejected
+                          const allKrasRejected = displayKras.length > 0 && displayKras.every((kra: any) => {
+                            const rejection = goalRejections[kra.id];
+                            return rejection && !rejection.resubmitted_at;
+                          });
+                          const allKpisRejected = displayKpis.length > 0 && displayKpis.every((kpi: any) => {
+                            const rejection = goalRejections[kpi.id];
+                            return rejection && !rejection.resubmitted_at;
+                          });
+                          const allRejected = (displayKras.length === 0 || allKrasRejected) && (displayKpis.length === 0 || allKpisRejected);
+                          
+                          // Don't show button if all goals are approved
+                          if (allApproved) {
+                            return null;
+                          }
+                          
+                          // Show button if there are goals to reject
+                          if (displayKras.length > 0 || displayKpis.length > 0) {
+                            return (
+                              <div className="flex justify-end">
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={handleRejectAll}
+                                  disabled={saving || allRejected}
+                                  aria-label="Reject all goals"
+                                  title={allRejected ? 'All goals in this quarter have already been rejected' : 'Reject all goals in this quarter'}
+                                >
+                                  <XCircle className="h-4 w-4 mr-2" />
+                                  {allRejected ? 'All Rejected' : 'Reject All'}
+                                </Button>
+                              </div>
+                            );
+                          }
+                          
+                          return null;
+                        })()}
+
                         {/* Goals Display - Direct from API, no frontend filtering */}
                         {displayKras.length > 0 ? (
                           <div className="space-y-4">
@@ -709,6 +1033,51 @@ export default function TeamMemberGoals() {
           onClose={handleCloseRevokeDialog}
           onConfirm={handleRevoke}
         />
+
+        {/* Reject All Dialog */}
+        <Dialog open={rejectAllDialogOpen} onOpenChange={setRejectAllDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Reject All Goals</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to reject all goals (KRAs and KPIs) for this employee in this period? 
+                Please provide a reason for the rejection.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="reject-all-reason">Rejection Reason *</Label>
+                <Textarea
+                  id="reject-all-reason"
+                  placeholder="Enter the reason for rejecting all goals..."
+                  value={rejectAllReason}
+                  onChange={(e) => setRejectAllReason(e.target.value)}
+                  rows={4}
+                  disabled={saving}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setRejectAllDialogOpen(false);
+                  setRejectAllReason('');
+                }}
+                disabled={saving}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleConfirmRejectAll}
+                disabled={saving || !rejectAllReason.trim()}
+              >
+                {saving ? 'Rejecting...' : 'Reject All'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </MainLayout>
   );

@@ -1,6 +1,6 @@
 // Evaluation Service - Quarterly evaluation API calls
 // Uses quarterly_self_reviews and quarterly_manager_reviews tables
-import { api } from './api';
+import { api, API_BASE_URL } from './api';
 import type { PeriodType } from './transition.service';
 
 // Quarterly Self Review Types
@@ -426,8 +426,43 @@ export const evaluationService = {
       quarter: number;
       cycle_id: string;
       employee_id: string;
+      rejection_documents?: string;
     }) =>
       api.post<{ data: any }>('/api/evaluations/reject-kra-kpi', params),
+
+    // Upload rejection documents
+    uploadDocuments: async (
+      empCode: string,
+      quarter: number,
+      year: number,
+      file: File
+    ) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('emp_code', empCode);
+      formData.append('quarter', String(quarter));
+      formData.append('year', String(year));
+      
+      console.log('[Upload Documents] Uploading file:', { empCode, quarter, year, fileName: file.name });
+      
+      const response = await fetch(`${API_BASE_URL}/api/evaluations/rejection-documents/upload`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        console.error('[Upload Documents] Upload failed:', error);
+        throw new Error(error.message || error.error || 'Failed to upload rejection document');
+      }
+      
+      const result = await response.json();
+      console.log('[Upload Documents] Upload success:', result);
+      return result;
+    },
 
     resubmit: (rejection_id: string) =>
       api.post<{ data: any }>('/api/evaluations/resubmit-kra-kpi', { rejection_id }),
@@ -476,6 +511,51 @@ export const evaluationService = {
           emp_code: empCode,
           quarter,
           year,
+        }
+      ),
+  },
+
+  // ========== Manager Evidence File Upload ==========
+  managerEvidence: {
+    upload: async (
+      managerReviewId: string,
+      goalId: string,
+      empCode: string,
+      quarter: number,
+      year: number,
+      file: File
+    ) => {
+      const formData = new FormData();
+      formData.append('manager_review_id', managerReviewId);
+      formData.append('goal_id', goalId);
+      formData.append('emp_code', empCode);
+      formData.append('quarter', quarter.toString());
+      formData.append('year', year.toString());
+      formData.append('file', file); // Single file upload
+
+      // Don't set Content-Type header - browser will set it automatically with boundary
+      return api.post<{ success: boolean; files: string[]; message: string }>(
+        '/api/evaluations/manager-evidence/upload',
+        formData
+      );
+    },
+
+    getFiles: (goalId: string, managerReviewId: string) =>
+      api.get<{ files: string[] }>(
+        `/api/evaluations/manager-evidence/files/${goalId}?manager_review_id=${managerReviewId}`
+      ),
+
+    deleteFile: (
+      managerReviewId: string,
+      goalId: string,
+      filePath: string
+    ) =>
+      api.delete<{ success: boolean; message: string }>(
+        '/api/evaluations/manager-evidence/file',
+        {
+          manager_review_id: managerReviewId,
+          goal_id: goalId,
+          file_path: filePath,
         }
       ),
   },

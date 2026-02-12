@@ -4,8 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle } from 'lucide-react';
-import { Star } from 'lucide-react';
+import { AlertCircle, Star, File } from 'lucide-react';
 import { AchievementSlider, parseNumericTarget } from '@/components/evaluation/AchievementSlider';
 import { CalibrationDisplay, calculateRatingFromCalibration } from '@/components/evaluation/CalibrationDisplay';
 import { KPIEvidenceUpload } from './KPIEvidenceUpload';
@@ -117,6 +116,44 @@ export function KPIRatingForm({
           <AlertDescription className="text-orange-800 dark:text-orange-200">
             <div className="font-semibold mb-1">Rejected by Manager</div>
             <div className="text-sm">{rejection.rejection_reason}</div>
+            
+            {/* Show rejection documents if available */}
+            {rejection.rejection_documents && (() => {
+              try {
+                const documents = typeof rejection.rejection_documents === 'string' 
+                  ? JSON.parse(rejection.rejection_documents) 
+                  : rejection.rejection_documents;
+                
+                if (Array.isArray(documents) && documents.length > 0) {
+                  return (
+                    <div className="mt-3 space-y-2">
+                      <div className="text-xs font-semibold">Supporting Documents:</div>
+                      <div className="space-y-1">
+                        {documents.map((docUrl: string, index: number) => {
+                          const fileName = docUrl.split('/').pop() || `Document ${index + 1}`;
+                          return (
+                            <a
+                              key={index}
+                              href={docUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-2 text-xs text-blue-600 hover:text-blue-800 underline"
+                            >
+                              <File className="h-3 w-3" />
+                              {fileName}
+                            </a>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                }
+              } catch (e) {
+                // Invalid JSON, ignore
+              }
+              return null;
+            })()}
+            
             <div className="text-xs mt-2 italic">
               Please review the feedback above, update this KPI, and resubmit your evaluation.
             </div>

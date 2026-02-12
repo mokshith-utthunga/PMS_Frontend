@@ -48,6 +48,8 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { formatRating } from '@/lib/ratingCalculations';
+import { KPIEvidenceView } from '@/components/evaluation/KPIEvidenceView';
+import { ManagerEvidenceView } from '@/components/evaluation/ManagerEvidenceView';
 
 interface PendingReview {
   id: string;
@@ -513,6 +515,8 @@ export default function HRReview() {
           manager_comments: mgrFeedbackItem?.comments || null,
           self_achievement: selfRating?.achievement || null,
           self_evidence: selfRating?.evidence || null,
+          manager_evidence: (mgrFeedbackItem as any)?.evidence || null,
+          manager_review_id: review?.id || null,
         };
       });
 
@@ -676,6 +680,8 @@ export default function HRReview() {
           manager_comments: mgrFeedbackItem?.comments || null,
           self_achievement: selfRating?.achievement || null,
           self_evidence: selfRating?.evidence || null,
+          manager_evidence: (mgrFeedbackItem as any)?.evidence || null,
+          manager_review_id: rejection.manager_review_id || null,
         };
       });
 
@@ -1984,7 +1990,7 @@ export default function HRReview() {
               )}
 
               {/* Goal Ratings - Hierarchical Structure: KRAs -> KPIs */}
-              <Card>
+              {/* <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Target className="h-5 w-5" />
@@ -1996,11 +2002,10 @@ export default function HRReview() {
                     KRA Rating = Weighted Average of KPIs
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-6">
-                  {kraRatings.length > 0 ? (
+                <CardContent className="space-y-6"> */}
+                  {/* {kraRatings.length > 0 ? (
                     kraRatings.map((kra) => (
                       <div key={kra.id} className="p-4 rounded-lg border-2 border-primary/20 bg-primary/5">
-                        {/* KRA Header */}
                         <div className="flex items-start justify-between mb-4">
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
@@ -2017,10 +2022,9 @@ export default function HRReview() {
                               <p className="text-sm text-muted-foreground mt-1">{kra.description}</p>
                             )}
                           </div>
-                        </div>
+                        </div> */}
 
-                        {/* KPIs under this KRA */}
-                        {kra.kpis && kra.kpis.length > 0 ? (
+                        {/* {kra.kpis && kra.kpis.length > 0 ? (
                           <div className="space-y-3 mt-4 pl-4 border-l-2 border-primary/30">
                             <div className="text-xs font-medium text-muted-foreground mb-2">KPIs:</div>
                             {kra.kpis.map((kpi: any) => (
@@ -2060,6 +2064,27 @@ export default function HRReview() {
                                     <p className="text-xs">{kpi.manager_comments}</p>
                                   </div>
                                 )}
+
+                                {kpi.self_evidence && (
+                                  <div className="mt-2">
+                                    <KPIEvidenceView
+                                      evidence={kpi.self_evidence}
+                                      goalId={kpi.id}
+                                      employeeId={selectedReview?.employee_id || ''}
+                                      quarter={selectedReview?.quarter || 1}
+                                    />
+                                  </div>
+                                )} */}
+
+                                {/* {kpi.manager_evidence && kpi.manager_review_id && (
+                                  <div className="mt-2">
+                                    <ManagerEvidenceView
+                                      evidence={kpi.manager_evidence}
+                                      goalId={kpi.id}
+                                      managerReviewId={kpi.manager_review_id}
+                                    />
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -2067,9 +2092,8 @@ export default function HRReview() {
                           <div className="text-sm text-muted-foreground mt-2 pl-4">No KPIs found for this KRA</div>
                         )}
                       </div>
-                    ))
-                  ) : goalRatings.length > 0 ? (
-                    // Fallback to flat structure if KRAs not available
+                    )) */}
+                  {/* ) : goalRatings.length > 0 ? (
                     goalRatings.map((goal) => (
                       <div key={goal.id} className="p-4 rounded-lg border">
                         <div className="flex items-start justify-between mb-2">
@@ -2106,14 +2130,37 @@ export default function HRReview() {
                             </div>
                             <p className="text-sm">{goal.manager_comments}</p>
                           </div>
+                        )} */}
+
+                        {/* Employee Evidence */}
+                        {/* {goal.self_evidence && (
+                          <div className="mt-3">
+                            <KPIEvidenceView
+                              evidence={goal.self_evidence}
+                              goalId={goal.id}
+                              employeeId={selectedReview?.employee_id || ''}
+                              quarter={selectedReview?.quarter || 1}
+                            />
+                          </div>
+                        )} */}
+
+                        {/* Manager Evidence */}
+                        {/* {goal.manager_evidence && goal.manager_review_id && (
+                          <div className="mt-3">
+                            <ManagerEvidenceView
+                              evidence={goal.manager_evidence}
+                              goalId={goal.id}
+                              managerReviewId={goal.manager_review_id}
+                            />
+                          </div>
                         )}
                       </div>
                     ))
                   ) : (
                     <div className="text-center text-muted-foreground py-4">No goals found</div>
-                  )}
-                </CardContent>
-              </Card>
+                  )} */}
+                {/* </CardContent>
+              </Card> */}
 
               {/* Manager Comments */}
               {reviewDetails.overall_comments && (
@@ -2617,6 +2664,29 @@ export default function HRReview() {
                                       <p className="text-xs">{kpi.manager_comments}</p>
                                     </div>
                                   )}
+
+                                  {/* Employee Evidence */}
+                                  {kpi.self_evidence && (
+                                    <div className="mt-2">
+                                      <KPIEvidenceView
+                                        evidence={kpi.self_evidence}
+                                        goalId={kpi.id}
+                                        employeeId={selectedRejection?.employee_id || ''}
+                                        quarter={selectedRejection?.quarter || 1}
+                                      />
+                                    </div>
+                                  )}
+
+                                  {/* Manager Evidence */}
+                                  {kpi.manager_evidence && kpi.manager_review_id && (
+                                    <div className="mt-2">
+                                      <ManagerEvidenceView
+                                        evidence={kpi.manager_evidence}
+                                        goalId={kpi.id}
+                                        managerReviewId={kpi.manager_review_id}
+                                      />
+                                    </div>
+                                  )}
                                 </div>
                               ))}
                             </div>
@@ -2662,6 +2732,29 @@ export default function HRReview() {
                                 Manager Feedback
                               </div>
                               <p className="text-sm">{goal.manager_comments}</p>
+                            </div>
+                          )}
+
+                          {/* Employee Evidence */}
+                          {goal.self_evidence && (
+                            <div className="mt-3">
+                              <KPIEvidenceView
+                                evidence={goal.self_evidence}
+                                goalId={goal.id}
+                                employeeId={selectedRejection?.employee_id || ''}
+                                quarter={selectedRejection?.quarter || 1}
+                              />
+                            </div>
+                          )}
+
+                          {/* Manager Evidence */}
+                          {goal.manager_evidence && goal.manager_review_id && (
+                            <div className="mt-3">
+                              <ManagerEvidenceView
+                                evidence={goal.manager_evidence}
+                                goalId={goal.id}
+                                managerReviewId={goal.manager_review_id}
+                              />
                             </div>
                           )}
                         </div>

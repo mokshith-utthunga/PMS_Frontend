@@ -206,7 +206,7 @@ export function useEvaluationOperations({
       try {
         await saveProgress(quarter, overallComments, overallRating, setQuarterlyReviews);
 
-        await evaluationService.selfReviews.upsert({
+        const result = await evaluationService.selfReviews.upsert({
           employee_id: employeeId,
           cycle_id: cycleId,
           quarter,
@@ -218,6 +218,11 @@ export function useEvaluationOperations({
           period_start_date: periodStartDate || undefined,
           period_end_date: periodEndDate || undefined,
         });
+
+        // Update local state with submitted review immediately
+        if (result.data) {
+          setQuarterlyReviews(prev => ({ ...prev, [quarter]: result.data }));
+        }
 
         toasts.success(`Q${quarter} Self review submitted`);
         onSuccess();
