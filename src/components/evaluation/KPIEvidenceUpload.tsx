@@ -121,7 +121,7 @@ export function KPIEvidenceUpload({
       if (result?.success) {
         // Backend returns { success: true, files: [fileUrl], message: string }
         // Get the uploaded file URL from the files array
-        const uploadedFiles = result?.files || result?.data?.files || [];
+        const uploadedFiles = result?.files || [];
         
         if (uploadedFiles.length > 0) {
           // Update local state with the new file URLs (should be just one file)
