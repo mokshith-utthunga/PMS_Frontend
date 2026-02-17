@@ -64,6 +64,7 @@ export default function TemplateForm() {
     is_active: true,
     kpi_templates: [{ ...emptyKPI }],
   });
+  const [calibrationErrors, setCalibrationErrors] = useState<Record<number, string>>({});
 
   const { data: existingTemplate, isLoading: loadingTemplate, error: templateError } = useQuery({
     queryKey: ['kra-template', id],
@@ -298,6 +299,56 @@ export default function TemplateForm() {
       return;
     }
 
+    // Get KPIs with titles for validation
+    const kpisWithTitles = formData.kpi_templates.filter(kpi => kpi.title.trim());
+    
+    // Validate all KPI fields are filled
+    for (let i = 0; i < kpisWithTitles.length; i++) {
+      const kpi = kpisWithTitles[i];
+      if (!kpi.title.trim()) {
+        toast.error(`KPI ${i + 1}: Title is required`);
+        return;
+      }
+      if (!kpi.description.trim()) {
+        toast.error(`KPI ${i + 1}: Description is required`);
+        return;
+      }
+      if (!kpi.metric_type) {
+        toast.error(`KPI ${i + 1}: Metric Type is required`);
+        return;
+      }
+      if (!kpi.suggested_target.trim()) {
+        toast.error(`KPI ${i + 1}: Suggested Target is required`);
+        return;
+      }
+      if (!kpi.suggested_weight || kpi.suggested_weight <= 0) {
+        toast.error(`KPI ${i + 1}: Weight is required and must be greater than 0`);
+        return;
+      }
+      // Validate calibration is required
+      // First check if targetValue and metricType are present (required for calibration)
+      if (!kpi.suggested_target.trim()) {
+        toast.error(`KPI ${i + 1}: Suggested Target is required for Calibration Configuration`);
+        return;
+      }
+      if (!kpi.metric_type) {
+        toast.error(`KPI ${i + 1}: Metric Type is required for Calibration Configuration`);
+        return;
+      }
+      // Then check if calibration rules exist
+      if (!kpi.calibration || kpi.calibration.length === 0) {
+        setCalibrationErrors(prev => ({ ...prev, [i]: 'Please fill the Rating Correlation Analysis' }));
+        toast.error(`KPI ${i + 1}: Please fill the Rating Correlation Analysis`);
+        return;
+      } else {
+        setCalibrationErrors(prev => {
+          const updated = { ...prev };
+          delete updated[i];
+          return updated;
+        });
+      }
+    }
+
     const totalKPIWeight = formData.kpi_templates
       .filter(kpi => kpi.title.trim())
       .reduce((sum, kpi) => sum + Number(kpi.suggested_weight || 0), 0);
@@ -308,7 +359,6 @@ export default function TemplateForm() {
     }
 
     // Validate calibration rules for each KPI
-    const kpisWithTitles = formData.kpi_templates.filter(kpi => kpi.title.trim());
     for (let i = 0; i < kpisWithTitles.length; i++) {
       const kpi = kpisWithTitles[i];
       if (kpi.calibration && kpi.calibration.length > 0) {
@@ -557,54 +607,58 @@ export default function TemplateForm() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Title</Label>
+                      <Label>Title *</Label>
                       <Input
                         value={kpi.title}
                         onChange={(e) => updateKPI(index, 'title', e.target.value)}
                         placeholder="e.g., Quarterly Sales Target"
+                        required
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Description</Label>
+                      <Label>Description *</Label>
                       <Textarea
                         value={kpi.description}
                         onChange={(e) => updateKPI(index, 'description', e.target.value)}
                         placeholder="Describe this KPI..."
                         rows={2}
+                        required
                       />
                     </div>
 
                     <div className="grid grid-cols-3 gap-4">
                       <div className="space-y-2">
-                        <Label>Metric Type</Label>
+                        <Label>Metric Type *</Label>
                         <Select
                           value={kpi.metric_type}
                           onValueChange={(value) => updateKPI(index, 'metric_type', value)}
+                          required
                         >
                           <SelectTrigger>
-                            <SelectValue />
+                            <SelectValue placeholder="Select metric type" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="number">Number</SelectItem>
                             <SelectItem value="percentage">Percentage</SelectItem>
-                            <SelectItem value="milestone">Milestone</SelectItem>
-                            <SelectItem value="qualitative">Qualitative</SelectItem>
+                            {/* <SelectItem value="milestone">Milestone</SelectItem>
+                            <SelectItem value="qualitative">Qualitative</SelectItem> */}
                           </SelectContent>
                         </Select>
                       </div>
 
                       <div className="space-y-2">
-                        <Label>Suggested Target</Label>
+                        <Label>Suggested Target *</Label>
                         <Input
                           value={kpi.suggested_target}
                           onChange={(e) => updateKPI(index, 'suggested_target', e.target.value)}
                           placeholder="e.g., 100000"
+                          required
                         />
                       </div>
 
                       <div className="space-y-2">
-                        <Label>Weight (%)</Label>
+                        <Label>Weight (%) *</Label>
                         <Input
                           type="number"
                           min="1"
@@ -613,19 +667,46 @@ export default function TemplateForm() {
                           onChange={(e) =>
                             updateKPI(index, 'suggested_weight', parseInt(e.target.value) || 0)
                           }
+                          required
                         />
                       </div>
                     </div>
 
                     {/* Calibration Configuration */}
                     <div className="mt-4">
-                      <CalibrationConfig
-                        value={kpi.calibration}
-                        onChange={(calibration) => updateKPI(index, 'calibration', calibration)}
-                        disabled={false}
-                        targetValue={kpi.suggested_target}
-                        metricType={kpi.metric_type}
-                      />
+                      <Label className="text-base font-medium mb-2 block">
+                        Rating Correlation Analysis *
+                      </Label>
+                      {!kpi.suggested_target.trim() || !kpi.metric_type ? (
+                        <div className="p-4 border border-dashed rounded-md bg-muted/50">
+                          <p className="text-sm text-muted-foreground">
+                            Please fill in <strong>Suggested Target</strong> and <strong>Metric Type</strong> before configuring calibration.
+                          </p>
+                        </div>
+                      ) : (
+                        <>
+                          <CalibrationConfig
+                            value={kpi.calibration}
+                            onChange={(calibration) => {
+                              updateKPI(index, 'calibration', calibration);
+                              // Clear error when calibration is added
+                              if (calibration && calibration.length > 0) {
+                                setCalibrationErrors(prev => {
+                                  const updated = { ...prev };
+                                  delete updated[index];
+                                  return updated;
+                                });
+                              }
+                            }}
+                            disabled={false}
+                            targetValue={kpi.suggested_target}
+                            metricType={kpi.metric_type}
+                          />
+                          {calibrationErrors[index] && (
+                            <p className="text-sm text-destructive mt-2">{calibrationErrors[index]}</p>
+                          )}
+                        </>
+                      )}
                     </div>
                   </CardContent>
                 </Card>

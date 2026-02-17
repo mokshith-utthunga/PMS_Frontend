@@ -1237,7 +1237,48 @@ export default function ManagerEvaluation() {
     return [];
   }, [goalManagerRatings]);
 
-  const handleGoalRatingChange = (goalId: string, field: keyof GoalManagerRating, value: any) => {
+  // Memoized handler for evidence file changes - prevents API calls when typing comments
+  // Use functional update to avoid depending on goalManagerRatings
+  const handleEvidenceFilesChange = useCallback((goalId: string, files: string[]) => {
+    // Use functional update to get current state without depending on it
+    setGoalManagerRatings((prev) => {
+      // Only update if files actually changed to prevent loops
+      const currentEvidence = prev[goalId]?.evidence;
+      let currentFiles: string[] = [];
+      
+      if (currentEvidence) {
+        try {
+          const parsed = JSON.parse(currentEvidence);
+          if (Array.isArray(parsed)) {
+            currentFiles = parsed;
+          }
+        } catch (e) {
+          // Not JSON, ignore
+        }
+      }
+      
+      // Only update if files actually changed
+      const currentFilesStr = JSON.stringify(currentFiles.sort());
+      const newFilesStr = JSON.stringify(files.sort());
+      
+      if (currentFilesStr !== newFilesStr) {
+        const evidenceJson = files.length > 0 ? JSON.stringify(files) : null;
+        return {
+          ...prev,
+          [goalId]: {
+            ...prev[goalId],
+            goal_id: goalId,
+            evidence: evidenceJson,
+          }
+        };
+      }
+      
+      // No change, return previous state
+      return prev;
+    });
+  }, []); // No dependencies - uses functional update
+
+  const handleGoalRatingChange = useCallback((goalId: string, field: keyof GoalManagerRating, value: any) => {
     setGoalManagerRatings((prev) => {
       const updated = {
       ...prev,
@@ -1279,7 +1320,7 @@ export default function ManagerEvaluation() {
       
       return updated;
     });
-  };
+  }, [kpis]);
 
   const handleSave = useCallback(async () => {
     if (!activeCycle || !managerId || !employeeId) return;
@@ -2482,31 +2523,7 @@ export default function ManagerEvaluation() {
                           year={year}
                           canEdit={!isSubmitted}
                           existingFiles={parseEvidenceFiles(kpi.id)}
-                          onFilesChange={(files) => {
-                            // Only update if files actually changed to prevent loops
-                            const currentEvidence = goalManagerRatings[kpi.id]?.evidence;
-                            let currentFiles: string[] = [];
-                            
-                            if (currentEvidence) {
-                              try {
-                                const parsed = JSON.parse(currentEvidence);
-                                if (Array.isArray(parsed)) {
-                                  currentFiles = parsed;
-                                }
-                              } catch (e) {
-                                // Not JSON, ignore
-                              }
-                            }
-                            
-                            // Only update if files actually changed
-                            const currentFilesStr = JSON.stringify(currentFiles.sort());
-                            const newFilesStr = JSON.stringify(files.sort());
-                            
-                            if (currentFilesStr !== newFilesStr) {
-                              const evidenceJson = files.length > 0 ? JSON.stringify(files) : null;
-                              handleGoalRatingChange(kpi.id, 'evidence' as keyof GoalManagerRating, evidenceJson);
-                            }
-                          }}
+                          onFilesChange={(files) => handleEvidenceFilesChange(kpi.id, files)}
                         />
                       ) : null;
                     })()

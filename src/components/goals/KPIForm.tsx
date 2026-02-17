@@ -36,12 +36,13 @@ interface KPIFormProps {
 const metricTypeLabels = {
   number: 'Numeric Value',
   percentage: 'Percentage',
-  milestone: 'Milestone',
-  qualitative: 'Qualitative',
+  // milestone: 'Milestone',
+  // qualitative: 'Qualitative',
 };
 
 export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWeight, kraTitle }: KPIFormProps) {
   const [submitting, setSubmitting] = useState(false);
+  const [calibrationError, setCalibrationError] = useState<string>('');
   const [formData, setFormData] = useState<{
     title: string;
     description: string;
@@ -69,11 +70,47 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
         weight: editingKPI?.weight?.toString() || '',
         calibration: editingKPI?.calibration || null,
       });
+      setCalibrationError(''); // Clear error when dialog opens
     }
   }, [open, editingKPI]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validate all required fields
+    if (!formData.title.trim()) {
+      toast.error('KPI Title is required');
+      return;
+    }
+
+    if (!formData.description.trim()) {
+      toast.error('Description is required');
+      return;
+    }
+
+    if (!formData.metric_type) {
+      toast.error('Metric Type is required');
+      return;
+    }
+
+    if (!formData.target_value.trim()) {
+      toast.error('Target Value is required');
+      return;
+    }
+
+    if (!formData.weight.trim() || parseFloat(formData.weight) <= 0) {
+      toast.error('Weight is required and must be greater than 0');
+      return;
+    }
+
+    // Validate calibration is required
+    if (!formData.calibration || formData.calibration.length === 0) {
+      setCalibrationError('Please fill the Rating Correlation Analysis');
+      toast.error('Please fill the Rating Correlation Analysis');
+      return;
+    } else {
+      setCalibrationError('');
+    }
 
     // Validate calibration rules if provided
     if (formData.calibration && formData.calibration.length > 0) {
@@ -108,6 +145,7 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
         weight: '',
         calibration: null,
       });
+      setCalibrationError(''); // Clear error on successful submit
     } catch (error) {
       // Error handled in parent
     } finally {
@@ -144,7 +182,7 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
         ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="kpi-title">KPI Title</Label>
+            <Label htmlFor="kpi-title">KPI Title *</Label>
             <Input
               id="kpi-title"
               value={formData.title}
@@ -155,27 +193,29 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="kpi-description">Description</Label>
+            <Label htmlFor="kpi-description">Description *</Label>
             <Textarea
               id="kpi-description"
               value={formData.description}
               onChange={(e) => setFormData((prev) => ({ ...prev, description: e.target.value }))}
               placeholder="Describe this KPI in detail..."
               rows={2}
+              required
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>Metric Type</Label>
+              <Label>Metric Type *</Label>
               <Select
                 value={formData.metric_type}
                 onValueChange={(value: MetricType) =>
                   setFormData((prev) => ({ ...prev, metric_type: value }))
                 }
+                required
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Select metric type" />
                 </SelectTrigger>
                 <SelectContent>
                   {Object.entries(metricTypeLabels).map(([key, label]) => (
@@ -188,18 +228,19 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="kpi-target">Target Value</Label>
+              <Label htmlFor="kpi-target">Target Value *</Label>
               <Input
                 id="kpi-target"
                 value={formData.target_value}
                 onChange={(e) => setFormData((prev) => ({ ...prev, target_value: e.target.value }))}
                 placeholder="e.g., 100 or Complete"
+                required
               />
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="kpi-weight">Weight (%)</Label>
+            <Label htmlFor="kpi-weight">Weight (%) *</Label>
             <Input
               id="kpi-weight"
               type="number"
@@ -213,13 +254,37 @@ export function KPIForm({ open, onOpenChange, onSubmit, editingKPI, availableWei
           </div>
 
           {/* Calibration Settings */}
-          <CalibrationConfig
-            value={formData.calibration}
-            onChange={(calibration) => setFormData((prev) => ({ ...prev, calibration }))}
-            disabled={false}
-            targetValue={formData.target_value}
-            metricType={formData.metric_type}
-          />
+          <div className="space-y-2">
+            <Label className="text-base font-medium">
+            Rating Correlation Analysis *
+            </Label>
+            {!formData.target_value.trim() || !formData.metric_type ? (
+              <div className="p-4 border border-dashed rounded-md bg-muted/50">
+                <p className="text-sm text-muted-foreground">
+                  Please fill in <strong>Target Value</strong> and <strong>Metric Type</strong> before configuring calibration.
+                </p>
+              </div>
+            ) : (
+              <>
+                <CalibrationConfig
+                  value={formData.calibration}
+                  onChange={(calibration) => {
+                    setFormData((prev) => ({ ...prev, calibration }));
+                    // Clear error when calibration is added
+                    if (calibration && calibration.length > 0) {
+                      setCalibrationError('');
+                    }
+                  }}
+                  disabled={false}
+                  targetValue={formData.target_value}
+                  metricType={formData.metric_type}
+                />
+                {calibrationError && (
+                  <p className="text-sm text-destructive mt-2">{calibrationError}</p>
+                )}
+              </>
+            )}
+          </div>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

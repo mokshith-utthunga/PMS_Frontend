@@ -34,11 +34,23 @@ export default function Dashboard() {
     enabled: !!employee?.id && !!activeCycle?.id
   });
 
+  const { data: kras = [] } = useQuery({
+    queryKey: ['my-kras', activeCycle?.id],
+    queryFn: () => goalsService.kras.getByEmployee(employee!.id, activeCycle!.id).then(r => r.data || []),
+    enabled: !!employee?.id && !!activeCycle?.id
+  });
+
   const goalsData = {
     count: goals.length,
     totalWeight: goals.reduce((sum, g) => sum + Number(g.weight || 0), 0),
     submitted: goals.length > 0 && goals.every(g => ['submitted', 'approved', 'locked'].includes(g.status))
   };
+  const krasData = {
+    count: kras.length,
+    totalWeight: kras.reduce((sum, k) => sum + Number(k.weight || 0), 0),
+    submitted: kras.length > 0 && kras.every(k => ['submitted', 'approved', 'locked'].includes(k.status))
+  };
+
 
   // Fetch self evaluation (using quarterly self reviews)
   const { data: selfReviewsData } = useQuery({
@@ -72,7 +84,7 @@ export default function Dashboard() {
     enabled: !!employee?.id && !!activeCycle?.id && isManager
   });
   const completedEvals = completedData?.count || 0;
-  
+
   // Get quarterly pending reviews from dashboard data
   const pendingQuarterlyReviews = dashboard?.quarterly_pending || 0;
 
@@ -87,12 +99,12 @@ export default function Dashboard() {
   const getSelfEvalDueText = () => {
     // Use quarterlyCycles data for self evaluation dates
     if (!selfReview?.review_for_quarter || !quarterlyCycles) return 'Set up a cycle first';
-    
+
     const reviewQuarter = selfReview.review_for_quarter;
     const quarterlyCycle = quarterlyCycles.find(qc => qc.quarter === reviewQuarter);
-    
+
     if (!quarterlyCycle?.self_review_end_date) return 'Set up a cycle first';
-    
+
     const dueDate = new Date(quarterlyCycle.self_review_end_date);
     const daysLeft = differenceInDays(dueDate, new Date());
     if (daysLeft < 0) return 'Overdue';
@@ -103,7 +115,7 @@ export default function Dashboard() {
   const getCyclePhase = () => {
     if (!activeCycle) return 'No active cycle';
     const now = new Date();
-    
+
     // Check goal setting phase using goalsQuarterlyCycles
     if (goalSetting?.enabled && goalSetting?.quarter) {
       const currentGoalsCycle = goalsQuarterlyCycles?.find(gqc => gqc.quarter === goalSetting.quarter);
@@ -111,7 +123,7 @@ export default function Dashboard() {
         return 'Goal Setting Phase';
       }
     }
-    
+
     // Check goal approval phase using goalsQuarterlyCycles
     if (goalSetting?.quarter) {
       const currentGoalsCycle = goalsQuarterlyCycles?.find(gqc => gqc.quarter === goalSetting.quarter);
@@ -119,7 +131,7 @@ export default function Dashboard() {
         return 'Goal Approval Phase';
       }
     }
-    
+
     // Check self evaluation phase using quarterlyCycles
     if (selfReview?.enabled && selfReview?.review_for_quarter) {
       const reviewQuarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === selfReview.review_for_quarter);
@@ -127,7 +139,7 @@ export default function Dashboard() {
         return 'Self Evaluation Phase';
       }
     }
-    
+
     // Check manager evaluation phase using quarterlyCycles
     if (managerReview?.enabled && managerReview?.review_for_quarter) {
       const reviewQuarterlyCycle = quarterlyCycles?.find(qc => qc.quarter === managerReview.review_for_quarter);
@@ -135,10 +147,10 @@ export default function Dashboard() {
         return 'Manager Evaluation Phase';
       }
     }
-    
+
     // Check calibration phase (from activeCycle)
     if (activeCycle.calibration_end && now <= new Date(activeCycle.calibration_end)) return 'Calibration Phase';
-    
+
     return 'Release Phase';
   };
 
@@ -163,7 +175,7 @@ export default function Dashboard() {
         const endDate = new Date(currentGoalsCycle.goal_submission_end_date);
         const isActive = now >= startDate && now <= endDate;
         const isDone = now > endDate;
-        
+
         items.push({
           label: 'Goal Submission',
           date: `${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d, yyyy')}`,
@@ -185,7 +197,7 @@ export default function Dashboard() {
         const endDate = new Date(reviewQuarterlyCycle.self_review_end_date);
         const isActive = now >= startDate && now <= endDate;
         const isDone = now > endDate;
-        
+
         items.push({
           label: 'Self Evaluation',
           date: `${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d, yyyy')}`,
@@ -207,7 +219,7 @@ export default function Dashboard() {
         const endDate = new Date(reviewQuarterlyCycle.quarterly_manager_review_end_date);
         const isActive = now >= startDate && now <= endDate;
         const isDone = now > endDate;
-        
+
         items.push({
           label: 'Manager Evaluation',
           date: `${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d, yyyy')}`,
@@ -227,7 +239,7 @@ export default function Dashboard() {
     //   const endDate = new Date(activeCycle.release_date);
     //   const isActive = now >= startDate && now <= endDate;
     //   const isDone = now > endDate;
-      
+
     //   items.push({
     //     label: 'Calibration & Release',
     //     date: `${format(startDate, 'MMM d')} - ${format(endDate, 'MMM d, yyyy')}`,
@@ -277,12 +289,13 @@ export default function Dashboard() {
             ) : (
               <EmployeeDashboard
                 goalsData={goalsData}
+                krasData={krasData}
                 selfEvaluation={selfEvaluation}
                 selfEvalStatus={getSelfEvalStatus()}
                 selfEvalDueText={getSelfEvalDueText()}
                 activeCycle={{
                   ...activeCycle,
-                  goal_submission_end: goalSetting?.quarter 
+                  goal_submission_end: goalSetting?.quarter
                     ? goalsQuarterlyCycles?.find(gqc => gqc.quarter === goalSetting.quarter)?.goal_submission_end_date || activeCycle?.goal_submission_end
                     : activeCycle?.goal_submission_end,
                   allow_late_goal_submission: goalSetting?.quarter
@@ -297,10 +310,10 @@ export default function Dashboard() {
 
           {isManager && (
             <TabsContent value="manager">
-              <ManagerDashboard 
-                teamCount={teamCount} 
-                pendingApprovals={pendingApprovals} 
-                completedEvals={completedEvals} 
+              <ManagerDashboard
+                teamCount={teamCount}
+                pendingApprovals={pendingApprovals}
+                completedEvals={completedEvals}
                 totalTeamEvals={teamCount}
                 pendingQuarterlyReviews={pendingQuarterlyReviews}
               />
@@ -319,9 +332,8 @@ export default function Dashboard() {
             <div className="relative space-y-4">
               {getTimelineItems().map((item, index) => (
                 <div key={index} className={`flex items-center gap-4 ${item.status === 'upcoming' ? 'opacity-50' : ''}`}>
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-full ${
-                    item.status === 'done' || item.status === 'active' ? 'bg-primary text-primary-foreground' : 'border-2 border-dashed'
-                  }`}>
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-full ${item.status === 'done' || item.status === 'active' ? 'bg-primary text-primary-foreground' : 'border-2 border-dashed'
+                    }`}>
                     {item.status === 'done' || item.status === 'active' ? <CheckCircle className="h-5 w-5" /> : <Clock className="h-5 w-5 text-muted-foreground" />}
                   </div>
                   <div className="flex-1">

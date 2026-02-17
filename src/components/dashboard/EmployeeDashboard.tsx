@@ -69,8 +69,7 @@ export function EmployeeDashboard({
     if (!activeCycle) return '';
     
     // Note: goal_submission_end is now in goalsQuarterlyCycles, not activeCycle
-    // This function is called from Dashboard.tsx which should pass the correct deadline
-    // For now, return a generic message if goal_submission_end is not available
+
     if (!activeCycle.goal_submission_end) {
       return 'Deadline not set';
     }
@@ -177,7 +176,7 @@ export function EmployeeDashboard({
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{krasData?.totalWeight || 0}%</div>
-            <Progress value={krasData?.totalWeight || 0} className="h-2 mt-1" />
+            <Progress value={krasData?.totalWeight || 0} className="h-2 mt-1 " />
           </CardContent>
         </Card>
 

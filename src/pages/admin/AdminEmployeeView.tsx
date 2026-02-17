@@ -29,6 +29,8 @@ import {
   CheckCircle2,
   ExternalLink,
 } from 'lucide-react';
+import { KPIEvidenceView } from '@/components/evaluation/KPIEvidenceView';
+import { ManagerEvidenceView } from '@/components/evaluation/ManagerEvidenceView';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { PageLoader } from '@/loaders';
 import type { Employee, Goal, KRA } from '@/types';
@@ -387,17 +389,17 @@ export default function AdminEmployeeView() {
                       <div className="flex gap-2">
                         {goalsEditMode === 'view' ? (
                           <>
-                            <Button onClick={() => setGoalsEditMode('edit')} variant="outline" aria-label="Edit goals">
+                            {/* <Button onClick={() => setGoalsEditMode('edit')} variant="outline" aria-label="Edit goals">
                               <Edit className="h-4 w-4 mr-2" />
                               Edit
-                            </Button>
-                            <Button 
+                            </Button> */}
+                            {/* <Button 
                               onClick={() => navigate(`/team/${employeeId}/evaluate?quarter=${selectedQuarter}`)} 
                               aria-label="Create manager evaluation"
                             >
                               <ClipboardCheck className="h-4 w-4 mr-2" />
                               Create Manager Evaluation
-                            </Button>
+                            </Button> */}
                           </>
                         ) : (
                           <>
@@ -438,7 +440,7 @@ export default function AdminEmployeeView() {
                             <div className="flex-1">
                               <div className="flex items-center gap-2">
                                 <h3 className="font-semibold">{kra.title}</h3>
-                                <Badge variant={kra.status === 'approved' ? 'default' : kra.status === 'submitted' ? 'secondary' : 'outline'}>
+                                <Badge variant={kra.status === 'approved' ? 'submitted' : kra.status === 'submitted' ? 'submitted' : 'outline'}>
                                   {kra.status}
                                 </Badge>
                               </div>
@@ -548,7 +550,7 @@ export default function AdminEmployeeView() {
                                         <div className="flex-1">
                                           <div className="flex items-center gap-2">
                                             <h4 className="font-medium">{editedKpi.title}</h4>
-                                            <Badge variant={editedKpi.status === 'approved' ? 'default' : editedKpi.status === 'submitted' ? 'secondary' : 'outline'}>
+                                            <Badge variant={editedKpi.status === 'approved' ? 'submitted' : editedKpi.status === 'submitted' ? 'submitted' : 'outline'}>
                                               {editedKpi.status}
                                             </Badge>
                                           </div>
@@ -621,7 +623,7 @@ export default function AdminEmployeeView() {
                       <div className="flex gap-2">
                         {selfEvalEditMode === 'view' ? (
                           <>
-                            <Button 
+                            {/* <Button 
                               onClick={() => navigate(`/admin/employee/${employeeId}/evaluation?quarter=${selectedQuarter}`)} 
                               aria-label="Edit self evaluation in full page"
                             >
@@ -636,7 +638,7 @@ export default function AdminEmployeeView() {
                             >
                               <Edit className="h-4 w-4 mr-2" />
                               Edit Inline
-                            </Button>
+                            </Button> */}
                           </>
                         ) : (
                           <>
@@ -730,6 +732,16 @@ export default function AdminEmployeeView() {
                                   {rating.achievement && (
                                     <p className="text-sm text-muted-foreground mt-2">{rating.achievement}</p>
                                   )}
+                                  {rating.evidence && employeeId && (
+                                    <div className="mt-3">
+                                      <KPIEvidenceView
+                                        evidence={rating.evidence}
+                                        goalId={rating.goal_id}
+                                        employeeId={employeeId}
+                                        quarter={selectedQuarter}
+                                      />
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
@@ -755,7 +767,7 @@ export default function AdminEmployeeView() {
                       <div className="flex gap-2">
                         {managerEvalEditMode === 'view' ? (
                           <>
-                            <Button 
+                            {/* <Button 
                               onClick={() => navigate(`/team/${employeeId}/evaluate?quarter=${selectedQuarter}`)} 
                               variant="outline"
                               aria-label="Edit manager evaluation in full page"
@@ -767,7 +779,7 @@ export default function AdminEmployeeView() {
                             <Button onClick={() => setManagerEvalEditMode('edit')} aria-label="Edit manager evaluation inline">
                               <Edit className="h-4 w-4 mr-2" />
                               Edit Inline
-                            </Button>
+                            </Button> */}
                           </>
                         ) : (
                           <>
@@ -800,7 +812,7 @@ export default function AdminEmployeeView() {
                   {!reviewData.managerReview ? (
                     <div className="text-center py-8">
                       <p className="text-muted-foreground mb-4">No manager evaluation found for this quarter</p>
-                      {isAdmin && managerEvalEditMode === 'view' && (
+                      {/* {isAdmin && managerEvalEditMode === 'view' && (
                         <div className="flex gap-2 justify-center">
                           <Button 
                             onClick={() => navigate(`/team/${employeeId}/evaluate?quarter=${selectedQuarter}`)} 
@@ -819,7 +831,7 @@ export default function AdminEmployeeView() {
                             Create Inline
                           </Button>
                         </div>
-                      )}
+                      )} */}
                     </div>
                   ) : (
                     <>
@@ -900,6 +912,15 @@ export default function AdminEmployeeView() {
                                   </div>
                                   {feedback.comments && (
                                     <p className="text-sm text-muted-foreground mt-2">{feedback.comments}</p>
+                                  )}
+                                  {feedback.evidence && reviewData.managerReview?.id && (
+                                    <div className="mt-3">
+                                      <ManagerEvidenceView
+                                        evidence={feedback.evidence}
+                                        goalId={feedback.goal_id}
+                                        managerReviewId={reviewData.managerReview.id}
+                                      />
+                                    </div>
                                   )}
                                 </div>
                               );

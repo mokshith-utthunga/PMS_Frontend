@@ -35,6 +35,13 @@ export function ManagerEvidenceUpload({
   const isInitialMount = useRef(true);
   const lastSyncedFiles = useRef<string>(JSON.stringify(existingFiles));
   const justLoadedFromServer = useRef(false);
+  // Use ref to store latest onFilesChange callback to avoid dependency issues
+  const onFilesChangeRef = useRef(onFilesChange);
+  
+  // Update ref when callback changes (but don't trigger re-renders)
+  useEffect(() => {
+    onFilesChangeRef.current = onFilesChange;
+  }, [onFilesChange]);
 
   // Load existing files from server - useCallback to prevent stale closures
   const loadFiles = useCallback(async () => {
@@ -52,8 +59,8 @@ export function ManagerEvidenceUpload({
         if (prevFilesStr !== serverFilesStr) {
           // Update last synced ref to prevent prop sync from overwriting server data
           lastSyncedFiles.current = serverFilesStr;
-          // Only notify parent if files changed
-          onFilesChange?.(serverFiles);
+          // Only notify parent if files changed - use ref to avoid dependency
+          onFilesChangeRef.current?.(serverFiles);
           return serverFiles;
         }
         return prevFiles;
@@ -70,7 +77,7 @@ export function ManagerEvidenceUpload({
     } finally {
       setLoading(false);
     }
-  }, [goalId, managerReviewId, onFilesChange]);
+  }, [goalId, managerReviewId]); // Removed onFilesChange from dependencies
 
   // Load existing files on mount or when goalId/managerReviewId changes
   useEffect(() => {

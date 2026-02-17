@@ -80,13 +80,13 @@ export default function AdminDashboard() {
 
             {/* Quick Actions */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <QuickActionCard
+              {/* <QuickActionCard
                 title="Import Employees"
                 description="Bulk import employees from CSV file"
                 icon={Upload}
                 link="/admin/employees/import"
                 buttonText="Import CSV"
-              />
+              /> */}
               <QuickActionCard
                 title="Create Cycle"
                 description="Set up a new performance review cycle"
@@ -143,12 +143,12 @@ export default function AdminDashboard() {
                       View All Employees
                     </Button>
                   </Link>
-                  <Link to="/admin/employees/import">
+                  {/* <Link to="/admin/employees/import">
                     <Button variant="outline">
                       <Upload className="mr-2 h-4 w-4" />
                       Import CSV
                     </Button>
-                  </Link>
+                  </Link> */}
                 </div>
               </CardContent>
             </Card>
