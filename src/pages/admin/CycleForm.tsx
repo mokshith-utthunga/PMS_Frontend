@@ -1173,8 +1173,8 @@ export default function CycleForm() {
   }
 
   return (
-    <MainLayout>
-      <div className="space-y-6 max-w-3xl">
+    <MainLayout >
+      <div className="space-y-6 max-w-3xl ">
         <div className="flex items-center gap-4">
           <Link to="/admin/cycles">
             <Button variant="ghost" size="icon">

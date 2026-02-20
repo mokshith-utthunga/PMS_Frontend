@@ -551,7 +551,7 @@ export default function TransitionManagement() {
           </Alert>
         )}
         
-        <Card>
+        <Card className="">
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
